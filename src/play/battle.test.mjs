@@ -17,7 +17,8 @@ test('PR beam power is used with SNES magic scaling and elemental priority', () 
   assert.equal(calculateDamage(actor, target, fire, () => 0.5).amount, 169);
   assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 1 } }, fire, () => 0.5).amount, 338);
   assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 4 } }, fire, () => 0.5).amount, -169);
-  assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 3 } }, fire, () => 0.5).amount, 0);
+  assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 2 } }, fire, () => 0.5).amount, 0);
+  assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 3 } }, fire, () => 0.5).amount, 84);
 });
 
 test('evasion can prevent ordinary hits and unblockable attacks bypass it', () => {
@@ -37,11 +38,102 @@ test('ATB fills in SNES two-frame updates, with player and enemy speed scaling',
   assert.ok(atbRate({ speed: 50, side: 'player' }) > atbRate({ speed: 33, side: 'player' }));
 });
 
+test('Berserk boosts physical damage and Trance reduces incoming magic only', () => {
+  const damage = (source, recipient, ability) => calculateDamage(source, recipient, ability, () => .5).amount;
+  assert(damage({ ...actor, berserk: true }, target, fight) > damage(actor, target, fight));
+  assert.equal(damage({ ...actor, berserk: true }, target, fire), damage(actor, target, fire));
+  assert(damage(actor, { ...target, trance: true }, fire) < damage(actor, target, fire));
+  assert.equal(damage(actor, { ...target, trance: true }, fight), damage(actor, target, fight));
+  assert.equal(damage(actor, { ...target, conditions: [61] }, fire), damage(actor, target, fire));
+});
+
+test('a normal escape completes as escape with no experience, Gil or victory reward', () => {
+  const party = [{ id:2, hp:200, maxHp:200, mp:20, maxMp:20, exp:50 }];
+  const data = { parties:{1:{members:[{monsterId:1}]}}, monsters:{1:{id:1,hp:500,maxHp:500,exp:1000,gil:500}} };
+  const battle = new Battle({ data, party, encounterId:1, random:()=>0.5 });
+  const hpBefore = party[0].hp;
+  assert.equal(battle.requestEscape(), true);
+  battle.tick(5);
+  assert.equal(battle.phase, 'escape');
+  assert.equal(battle.result.code, 1);
+  assert.equal(battle.result.exp, 0);
+  assert.equal(battle.result.gil, 0);
+  assert.equal(party[0].exp, 50);
+  assert(party[0].hp > 0 && party[0].hp <= hpBefore);
+  const next = new Battle({data,party,encounterId:1,random:()=>0.5});
+  assert.equal(next.phase,'active');
+  assert.equal(next.players[0].escaped,false);
+  assert.equal(next.players[0].removed,false);
+});
+
+test('source character commands expose Runic and it absorbs an entire area spell once', () => {
+  const data = { parties:{1:{members:[{monsterId:1}]}}, monsters:{1:{id:1,hp:1000,maxHp:1000,mp:50,maxMp:50}},
+    commands:{16:{ability_id:11}},conditions:{57:{condition_type:612}}, abilities:{
+      11:{id:11,name:'Runic',range:5,mp:0,functions:[{id:9,values:[57,1,0]}]},
+      40:{id:40,name:'Fire',range:4,all:true,mp:4,kind:'magic',power:20,flags:[3],functions:[{id:3,values:[1,0,0]}]},
+    } };
+  const party = [{id:7,hp:300,maxHp:300,mp:10,maxMp:50,commands:[16]}, {id:2,hp:300,maxHp:300}];
+  const battle = new Battle({data,party,encounterId:1,random:()=>0.25});
+  assert(battle.commandsFor(0).some(command=>command.id===11));
+  party[0].ready=true;
+  assert.equal(battle.choose(0,11),true);
+  battle.queueAIAction({actor:battle.enemies[0],abilityId:40,all:true,script:'fixture',index:0});
+  battle.drainAI();
+  assert.deepEqual(party.map(unit=>unit.hp),[300,300]);
+  assert.equal(party[0].mp,14);
+  assert.equal(party[0].runic,false);
+  assert(!party[0].conditions.includes(57));
+});
+
+test('Throw is a selectable owned inventory command and cannot consume an equipped or absent weapon', () => {
+  const data = { parties:{1:{members:[{monsterId:1}]}}, monsters:{1:{id:1,hp:1000,maxHp:1000}},
+    contents:{100:{type_id:2,type_value:4}},weapons:{4:{id:4,throw_flag:1,attack:40}},
+    abilities:{10:{id:10,range:3,mp:0,functions:[{id:51,values:[0,0,0]}]}} };
+  const party = [{id:4,hp:300,maxHp:300,abilities:[10],equipment:[100]}], inventory={100:1};
+  const battle = new Battle({data,party,inventory,encounterId:1,random:()=>.25});
+  assert(battle.commandsFor(0).some(command=>command.id==='throw:100'));
+  party[0].ready=true;
+  assert.equal(battle.choose(0,'throw:999',0),false);
+  assert.equal(inventory[100],1);
+  assert.equal(battle.choose(0,'throw:100',0),true);
+  assert.equal(inventory[100],0);
+  assert.equal(party[0].equipment[0],100);
+  assert(battle.enemies[0].hp < 1000);
+  assert(!battle.commandsFor(0).some(command=>command.id==='throw:100'));
+});
+
+test('Berserk owns an ordinary ready turn even with automatic play switched off', () => {
+  const data = { parties:{1:{members:[{monsterId:1}]}}, monsters:{1:{id:1,hp:1000,maxHp:1000,speed:0}},
+    conditions:{91:{condition_type:410}},abilities:{1:{id:1,kind:'physical',range:3,power:0,functions:[{id:2,values:[0,0,0]}]}} };
+  const party=[{id:2,hp:300,maxHp:300,speed:100,attack:40,conditions:[91]}];
+  const battle=new Battle({data,party,encounterId:1,random:()=>.25});
+  battle.tick(5,false);
+  assert(battle.enemies[0].hp<1000);
+  assert(battle.turns>0);
+});
+
+test('equipment conditions apply on entry and temporary conditions expire at the battle boundary', () => {
+  const data={parties:{1:{members:[{monsterId:1}]}},monsters:{1:{id:1,hp:100,maxHp:100}},conditions:{
+    10:{condition_type:10,until_type:3},56:{condition_type:621,until_type:2},
+    93:{condition_type:19,until_type:2},
+  }};
+  const party=[{id:2,hp:200,maxHp:200,mp:20,maxMp:20,conditions:[10,56],permanentConditions:[93]}];
+  const battle=new Battle({data,party,encounterId:1,random:()=>.25});
+  assert(party[0].protect);assert(party[0].trance);assert(party[0].conditions.includes(93));
+  battle.enemies[0].hp=0;battle.checkEnd();
+  assert.equal(battle.phase,'victory');
+  assert.deepEqual(party[0].conditions,[10]);
+  assert.equal(party[0].protect,false);assert.equal(party[0].trance,false);
+  const next=new Battle({data,party,encounterId:1,random:()=>.25});
+  assert(next.players[0].protect);
+  assert(next.players[0].conditions.includes(10));
+});
+
 test('battle items use fixed PR recovery, shared content stock and an ordinary action turn', () => {
   const inventory = { 2: 2, 10: 1 };
-  const data = { parties: { 1: { members: [{ monsterId: 1 }] } }, monsters: { 1: { id: 1, hp: 500, maxHp: 500 } },
+  const data = { functions: {1:{function1_id:1,function1_value1:1,function1_value2:2},2:{function1_id:12,function1_value1:428,function2_id:34,function2_value1:2,function2_value2:5,function2_value3:8}}, conditionGroups:[{group_id:428,condition_id:5}], parties: { 1: { members: [{ monsterId: 1 }] } }, monsters: { 1: { id: 1, hp: 500, maxHp: 500 } },
     contents: { 2: { type_id: 1, type_value: 1 }, 10: { type_id: 1, type_value: 9 } },
-    items: { 1: { id: 1, battle_function_group_id: 1, standard_value: 50 }, 9: { id: 9, battle_function_group_id: 2 } } };
+    items: { 1: { id: 1, battle_function_group_id: 1, battle_renge_id:7, standard_value: 50 }, 9: { id: 9, battle_function_group_id: 2, battle_renge_id:7 } } };
   const party = [{ id: 2, hp: 20, maxHp: 100, magic: 99 }, { id: 19, hp: 0, maxHp: 80, conditions: [5] }];
   const battle = new Battle({ data, party, encounterId: 1, inventory, random: () => .5 });
   party[0].ready = true; party[0].atb = 100;

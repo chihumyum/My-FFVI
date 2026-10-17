@@ -212,9 +212,10 @@ test("item-sensitive AI receives its own item hit and does not observe an ally's
     ],
     {
       data: {
+        functions: { 1: { function1_id:1, function1_value1:1, function1_value2:2 } },
         contents: { 2: { type_id: 1, type_value: 1 } },
         items: {
-          1: { id: 1, battle_function_group_id: 1, standard_value: 50 },
+          1: { id: 1, battle_function_group_id: 1, battle_renge_id:7, standard_value: 50 },
         },
       },
     },

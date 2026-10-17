@@ -141,7 +141,8 @@ export function executeInstruction(game, task, name, i = [], r = [], s = [], act
     case 'InvalidateTelepo': game.telepoInvalid = Boolean(i[0]); return true;
     case 'ChangeGpsData': game.gpsId = i[0]; game.event('gps', { id: i[0] }); return true;
     case 'SetGilTag': {
-      const fee = game.data.serviceFees?.[i[0]];
+      const fee = game.data.serviceFees?.[i[0]] ??
+        game.data.systemTables?.product?.find(row => row.group_id === i[0] && row.content_id === 0)?.coefficient;
       game.messageTags ??= {};
       game.messageTags.GIL = String(fee?.amount ?? fee ?? 0);
       game.serviceFee = Number(fee?.amount ?? fee ?? 0);

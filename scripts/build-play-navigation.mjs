@@ -8,7 +8,8 @@ export async function buildNavigation({ force = false } = {}) {
   const output = resolve(root, "build/play/navigation.json");
   if (!force) {
     try {
-      if (JSON.parse(await readFile(output, "utf8")).maps[1]?.world)
+      const cached = JSON.parse(await readFile(output, "utf8"));
+      if (cached.maps[1]?.world && Object.values(cached.maps).some(map => map.entries.some(entry => entry.productGroup)))
         return output;
     } catch {}
   }
@@ -56,11 +57,11 @@ export async function buildNavigation({ force = false } = {}) {
           for(const [op,i] of data.programs[id].ops)if(op==='AssignMoveRoute'){
             const list=assigned.get(String(i[0]))||new Set();list.add(i[1]);assigned.set(String(i[0]),list);
           }
-        if(assigned.size)await addNpcFlags(raw.map);
+        if(assigned.size || [...raw.map.entities || [], ...Object.values(raw.map.groups || {}).flatMap(group => group.entities || [])].some(entry => entry.npc))await addNpcFlags(raw.map);
         const entries = [],
           add = (entry, group) => {
             if (
-              !(entry.script || entry.destination) ||
+              !(entry.script || entry.destination || entry.npc?.interaction?.actionId === 8) ||
               entries.some((e) => e.id === entry.id && e.group === group)
             )
               return;
@@ -72,6 +73,7 @@ export async function buildNavigation({ force = false } = {}) {
               y: entry.y,
               script: entry.script,
               destination: entry.destination,
+              productGroup: entry.npc?.interaction?.actionId === 8 ? entry.npc.interaction.productGroup : undefined,
               routePoints:[...assigned.get(String(entry.id))||[]].flatMap(id=>(raw.map.routes?.[id]||[])
                 .filter(row=>[1,7].includes(row.instruction_type))
                 .map(row=>({x:row.cellx,y:row.celly,layer:row.layer??entry.layer}))),

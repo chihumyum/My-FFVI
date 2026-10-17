@@ -20,6 +20,12 @@ export async function buildPlayBattle({
   output = "build/play/battle.json",
 } = {}) {
   const tables = JSON.parse(await fs.readFile(input, "utf8"));
+  // These PR dictionaries were already extracted in the original source
+  // catalog. Reuse only their integer values, never its old admission gates.
+  const catalog = await fs.readFile('build/game/source-catalog.json', 'utf8').then(JSON.parse).catch(() => ({}));
+  const dictionaries = catalog.gameState?.magicStones?.stones ?? {};
+  const cleanName = value => typeof value === 'string' ? value.replace(/<[^>]+>/g, '').trim() : '';
+  const localizedAbilities = catalog.common?.abilities ?? {};
   const media = JSON.parse(await fs.readFile(battleInput, "utf8"));
   const play = JSON.parse(await fs.readFile("build/play/data.json", "utf8"));
   const aiPrograms = Object.fromEntries(
@@ -124,10 +130,10 @@ export async function buildPlayBattle({
         row.id === 1 ||
         row.process_prog?.toLowerCase() === "multiply" ||
         fn.function1_id === 2;
-      const healing = fn.function1_id === 1;
+      const healing = [1,32,34].includes(fn.function1_id) || [1,2,3].some(n=>fn[`function${n}_id`]===34);
       return {
         id: row.id,
-        name: abilityNames[row.id] ?? `技能 ${row.id}`,
+        name: cleanName(localizedAbilities[row.id]?.name) || abilityNames[row.id] || `技能 ${row.id}`,
         nameKey: content?.mes_id_name,
         power: row.standard_value,
         mp: row.use_value,
@@ -146,16 +152,24 @@ export async function buildPlayBattle({
               : physical
                 ? "physical"
                 : "magic",
-        target: healing ? "ally" : "enemy",
-        all: [4, 8, 16].includes(row.battle_renge_id),
+        target: healing || [1,2,5,12].includes(row.battle_renge_id) ? "ally" : "enemy",
+        all: [2, 4, 8, 9, 16, 20, 21].includes(row.battle_renge_id),
         flags: flags(row.content_flag_group_id),
-        elements: row.attribute_id ? [row.attribute_id] : [],
+        elements: [...new Set([...(row.attribute_id ? [row.attribute_id] : []), ...rows("attribute_group").filter(g => g.group_id === row.attribute_group_id).map(g => g.attribute_id)])],
         process: row.process_prog,
         multiplier:
           row.process_prog?.toLowerCase() === "multiply" ? row.data_a / 100 : 1,
         functionId: fn.function1_id ?? 0,
         groupId: row.ability_group_id,
         range: row.battle_renge_id,
+        menuRange: row.menu_renge_id,
+        menuFunctionGroup: row.menu_function_group_id,
+        functionGroup: row.battle_function_group_id,
+        attackCount: row.attack_count,
+        invalidBoss: Boolean(row.invalid_boss),
+        invalidReflection: Boolean(row.invalid_reflection),
+        forbiddenConditions: rows("condition_group").filter(g => g.group_id === row.condition_group_id).map(g => g.condition_id),
+        abilityWait: row.ability_wait,
         condition:
           fn.function1_id === 9 && conditions[fn.function1_value1]
             ? {
@@ -174,6 +188,7 @@ export async function buildPlayBattle({
     monsterAssets = byId("monster_asset");
   const characters = dictionary(
     rows("character_status").map((row) => {
+      const curve = rows('intermediate_growth_curve').find(g => g.character_id === row.id && g.job_id === row.job_id);
       const equipment = Array.from(
         { length: 6 },
         (_, index) => contents[row[`content_id${index + 1}`]],
@@ -210,6 +225,12 @@ export async function buildPlayBattle({
             ? `莫古 ${row.id - 18}`
             : `角色 ${row.id}`),
         level: row.lv,
+        jobId: row.job_id,
+        growthGroup: curve?.growth_curve_group_id ?? row.growth_curve_group_id,
+        expGroup: curve?.exp_table_group_id ?? 1,
+        baseStats: { strength: row.strength, vitality: row.vitality, magic: row.magic, speed: row.agility,
+          attack: row.attack, defense: row.defense, magicDefense: row.ability_defense,
+          evasion: row.evasion_rate, magicEvasion: row.magic_evasion_rate },
         baseHp: row.hp,
         baseMp: row.mp,
         maxHp: row.hp + growth.reduce((sum, level) => sum + level.hp_value1, 0),
@@ -241,7 +262,7 @@ export async function buildPlayBattle({
           ]),
         ],
         naturalLearning: rows("learning")
-          .filter((l) => l.job_id === row.job_id && l.type_id === 1)
+          .filter((l) => l.job_id === (row.id === 1 ? 1 : row.job_id) && l.type_id === 1)
           .map((l) => ({
             level: l.value1,
             abilityId: contents[l.content_id]?.type_value,
@@ -347,7 +368,10 @@ export async function buildPlayBattle({
       id: row.id,
       backgroundId: row.battle_background_asset_id,
       bgmId: row.battle_bgm_asset_id,
-      ap: row.get_ap,
+      // FFVI magic learning points use get_value. get_ap is a separate
+      // cross-title field and is zero throughout this PR table.
+      ap: row.get_value,
+      notEscape: Boolean(row.not_escape),
       script: String(row.script_name),
       members: Array.from({ length: 9 }, (_, index) => ({
         monsterId: row[`monster${index + 1}`],
@@ -364,6 +388,14 @@ export async function buildPlayBattle({
     messages: play.messages,
     conditions,
     conditionGroups: rows("condition_group"),
+    eraseConditionGroups: rows("erase_condition_group"),
+    randomAbilityGroups: rows("ability_random_group"),
+    abilityGroups: rows("ability_group"),
+    itemNames: Object.fromEntries(rows("item").map(row => {
+      const content = Object.values(contents).find(c => c.type_id === 1 && c.type_value === row.id);
+      const item = catalog.gameState?.items?.[content?.id] ?? catalog.common?.items?.[content?.id];
+      return [row.id, cleanName(item?.name) || `道具 ${row.id}`];
+    })),
     functions,
     monsters,
     parties,
@@ -372,8 +404,23 @@ export async function buildPlayBattle({
     commands: byId("command"),
     items: byId("item"),
     contents,
+    contentNames: Object.fromEntries(Object.values(contents).map(content => [content.id,
+      cleanName(catalog.gameState?.items?.[content.id]?.name || catalog.gameState?.equipmentSystem?.catalog?.definitions?.[content.id]?.name ||
+        dictionaries[content.id]?.name || localizedAbilities[content.type_id === 4 ? content.type_value : 0]?.name) || `物品 ${content.id}`])),
     weapons,
     armors,
+    jobGroups: byId('job_group'),
+    partsGroups: byId('parts_group'),
+    attributeGroups: rows('attribute_group'),
+    learning: rows('learning'),
+    limits: Object.fromEntries(rows('game_constant_int').map(row => [row.key_name, row.value1])),
+    magicStones: Object.fromEntries(Object.values(contents).filter(content => content.type_id === 9).map(content => {
+      const saved = dictionaries[content.id];
+      return [content.id, { contentId: content.id, name: saved?.name ?? `魔石 ${content.id}`,
+        summonAbilityId: saved?.summonAbilityId ?? 0, bonus: saved?.bonus ?? { parameter: 0, value: 0 },
+        learning: rows('learning').filter(row => row.type_id === 2 && row.value1 === content.id).map(row =>
+          ({ abilityId: contents[row.content_id]?.type_value, contentId: row.content_id, rate: row.value2 })) }];
+    })),
     backgrounds,
     sprites,
     growth: rows("growth_curve"),
@@ -393,7 +440,7 @@ export async function buildPlayBattle({
     },
     warnings: [
       "PR MonsterAI programs execute directly; uncertain selector and timing details warn with script and instruction index.",
-      "Enemy actions, reactions, timers and final actions are selected by PR AI; unimplemented ability effects warn and use Fight.",
+      "Enemy actions, reactions, timers and final actions are selected by PR AI; function and process families execute compositionally with explicit warnings for approximations.",
       "Initial ATB randomizes a speed-based gauge; browser actions resolve immediately without SNES animation and command wait queues.",
       "Battle event presentation is simplified; main-story event conditions and required commands execute in the battle loop.",
       "Ability and character names without an extracted battle translation use short fallback names.",

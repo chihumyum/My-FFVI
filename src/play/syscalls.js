@@ -1,3 +1,4 @@
+import { correctJoinLevel } from './progression.js';
 import { executeEventSystem, updateSyscallSystems, configureSyscallTimer, finishSyscallTimer } from './event-systems.js';
 import { executeCooperativeSyscall } from './cooperative-input.js';
 export { updateSyscallSystems, configureSyscallTimer, finishSyscallTimer };
@@ -42,22 +43,7 @@ function refreshLeader(game) {
   game.camera.manual = false;
   game.event('party', { partyIndex: game.partyIndex, members: game.party.map(member => member.id) });
 }
-function correctLevel(game, unit, task) {
-  const eligible = Object.values(game.roster).filter(other => other.id !== unit.id && other.id < 15 &&
-    (other.enabled || game.partySlots.some(slot => slot.includes(other.id))));
-  const target = eligible.length ? Math.trunc(eligible.reduce((sum, other) => sum + other.level, 0) / eligible.length) : 1;
-  // First-join bonuses vary by character. Retain the PR initial level and use the party average as a floor.
-  const level = Math.max(unit.level, Math.min(99, target));
-  if (level > unit.level) {
-    for (const growth of game.battleData.growth ?? []) if (growth.group_id === 1 && growth.lv > unit.level && growth.lv <= level) {
-      unit.maxHp += growth.hp_value1;
-      unit.maxMp += growth.mp_value1;
-    }
-    unit.level = level;
-    unit.exp = Math.max(unit.exp ?? 0, game.battleData.expTable?.find(row => row.group_id === 1 && row.lv === level)?.total_exp ?? 0);
-    warnOnce(game, task, 'First joins use the existing party average without character-specific level bonuses.');
-  }
-}
+
 function join(game, id, task, recover = false) {
   const existed = Boolean(game.roster[id]?.enabled);
   const unit = game.unit(id);
@@ -65,10 +51,18 @@ function join(game, id, task, recover = false) {
   unit.enabled = true;
   unit.reserve = false;
   unit.row ??= 'front';
-  if (!existed) correctLevel(game, unit, task);
+  if (!existed) correctJoinLevel(game, unit, task);
+  unit.hasJoined = true;
   if (recover) { unit.hp = unit.maxHp; unit.mp = unit.maxMp; unit.conditions = []; }
-  if (!game.partySlots.some(slot => slot.includes(id)) && game.partySlots[game.partyIndex].length < 4)
-    game.partySlots[game.partyIndex].push(id);
+  const current = game.partySlots[game.partyIndex];
+  if (!current.includes(id) && current.length < 4) {
+    // Source scenes can stage a temporary actor in another slot with
+    // OrganizePartySlot. Rejoining returns that actor to the active group.
+    for (let index = 0; index < game.partySlots.length; index++)
+      if (index !== game.partyIndex) game.partySlots[index] = game.partySlots[index].filter(member => member !== id);
+    current.push(id);
+  }
+  unit.reserve = !current.includes(id);
   return unit;
 }
 function remove(game, id, reserve) {

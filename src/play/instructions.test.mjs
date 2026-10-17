@@ -11,6 +11,17 @@ const game = () => ({
   actor() { return this.player; }, compare(a, operator, b) { return operator === '＝' ? a === b : a !== b; },
 });
 
+test('source rejoin returns a staged character to the active party without duplication or free healing', () => {
+  const g = new PlayGame({ data:{} });
+  g.partySlots = [[3,5],[2],[7]]; g.partyIndex=0;
+  const unit = g.unit(2); Object.assign(unit,{enabled:true,hasJoined:true,hp:17,mp:3,level:9});
+  executeSyscall(g,{locals:[]},'メンバー加入：ロック');
+  assert.deepEqual(g.partySlots,[[3,5,2],[],[7]]);
+  assert.equal(unit.hp,17); assert.equal(unit.mp,3); assert.equal(unit.level,9);
+  executeSyscall(g,{locals:[]},'メンバー加入：ロック');
+  assert.deepEqual(g.partySlots,[[3,5,2],[],[7]]);
+});
+
 test('relative SetPos keeps a separate character on the player reference without copying its layer', () => {
   const g = game(), character = { x: 8, y: 6, layer: 1 }, task = {};
   executeInstruction(g, task, 'SetPos', [1, -1, 0, 1, -1001], [], [], character);

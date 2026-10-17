@@ -2,9 +2,81 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PlayGame } from "./game.js";
 import { pathTo } from "./m1-route.js";
-import { routeToStory } from "./navigation.js";
+import { routeToStory, encountersForInput } from "./navigation.js";
 import { executeInstruction } from "./instructions.js";
 import { navigationRegions } from "../../scripts/play-navigation-regions.mjs";
+
+test('cross-map routing uses the source initializer NPC position without moving live actors', () => {
+  const door = { id: 'door', kind: 3, x: 2, y: 1, layer: 0,
+    group: 'entity_default', regions: [1], destination: { mapId: 2, entrance: 1 } };
+  const npc = { id: '2', kind: 6, x: -1, y: 1, layer: 0,
+    group: 'entity_default', regions: [], script: 'boss' };
+  const data = { byMap: {}, global: { init: 0, boss: 1 }, programs: {
+    0: { name: 'init', ops: [['SetPuppet', [0, 2, 3]], ['ExecPuppet', [0]], ['Exit'],
+      ['SetPos', [3, 1, 1]], ['Exit']] },
+    1: { name: 'boss', ops: [['Exit']] },
+  }, navigation: { maps: {
+    1: { id: 1, entrances: { 1: { regions: [1] } }, entries: [door] },
+    2: { id: 2, width: 5, height: 3, initializer: 'init', regionRuns: { 0: [[8,1],[9,0],[15,1]] },
+      entrances: { 1: { regions: [1] } }, entries: [npc] },
+  } } };
+  const game = new PlayGame({ data });
+  Object.assign(game, { mapId: 1, entities: [door], player: { x: 1, y: 1, layer: 0 },
+    groups: new Set(['entity_default']) });
+  const before = JSON.stringify([game.player, game.banks, npc]);
+  const input = routeToStory(game, { scripts: ['boss'] }, () => ['right']);
+  assert.equal(input.target.id, 'door');
+  assert.equal(JSON.stringify([game.player, game.banks, npc]), before);
+  assert.equal(game.tasks.length, 0);
+});
+
+test('a merchant without a dialogue script remains reachable through its PR product group', () => {
+  const merchant = { id: 'shop', kind: 6, x: 3, y: 2, layer: 0,
+    productGroup: 8, group: 'entity_default', regions: [1] };
+  const data = { global: {}, byMap: {}, programs: {}, navigation: { maps: {
+    1: { id: 1, areaId: 1, entrances: {}, entries: [merchant] },
+  } } };
+  const game = new PlayGame({ data });
+  Object.assign(game, { mapId: 1, areaId: 1, map: { width: 6, height: 6 },
+    player: { x: 1, y: 2, layer: 0 }, entities: [merchant], groups: new Set(['entity_default']) });
+  const input = routeToStory(game, { shops: [8] }, pathTo);
+  assert.equal(input.target.id, 'shop');
+  assert.deepEqual(input.route, ['right']);
+  assert.deepEqual(game.banks, {});
+});
+
+test('readiness previews a portal that immediately starts a source battle on entry', () => {
+  const data = { byMap: {}, global: { init: 0, battle: 1 }, programs: {
+    0: { name: 'init', ops: [['ChangeScript', [0], [], ['battle']], ['Exit']] },
+    1: { name: 'battle', ops: [['EncountBoss', [437]], ['Exit']] },
+  }, navigation: { maps: {
+    1: { id: 1, entries: [], entrances: {} },
+    2: { id: 2, initializer: 'init', entries: [], entrances: { 1: { x: 1, y: 2, layer: 0 } } },
+  } } };
+  const game = new PlayGame({ data }); game.mapId = 1;
+  assert.deepEqual(encountersForInput(game, { target: { destination: { mapId: 2, entrance: 1 } } }), [437]);
+  assert.equal(game.tasks.length, 0);
+  assert.deepEqual(game.banks, {});
+});
+
+test('rest navigation checks the real inn fee and does not seek healing behind a boss', () => {
+  const entry = (id, x, script) => ({ id, kind: 6, x, y: 2, layer: 0, script,
+    group: 'entity_default', regions: [1] });
+  const inn = entry('inn', 3, 'inn'), trap = entry('boss', 1, 'boss');
+  const data = { global: { inn: 0, boss: 1 }, byMap: {}, programs: {
+    0: { name: 'inn', ops: [['RemoveGil', [100]],
+      ['Branch', [0, 0, 4], [], ['MapLocalVariable', '＝', 'imm']], ['RecoveryHP'], ['Exit'], ['Exit']] },
+    1: { name: 'boss', ops: [['EncountBoss', [100]], ['RecoveryHP'], ['Exit']] },
+  }, navigation: { maps: { 1: { id: 1, areaId: 1, entrances: {}, entries: [inn, trap] } } } };
+  const game = new PlayGame({ data });
+  Object.assign(game, { mapId: 1, areaId: 1, map: { width: 6, height: 6 }, gil: 90,
+    player: { x: 2, y: 2, layer: 0 }, entities: [inn, trap], groups: new Set(['entity_default']) });
+  assert.equal(routeToStory(game, { rest: 'hp' }, pathTo).status, 'no-route');
+  game.gil = 100;
+  assert.equal(routeToStory(game, { rest: 'hp' }, pathTo).target.id, 'inn');
+  assert.equal(game.gil, 100);
+  assert.deepEqual(game.banks, {});
+});
 
 test("moving a portal preserves its entity visibility and pathfinding uses all current portal positions", () => {
   const game = new PlayGame({ data: {} });

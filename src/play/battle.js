@@ -1,5 +1,9 @@
+import { abilityMpCost, applyBattleRewards } from './progression.js';
 import { MonsterAI } from "./monster-ai.js";
 import { BattleEvents } from "./battle-events.js";
+import { autoBattleInput } from "./battle-input.js";
+import { requestEscape as requestBattleEscape, tickEscape, canEscape } from './escape.js';
+import { FUNCTION_EFFECTS, PROCESS_EFFECTS, abilityFromItem, isRevival, executeAbilityEffects, setCondition, hasConditionType, actionBlocked, conditionSpeed, tickConditions, forcedConditionAction, throwableCommands } from "./ability-effects.js";
 const clamp = (n, low, high) => Math.max(low, Math.min(high, n));
 const value = (n, fallback) =>
   Number.isFinite(Number(n)) ? Number(n) : fallback;
@@ -14,6 +18,8 @@ export function calculateDamage(
 ) {
   const physical = ability.kind === "physical";
   const power = value(ability.power, 0);
+  const conditions = actor.conditions || [];
+  const berserk = actor.berserk || conditions.includes(18);
   const level = value(actor.level, 1);
   const healing = ability.kind === "heal";
   const accuracy = ability.flags?.includes(1)
@@ -49,7 +55,7 @@ export function calculateDamage(
               1.5,
           );
     base = Math.floor(base * value(ability.multiplier, 1));
-    if (actor.row === "back") base = Math.floor(base / 2);
+    if (actor.row === "back" && !ability.backRow && !(ability.id === 1 && actor.weaponBackRow)) base = Math.floor(base / 2);
   } else {
     const magic = value(actor.magic, 30);
     base =
@@ -58,6 +64,12 @@ export function calculateDamage(
         (level * magic * power * (actor.side === "enemy" ? 1.5 : 1)) / 32,
       );
   }
+  base *= value(ability.multiplier, 1) === 1 || physical ? 1 : value(ability.multiplier, 1);
+  if (actor.trance) base *= 2;
+  if (physical && berserk) base *= 1.5;
+  if (!physical && !healing && target.trance) base /= 2;
+  if (conditions.includes(13) && physical) base = Math.min(base, value(actor.level, 1));
+  base *= value(physical ? actor.physicalDamageMultiplier : actor.magicDamageMultiplier, 1);
   let amount = Math.floor((base * (224 + Math.floor(random() * 32))) / 256) + 1;
   if (!healing && !ability.flags?.includes(5)) {
     const defense = clamp(
@@ -68,17 +80,17 @@ export function calculateDamage(
     amount = Math.floor((amount * (255 - defense)) / 256) + 1;
     if ((physical && target.protect) || (!physical && target.shell))
       amount = Math.floor((amount * 170) / 256) + 1;
-    if (physical && target.row === "back") amount = Math.floor(amount / 2);
+    if (physical && target.row === "back" && !ability.backRow && !(ability.id === 1 && actor.weaponBackRow)) amount = Math.floor(amount / 2);
     if (physical && target.defending) amount = Math.floor(amount / 2);
   }
   const critical = physical && random() * 100 < value(actor.criticalRate, 0);
   if (critical) amount *= 2;
-  const affinities = (ability.elements ?? []).map(
-    (id) => target.elementResistances?.[id],
+  const affinities = (ability.id === 1 ? actor.weaponElements ?? ability.elements ?? [] : ability.elements ?? []).map(
+    (id) => (target.affinities ?? target.elementResistances)?.[id],
   );
   if (affinities.includes(4)) amount = -amount;
-  else if (affinities.includes(3)) amount = 0;
-  else if (affinities.includes(2)) amount = Math.floor(amount / 2);
+  else if (affinities.includes(2)) amount = 0;
+  else if (affinities.includes(3)) amount = Math.floor(amount / 2);
   else if (affinities.includes(1)) amount *= 2;
   if (targetCount > 1 && !ability.flags?.includes(2))
     amount = Math.trunc(amount / 2);
@@ -203,6 +215,9 @@ export class Battle {
       unit[key] = value(unit[key], fallback);
     unit.side = side;
     unit.index = index;
+    unit.escaped = false;
+    unit.removed = false;
+    unit.untargetable = false;
     if (Array.isArray(unit.abilities)) unit.abilities = [...unit.abilities];
     unit.atb = clamp(
       ((unit.speed +
@@ -220,6 +235,10 @@ export class Battle {
     );
     unit.ready = false;
     unit.hidden = false;
+    unit.runic = false;
+    unit.conditions = (unit.conditions || []).filter(id => this.data.conditions?.[id]?.condition_type !== 612);
+    unit.chargedAbility = null;
+    unit.chargedTarget = null;
     unit.defending = false;
     unit.stopUntil = 0;
     if (unit.stopConditionId)
@@ -227,6 +246,11 @@ export class Battle {
         (id) => id !== unit.stopConditionId,
       );
     unit.stopConditionId = null;
+    for (const id of unit.permanentConditions || []) setCondition(this, unit, id, true, { force:true });
+    unit.berserk = hasConditionType(this.data,unit,410);
+    unit.protect = hasConditionType(this.data,unit,19);
+    unit.shell = hasConditionType(this.data,unit,412);
+    unit.trance = hasConditionType(this.data,unit,621);
     unit.normalSprite ??= base.sprite ?? unit.sprite;
     unit.sprite = unit.magitek
       ? (unit.magitekSprite ?? unit.sprite)
@@ -305,48 +329,27 @@ export class Battle {
       );
   }
   alive(unit) {
-    return unit.hp > 0 && !unit.removed && !unit.escaped;
+    return unit.hp > 0 && !unit.removed && !unit.escaped && !hasConditionType(this.data, unit, 11);
   }
   targetable(unit) {
     return this.alive(unit) && !unit.hidden && !unit.untargetable;
   }
   supported(ability) {
-    if (!ability) return false;
-    if (["ADD_VARIABLE_CALC", "SET_VARIABLE_CALC"].includes(ability.process) &&
-        (!Number.isInteger(ability.dataB) || ability.dataB < 0 || ability.dataB >= 15 || !Number.isFinite(ability.dataC))) return false;
-    if (ability.functions && !ability.functions.length) return false;
-    if (
-      !["None", "multiply", "SM_ERASER", "BATTLE_FORCE", "BATTLE_FORCE_ON_SAVE", "ADD_VARIABLE_CALC", "SET_VARIABLE_CALC"].includes(
-        ability.process || "None",
-      )
-    )
-      return false;
-    return (
-      ability.functions || [{ id: ability.functionId || 0, values: [] }]
-    ).every(
-      (f) =>
-        [0, 1, 2, 3, 11, 15, 16, 23, 38, 52].includes(f.id) ||
-        (f.id === 19 && ["ADD_VARIABLE_CALC", "SET_VARIABLE_CALC"].includes(ability.process)) ||
-        (f.id === 9 &&
-          ((f.values?.[0] || 0) >= 60 ||
-            [5, 12, 17, 26].includes(f.values?.[0]))),
-    );
+    if (["ADD_VARIABLE_CALC","SET_VARIABLE_CALC"].includes(ability?.process) && (!Number.isInteger(ability.dataB)||ability.dataB<0||ability.dataB>=15||!Number.isFinite(ability.dataC))) return false;
+    return Boolean(ability && (ability.functions || []).every(f => FUNCTION_EFFECTS[f.id]) &&
+      PROCESS_EFFECTS[ability.process || "None"]);
+  }
+  eligibleTarget(unit, ability) {
+    if (!unit || unit.removed || unit.escaped || unit.hidden || unit.untargetable) return false;
+    return isRevival(this.data, ability) ? unit.hp <= 0 : unit.hp > 0;
   }
   selectAITargets(actor, ability, forced, all = false) {
     if (ability.range === 5) return [actor];
     const allies = actor.side === "enemy" ? this.enemies : this.players,
       opponents = actor.side === "enemy" ? this.players : this.enemies;
-    const revive = (ability.functions || []).some(
-        (f) => f.id === 11 && f.values[0] === 5,
-      ),
-      control = (ability.functions || []).some((f) => [9, 11].includes(f.id)),
-      eligible = (units) =>
-        units.filter(
-          (u) =>
-            !u.removed &&
-            !u.escaped &&
-            (revive ? u.hp <= 0 : control ? u.hp > 0 : this.targetable(u)),
-        );
+    const control = (ability.functions || []).some(f => [9,10,11,12,19,20,23,38,70].includes(f.id)),
+      eligible = units => units.filter(u => !u.removed && !u.escaped &&
+        (isRevival(this.data, ability) ? u.hp <= 0 : control ? u.hp > 0 : this.targetable(u)));
     if (forced) {
       const list = eligible(Array.isArray(forced) ? forced : [forced]);
       if (list.length) return all || Array.isArray(forced) ? list : [list[0]];
@@ -360,7 +363,7 @@ export class Battle {
           : opponents;
     pool = eligible(pool);
     if (!pool.length) return [];
-    if (all || [2, 4, 8, 9, 16].includes(ability.range)) return pool;
+    if (all || [2, 4, 8, 9, 16, 20, 21].includes(ability.range)) return pool;
     return [pool[Math.floor(this.random() * pool.length)]];
   }
   drainAI() {
@@ -373,18 +376,15 @@ export class Battle {
         if (!action.final && !this.alive(action.actor)) continue;
         let ability = this.data.abilities?.[action.abilityId],
           forced = action.target;
-        if (!this.supported(ability) || ability.mp > action.actor.mp) {
-          const reason = this.supported(ability) ? "has insufficient MP" : "effect is not implemented";
-          this.warning(`AI ${action.script}:${action.index}: ability ${action.abilityId} ${reason}; using Fight.`);
-          ability = this.data.abilities?.[1] || {
-            id: 1,
-            kind: "physical",
-            power: 0,
-            range: 3,
-            systemId: 3,
-            typeId: 4,
-          };
+        if (!ability || !this.supported(ability) || ability.functions?.some(fn => fn.id === 51)) {
+          this.warning(`AI ${action.script}:${action.index}: ability ${action.abilityId} effect is not implemented; using Fight.`);
+          ability = this.data.abilities?.[1] || { id:1, kind:'physical', power:0, range:3,
+            systemId:3, typeId:4, functions:[{id:2,values:[0,0,0]}] };
           forced = null;
+        }
+        if (ability.mp > action.actor.mp) {
+          this.warning(`AI ${action.script}:${action.index}: ability ${action.abilityId} has insufficient MP; action fails.`);
+          continue;
         }
         for (const key of action.messages || [])
           if (key)
@@ -400,8 +400,9 @@ export class Battle {
         );
         const previousDepth = this.actionDepth;
         this.actionDepth = action.depth;
+        const sequence = {};
         for (const [index, target] of targets.entries())
-          this.perform(action.actor, target, ability, targets.length, { updateVariables: index === 0 });
+          this.perform(action.actor, target, ability, targets.length, { updateVariables: index === 0, sequence });
         this.actionDepth = previousDepth;
         this.events?.advance();
       }
@@ -439,6 +440,13 @@ export class Battle {
   commandsFor(actorIndex) {
     const unit = this.players[actorIndex];
     if (!unit) return [];
+    const commandAbilities = (unit.commands || []).flatMap(id => {
+      const row = this.data.commands?.[id], ability = this.data.abilities?.[row?.ability_id];
+      if (!ability || !(ability.functions?.length || ability.process && ability.process !== 'None')) return [];
+      if (row.release_type === 3 && ![row.release_value1, row.release_value2].filter(Boolean)
+        .some(condition => (unit.conditions || []).includes(condition))) return [];
+      return [ability.id];
+    });
     const ids = unit.magitek
       ? [
           1,
@@ -452,7 +460,8 @@ export class Battle {
       : [
           ...new Set([
             1,
-            ...(unit.abilities ?? []).map((a) =>
+            ...commandAbilities,
+            ...(unit.abilities ?? []).concat(unit.equipmentAbilities ?? []).map((a) =>
               typeof a === "object" ? a.id : a,
             ),
             2,
@@ -469,125 +478,50 @@ export class Battle {
             target: "enemy",
           },
       )
-      .map((a) => ({ ...a, disabled: a.mp > unit.mp }))
+      .map((a) => ({ ...a, revive:isRevival(this.data,a), mp: abilityMpCost(unit,a),
+        disabled: abilityMpCost(unit,a) > unit.mp || (a.forbiddenConditions || []).some(id => (unit.conditions || []).includes(id)) }))
+      .flatMap(command => command.functions?.some(fn => fn.id === 51)
+        ? throwableCommands(this.data, this.inventory, unit).map(choice => ({ ...command, ...choice,
+          name: `投掷 · ${choice.name}`, disabled: command.disabled })) : [command])
       .concat(this.itemsFor(actorIndex));
   }
 
   itemsFor(actorIndex) {
-    if (!this.players[actorIndex]) return [];
-    const names = {
-      1: "恢复剂",
-      2: "高级恢复剂",
-      3: "全恢复剂",
-      4: "以太",
-      5: "高级以太",
-      6: "超级以太",
-      7: "万能药",
-      8: "全体万能药",
-      9: "凤凰之尾",
-      23: "干肉",
-    };
+    const actor = this.players[actorIndex];
+    if (!actor) return [];
     return Object.entries(this.inventory).flatMap(([contentId, count]) => {
       const content = this.data.contents?.[contentId];
-      const item =
-        content?.type_id === 1 ? this.data.items?.[content.type_value] : null;
-      if (
-        !(count > 0) ||
-        !item ||
-        ![1, 2, 3, 4].includes(item.battle_function_group_id)
-      )
-        return [];
-      return [
-        {
-          id: `item:${contentId}`,
-          contentId: Number(contentId),
-          itemId: item.id,
-          name: names[item.id] ?? `道具 ${item.id}`,
-          kind: "item",
-          // PR range7 permits either side. Food defaults to the hungry Gau
-          // when he is present; an explicit side can still select a player.
-          target: item.id === 23 && this.enemies.some(enemy =>
-            [549, 550].includes(enemy.monsterId) && this.targetable(enemy)) ? "enemy" : "ally",
-          targetSides: item.battle_renge_id === 7 ? ["player", "enemy"] : ["player"],
-          mp: 0,
-          count,
-          revive: item.battle_function_group_id === 2,
-          amount: item.standard_value,
-          all: item.battle_renge_id === 2,
-          disabled: false,
-        },
-      ];
+      const item = content?.type_id === 1 ? this.data.items?.[content.type_value] : null;
+      if (!(count > 0) || !item?.battle_function_group_id) return [];
+      if (item.machine_flag && !(actor.commands || this.data.characters?.[actor.id]?.commands || []).includes(14)) return [];
+      const source = abilityFromItem(this.data, item, Number(contentId));
+      source.name = this.data.itemNames?.[item.id] || source.name;
+      if (item.id === 23 && this.enemies.some(enemy => [549,550].includes(enemy.monsterId) && this.targetable(enemy))) source.target = "enemy";
+      return [{...source, id:`${item.machine_flag ? 'tool' : 'item'}:${contentId}`,
+        kind:item.machine_flag ? source.kind : "item", count, amount:item.standard_value, disabled:false}];
     });
   }
 
   useItem(actorIndex, contentId, targetIndex = actorIndex) {
-    const actor = this.players[actorIndex],
-      command = this.itemsFor(actorIndex).find(
-        (item) => item.contentId === Number(contentId),
-      );
-    if (
-      this.phase !== "active" ||
-      !actor ||
-      !this.targetable(actor) ||
-      !this.events.interactive ||
-      this.events.paused ||
-      !actor.ready ||
-      !command ||
-      actor.stopUntil > this.elapsed
-    )
-      return false;
-    const requestedSide = typeof targetIndex === "object" && targetIndex !== null
-      ? targetIndex.side : command.target === "enemy" ? "enemy" : "player";
-    const side = requestedSide === 2 || requestedSide === "enemy" ? "enemy" : "player";
+    const actor = this.players[actorIndex], command = this.itemsFor(actorIndex).find(item => item.contentId === Number(contentId));
+    if (this.phase !== "active" || !actor || !this.targetable(actor) || !this.events.interactive || this.events.paused ||
+        !actor.ready || !command || actionBlocked(this.data, actor) || actor.stopUntil > this.elapsed) return false;
+    const sideRequest = typeof targetIndex === "object" && targetIndex !== null ? targetIndex.side : command.target === "enemy" ? "enemy" : "player";
+    const side = sideRequest === 2 || sideRequest === "enemy" ? "enemy" : "player";
     if (!command.targetSides.includes(side)) return false;
     const pool = side === "enemy" ? this.enemies : this.players;
     const index = typeof targetIndex === "object" && targetIndex !== null ? targetIndex.index : targetIndex;
     const target = pool[index];
-    if (!target || target.removed || target.escaped || target.hidden ||
-      (command.revive ? target.hp > 0 : target.hp <= 0))
-      return false;
-    const item = this.data.items[command.itemId],
-      group = item.battle_function_group_id;
-    const targets = command.all
-      ? pool.filter((unit) =>
-          !unit.removed && !unit.escaped && !unit.hidden && (command.revive ? unit.hp <= 0 : unit.hp > 0),
-        )
-      : [target];
-    this.inventory[contentId] -= 1;
-    for (const unit of targets) {
-      const hpBefore = unit.hp,
-        mpBefore = unit.mp;
-      if (group === 2) {
-        unit.hp = Math.max(1, Math.floor(unit.maxHp / 8));
-        unit.conditions = (unit.conditions ?? []).filter(
-          (condition) => condition !== 5,
-        );
-        unit.atb = 0;
-        unit.ready = false;
-      } else {
-        if (group === 1 || group === 4)
-          unit.hp = Math.min(unit.maxHp, unit.hp + item.standard_value);
-        if (group === 3 || group === 4)
-          unit.mp = Math.min(unit.maxMp, unit.mp + item.standard_value);
-      }
-      this.notifyAction({
-        actor,
-        target: unit,
-        item: command,
-        hit: true,
-        depth: 0,
-        amount: hpBefore - unit.hp,
-        mp: mpBefore - unit.mp,
-        time: this.elapsed,
-      });
-      this.addLog(
-        `${actor.name} → ${unit.name}：${command.name}，${group === 2 ? "复活，" : ""}HP +${unit.hp - hpBefore}，MP +${unit.mp - mpBefore}`,
-      );
-    }
+    if (!this.eligibleTarget(target, command)) return false;
+    const item = this.data.items[command.itemId], ability = {...abilityFromItem(this.data,item,Number(contentId)),name:command.name};
+    const targets = command.all ? pool.filter(unit => this.eligibleTarget(unit, command)) : [target];
+    // PR machine items are reusable; consumables retain their destroy_rate.
+    if (!item.machine_flag && this.random() * 100 < (item.destroy_rate ?? 100)) this.inventory[contentId] -= 1;
+    this.clearRunic(actor);
+    const sequence = {};
+    for (const [n, unit] of targets.entries()) this.perform(actor,unit,ability,targets.length,{updateVariables:n===0,item:command,sequence});
     actor.defending = false;
-    this.consumeTurn(actor);
-    this.checkEnd();
-    return true;
+    this.consumeTurn(actor); this.checkEnd(); return true;
   }
 
   get commands() {
@@ -609,14 +543,16 @@ export class Battle {
       this.checkEnd();
       if (this.phase !== "active") break;
       if (this.events.paused) continue;
+      if (tickEscape(this, step)) { this.checkEnd(); if(this.phase !== 'active') break; }
       for (const unit of [...this.players, ...this.enemies]) {
+        tickConditions(this, unit, step);
         if (
           !this.alive(unit) ||
-          unit.hidden ||
+          unit.hidden && !unit.chargedAbility ||
           (unit.side === "enemy" && this.events.enemySleeping)
         )
           continue;
-        if (unit.stopUntil > this.elapsed) continue;
+        if (unit.stopUntil > this.elapsed || actionBlocked(this.data,unit)) continue;
         if (unit.stopConditionId) {
           unit.conditions = (unit.conditions ?? []).filter(
             (id) => id !== unit.stopConditionId,
@@ -626,11 +562,13 @@ export class Battle {
         }
         unit.atb = Math.min(
           100,
-          unit.atb + atbRate(unit, this.data.battleSpeed ?? 3) * step,
+          unit.atb + atbRate(unit, this.data.battleSpeed ?? 3) * conditionSpeed(this.data,unit) * step,
         );
         unit.ready = unit.atb >= 100;
         if (!unit.ready) continue;
-        if (unit.side === "enemy") this.enemyTurn(unit);
+        if (unit.chargedAbility) this.releaseCharged(unit);
+        else if (this.events.interactive && this.forcedTurn(unit)) { /* source condition owns this turn */ }
+        else if (unit.side === "enemy") this.enemyTurn(unit);
         else if (auto && this.events.interactive) this.autoTurn(unit);
         if (this.phase !== "active") break;
       }
@@ -642,100 +580,74 @@ export class Battle {
   }
 
   autoTurn(unit) {
-    const index = this.players.indexOf(unit);
-    const command = this.events?.autoCommand(unit);
-    if (command && this.choose(index, command.abilityId, command.targetIndex))
-      return;
-    if (this.ymirHead?.hidden) {
-      this.choose(index, 2);
-      return;
-    }
-    const weak = this.players.reduce(
-      (best, actor) =>
-        actor.hp > 0 &&
-        actor.hp / actor.maxHp < (best?.hp / best?.maxHp ?? Infinity)
-          ? actor
-          : best,
-      null,
-    );
-    if (unit.magitek && weak && weak.hp < weak.maxHp * 0.55) {
-      this.choose(index, 222, this.players.indexOf(weak));
-      return;
-    }
-    if (weak && weak.hp < weak.maxHp * 0.45) {
-      const cure = this.commandsFor(index).find(
-        (ability) => ability.kind === "heal" && !ability.disabled,
-      );
-      if (cure && this.choose(index, cure.id, this.players.indexOf(weak)))
-        return;
-      const potion = this.itemsFor(index).find(
-        (item) =>
-          !item.revive &&
-          [1, 4].includes(
-            this.data.items[item.itemId].battle_function_group_id,
-          ),
-      );
-      if (
-        potion &&
-        this.useItem(index, potion.contentId, this.players.indexOf(weak))
-      )
-        return;
-    }
-    const target =
-      this.enemies.find(
-        (enemy) => this.targetable(enemy) && enemy.role !== "ymir-shell",
-      ) ?? this.enemies.find((enemy) => this.targetable(enemy));
-    if (target)
-      this.choose(index, unit.magitek ? 218 : 1, this.enemies.indexOf(target));
-    else this.choose(index, 2);
+    return autoBattleInput(this, unit, calculateDamage);
   }
 
+  forcedTurn(unit) {
+    const input = forcedConditionAction(this, unit);
+    if (!input) return false;
+    const target = (input.target.side === 'enemy' ? this.enemies : this.players)[input.target.index];
+    const ability = this.data.abilities?.[1] || { id:1,kind:'physical',power:0,range:3,functions:[{id:2,values:[0,0,0]}] };
+    this.clearRunic(unit); unit.defending = false;
+    this.perform(unit, target, ability, 1, { sequence: {} });
+    this.consumeTurn(unit); this.checkEnd();
+    return true;
+  }
+
+  requestEscape() { return requestBattleEscape(this); }
+  get canEscape() { return canEscape(this); }
+
   choose(actorIndex, abilityId = 0, targetIndex = 0) {
-    if (typeof abilityId === "string" && abilityId.startsWith("item:"))
-      return this.useItem(actorIndex, Number(abilityId.slice(5)), targetIndex);
+    if (typeof abilityId === "string" && /^(item|tool):/.test(abilityId))
+      return this.useItem(actorIndex, Number(abilityId.split(":")[1]), targetIndex);
     const actor = this.players[actorIndex];
     if (
       this.phase !== "active" ||
       !actor ||
       !this.targetable(actor) ||
       !this.events.interactive ||
+      this.events.paused ||
+      actionBlocked(this.data, actor) ||
       !actor.ready ||
       actor.stopUntil > this.elapsed
     )
       return false;
-    const id = Number(abilityId) || 1;
-    const ability = this.commandsFor(actorIndex).find(
+    const id = typeof abilityId === 'string' && abilityId.startsWith('throw:') ? abilityId : Number(abilityId) || 1;
+    const command = this.commandsFor(actorIndex).find(
       (command) => command.id === id,
     );
-    if (!ability) {
-      this.warning(`Unavailable ability ${id}; using Fight.`);
-      return this.choose(actorIndex, 1, targetIndex);
+    if (!command) {
+      this.warning(`Unavailable ability ${id}; command rejected.`);
+      return false;
     }
+    const ability = command.throwContentId ? { ...command, id:10, kind:command.effect.kind } : command;
     if (ability.mp > actor.mp) {
       this.addLog(`${actor.name}的魔力不足。`);
       return false;
     }
+    this.clearRunic(actor);
     actor.mp -= ability.mp ?? 0;
     actor.defending = false;
     if (ability.kind === "defend") {
       actor.defending = true;
       this.addLog(`${actor.name}防御。`);
     } else {
-      const pool = ability.target === "ally" ? this.players : this.enemies;
-      const target = this.targetable(pool[targetIndex] || {})
-        ? pool[targetIndex]
-        : pool.find((unit) => this.targetable(unit));
-      if (!target) {
+      const requested = typeof targetIndex === "object" && targetIndex !== null ? targetIndex : null;
+      const side = requested ? (requested.side === 2 || requested.side === "enemy" ? "enemy" : "player") :
+        ability.target === "ally" || [1,2,5,12].includes(ability.range) || isRevival(this.data, ability) ? "player" : "enemy";
+      const pool = ability.range === 5 ? [actor] : side === "player" ? this.players : this.enemies;
+      const target = ability.range === 5 ? actor : pool[requested?.index ?? targetIndex];
+      const selected = this.eligibleTarget(target, ability) ? target : pool.find(unit=>this.eligibleTarget(unit,ability));
+      if (!selected) {
+        actor.mp += ability.mp ?? 0;
         this.addLog("目标暂时离开了战场。");
-        this.consumeTurn(actor);
-        return true;
+        return false;
       }
-      const targets = ability.all
-        ? pool.filter((unit) => this.targetable(unit))
-        : [target];
-      targets.forEach((unit, index) =>
-        this.perform(actor, unit, ability, targets.length, { updateVariables: index === 0 }),
-      );
+      const targets = ability.range === 9 ? [...this.players,...this.enemies].filter(unit=>this.eligibleTarget(unit,ability)) :
+        ability.all ? pool.filter(unit=>this.eligibleTarget(unit,ability)) : [selected];
+      const sequence = {};
+      targets.forEach((unit,index)=>this.perform(actor,unit,ability,targets.length,{updateVariables:index===0,sequence,
+        throwContentId:command.throwContentId}));
     }
     this.consumeTurn(actor);
     this.checkEnd();
@@ -748,6 +660,13 @@ export class Battle {
     this.turns += 1;
   }
 
+  clearRunic(actor) {
+    if (!actor.runic) return;
+    for (const id of [...actor.conditions || []]) if (this.data.conditions?.[id]?.condition_type === 612)
+      setCondition(this,actor,id,false);
+    actor.runic = false;
+  }
+
   enemyTurn(actor) {
     actor.aiState?.wake("normal");
     this.drainAI();
@@ -755,132 +674,41 @@ export class Battle {
     this.checkEnd();
   }
 
-  perform(actor, target, ability, targetCount = 1, { updateVariables = true } = {}) {
+  releaseCharged(actor) {
+    const ability = this.data.abilities?.[actor.chargedAbility], previous = actor.chargedTarget;
+    actor.chargedAbility = null;
+    actor.chargedTarget = null;
+    if (ability) {
+      const targets = this.selectAITargets(actor, ability, previous, ability.all), sequence = {};
+      for (const target of targets) this.perform(actor, target, ability, targets.length, {sequence});
+    }
+    this.consumeTurn(actor);
+    this.checkEnd();
+  }
+
+  perform(actor, target, ability, targetCount = 1, options = {}) {
     if (!actor || !target || !ability) return;
-    let original = ability;
-    if (!this.supported(ability)) {
-      this.warning(
-        `Ability ${ability.id} effect is not implemented; using Fight.`,
-      );
-      ability = this.data.abilities?.[1] || {
-        id: 1,
-        kind: "physical",
-        power: 0,
-        systemId: 3,
-        typeId: 4,
-      };
-    }
-    let amount = 0,
-      hit = true,
-      critical = false,
-      damage =
-        (ability.functions || []).some((f) => [1, 2, 3].includes(f.id)) ||
-        !ability.functions;
-    if (updateVariables && ["ADD_VARIABLE_CALC", "SET_VARIABLE_CALC"].includes(ability.process)) {
-      // PR dataB selects the attacker's fifteen-cell variable bank; dataC is
-      // the operand. This companion effect runs once for the entire action,
-      // including an all-target action, without suppressing its primary damage.
-      const variable = ability.dataB, vars = actor.aiState?.vars;
-      if (vars) vars[variable] = (ability.process === "SET_VARIABLE_CALC" ? ability.dataC :
-        (vars[variable] ?? 0) + ability.dataC) | 0;
-    }
-    if (ability.process === "SM_ERASER") {
-      target.hp = 0;
-      target.ready = false;
-      target.removed = true;
-      damage = false;
-    }
-    for (const fn of ability.functions || []) {
-      const id = fn.values?.[0];
-      switch (fn.id) {
-        case 9:
-        case 11: {
-          const add = fn.id === 9;
-          target.conditions ??= [];
-          target.conditions = add
-            ? [...new Set([...target.conditions, id])]
-            : target.conditions.filter((x) => x !== id);
-          const row = this.data.conditions?.[id],
-            type = row?.condition_type;
-          if (id === 5) {
-            target.hp = add ? 0 : Math.max(1, target.hp);
-            target.ready = false;
-          }
-          if (id === 67 || type === 625) target.hidden = add;
-          if (id === 76 || type === 667) target.untargetable = add;
-          if (id === 79 || id === 80)
-            target.disguise = add ? (id === 79 ? 2 : 1) : 0;
-          if (type === 17) {
-            target.stopUntil = add
-              ? this.elapsed + Math.max(1, row.until_value || 30)
-              : 0;
-            target.ready = false;
-          }
-          break;
-        }
-        case 38:
-          target.conditions = (target.conditions || []).filter((x) => x !== id);
-          break;
-        case 15:
-          target.defending = true;
-          break;
-        case 16:
-          target.escaped = true;
-          target.hidden = true;
-          target.ready = false;
-          break;
-        case 52: {
-          const chance = Math.min(
-            100,
-            Math.max(5, 50 + (actor.level - target.level) * 2),
-          );
-          hit = this.random() * 100 < chance;
-          if (hit && !target.stolen) {
-            const item = target.steal?.find((x) => x.id > 0);
-            if (item)
-              this.inventory[item.id] =
-                (this.inventory[item.id] || 0) + (item.count || 1);
-            target.stolen = true;
-          }
-          break;
-        }
+    if (options.sequence?.absorbed) return;
+    // Runic consumes a compatible magic action and restores its source MP cost.
+    if (ability.flags?.includes(3) && ability.mp > 0 && !options.runic) {
+      const runic = [...this.players,...this.enemies].find(u=>u.runic && this.alive(u) && u!==actor);
+      if (runic) {
+        for (const id of [...runic.conditions || []]) if (this.data.conditions?.[id]?.condition_type === 612)
+          setCondition(this,runic,id,false);
+        runic.runic=false;runic.mp=Math.min(runic.maxMp,runic.mp+ability.mp);
+        if(options.sequence)options.sequence.absorbed=true;
+        this.addLog(`${runic.name}魔封剑吸收了${ability.name}。`);return;
       }
     }
-    if (damage) {
-      const result = calculateDamage(
-        actor,
-        target,
-        ability,
-        this.random,
-        targetCount,
-      );
-      hit = !result.missed;
-      critical = result.critical;
-      if (hit) {
-        amount = ability.kind === "heal" ? -result.amount : result.amount;
-        amount =
-          this.events?.beforeDamage(actor, target, ability, amount) ?? amount;
-        target.hp = clamp(target.hp - amount, 0, target.maxHp);
-      }
+    if (!ability.invalidReflection && ability.kind === "magic" && hasConditionType(this.data,target,413) && !options.reflected) {
+      const pool=(target.side==='player'?this.enemies:this.players).filter(u=>this.targetable(u));
+      if(pool.length)return this.perform(actor,pool[Math.floor(this.random()*pool.length)],ability,targetCount,{...options,reflected:true});
     }
-    if (target.hp <= 0) {
-      target.ready = false;
-      target.atb = 0;
-    }
-    const action = {
-      actor,
-      target,
-      ability,
-      depth: this.actionDepth || 0,
-      selectedAbilityId: original.id,
-      amount,
-      critical,
-      hit,
-      time: this.elapsed,
-    };
-    this.addLog(
-      `${actor.name} → ${target.name}：${ability.name || "战斗"}${hit ? (amount ? " " + (amount < 0 ? "回复 " : "") + Math.abs(amount) : "") : " 未命中"}`,
-    );
+    const result = executeAbilityEffects(this,actor,target,ability,targetCount,options,calculateDamage);
+    if(target.hp<=0){target.ready=false;target.atb=0;}
+    const action={actor,target,ability,...result,depth:this.actionDepth||0,selectedAbilityId:ability.id,time:this.elapsed,...(options.item?{item:options.item}:{})};
+    if(actor.side==='player' && !options.item && ability.id!==17)this.lastMimicAction=action;
+    this.addLog(`${actor.name} → ${target.name}：${ability.name || "战斗"}${result.hit ? (result.amount ? " " + (result.amount < 0 ? "回复 " : "") + Math.abs(result.amount) : result.mp ? " MP " + result.mp : "") : " 未命中"}`);
     this.notifyAction(action);
   }
 
@@ -888,8 +716,8 @@ export class Battle {
     if (this.phase !== "active") return;
     const terminalOutcome = () =>
       this.events?.forcedOutcome?.outcome ||
-      (!this.players.some((unit) => this.alive(unit))
-        ? "defeat"
+      (this.escapeState?.complete ? 'escape' : !this.players.some((unit) => this.alive(unit))
+        ? this.escapeState?.members.some(member => member.unit.escaped) ? 'escape' : "defeat"
         : !this.enemies.some((unit) => this.alive(unit))
           ? "victory"
           : null);
@@ -934,37 +762,21 @@ export class Battle {
           });
       }
       this.result.ap = this.formation.ap ?? 0;
-      const survivors = this.players.filter((unit) => this.alive(unit));
-      const share = Math.floor(this.result.exp / Math.max(1, survivors.length));
-      survivors.forEach((unit) => {
-        unit.exp = (unit.exp ?? 0) + share;
-        for (const row of this.data.expTable ?? []) {
-          if (
-            row.group_id !== 1 ||
-            row.lv <= unit.level ||
-            row.total_exp > unit.exp
-          )
-            continue;
-          unit.level = row.lv;
-          const growth = this.data.growth?.find(
-            (g) => g.group_id === 1 && g.lv === row.lv,
-          );
-          unit.maxHp = Math.min(9999, unit.maxHp + (growth?.hp_value1 ?? 0));
-          unit.maxMp = Math.min(999, unit.maxMp + (growth?.mp_value1 ?? 0));
-          for (const spell of unit.naturalLearning ?? [])
-            if (spell.level <= unit.level) {
-              unit.abilities ??= [1, 2];
-              if (!unit.abilities.includes(spell.abilityId))
-                unit.abilities.push(spell.abilityId);
-            }
-          this.addLog(`${unit.name}升到了 ${unit.level} 级！`);
-        }
-      });
+      applyBattleRewards(this.data, this.players, this.result, { log: message => this.addLog(message) });
+    }
+    for (const unit of this.players) {
+      unit.conditions = (unit.conditions || []).filter(id =>
+        !this.data.conditions?.[id] || this.data.conditions[id].until_type === 3);
+      unit.berserk = hasConditionType(this.data,unit,410);
+      unit.protect = hasConditionType(this.data,unit,19);
+      unit.shell = hasConditionType(this.data,unit,412);
+      unit.trance = hasConditionType(this.data,unit,621);
+      unit.runic = false; unit.conditionUntil = {}; unit.periodicClocks = {};
     }
     this.addLog(
       outcome === "victory"
         ? `胜利！经验 ${this.result.exp}，金币 ${this.result.gil}。`
-        : "队伍倒下了。",
+        : outcome === 'escape' ? '队伍成功逃离。' : "队伍倒下了。",
     );
     if (!this.yielded) {
       this.yielded = true;

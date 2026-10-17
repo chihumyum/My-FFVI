@@ -3,6 +3,7 @@ import { routeToStory } from "./navigation.js";
 import { randomEncounterInput, vehicleJourneyInput, prepareStoryParty } from "./story-actions.js";
 import { pendingEventInput } from "./event-systems.js";
 import { cooperativeStoryInput } from "./cooperative-input.js";
+import { prepareFieldInput, prepareBattleReadiness } from "./field-preparation.js";
 import {
   nextStoryObjective,
   storyChapters,
@@ -40,6 +41,8 @@ export function followTarget(game, input) {
 export function advanceStory(game, { through = "all" } = {}) {
   if (game.over) return { status: "game-over" };
   if (game.busy) return { status: "busy" };
+  const preparation = prepareFieldInput(game, pathTo);
+  if (preparation) return followTarget(game, preparation);
   if (
     !game.history.some((entry) => entry.script === "sc_e_0001_0") ||
     through === "M1"
@@ -78,9 +81,12 @@ export function advanceStory(game, { through = "all" } = {}) {
   const input = prepareStoryParty(game, objective, pathTo) || (objective.action === "random-encounter"
     ? randomEncounterInput(game, objective, pathTo)
     : findStoryTarget(game, objective));
+  const readiness = prepareBattleReadiness(game, objective, input, pathTo);
+  if (readiness?.status === "training-walk")
+    return { ...readiness, objective: objective.id, chapter: objective.chapter };
   return {
-    ...followTarget(game, ["no-route", "no-input", "needs-input"].includes(input.status)
-      ? pendingEventInput(game) || input : input),
+    ...followTarget(game, readiness || (["no-route", "no-input", "needs-input"].includes(input.status)
+      ? pendingEventInput(game) || input : input)),
     objective: objective.id,
     chapter: objective.chapter,
   };

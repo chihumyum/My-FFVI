@@ -21,10 +21,14 @@ function project(
     groups = new Set(["entity_default"]),
     destinations = [],
     scripts = new Set([name]),
-    syscalls = new Set(),
-    scriptFrames = [], bindings = {};
+    syscalls = new Set(), recoveries = new Set(), encounters = new Set(),
+    scriptFrames = [], bindings = {}, actorPositions = new Map();
   let player = { ...(position || (mapId === game.mapId ? game.player : {})) }, moved = false, leavesMap = false;
-  const result = () => ({ groups, destinations, scripts, syscalls, banks, leavesMap, landing: moved && !leavesMap ? player : null });
+  const result = () => ({ groups, destinations, scripts, syscalls, recoveries, encounters, banks, actorPositions, leavesMap, landing: moved && !leavesMap ? player : null });
+  const service = child => {
+    for (const kind of child.recoveries || []) recoveries.add(kind);
+    for (const id of child.encounters || []) encounters.add(id);
+  };
   const setPosition = (x, y, layer) => {
     if (Number.isFinite(x) && Number.isFinite(y)) {
       player = { x, y, layer: layer > 0 ? layer - 1 : player.layer ?? 1 };
@@ -108,6 +112,14 @@ function project(
       case "SysCall":
         syscalls.add(s[0]);
         break;
+      case "RemoveGil": {
+        const fee = (game.data.systemTables?.product || []).find(row =>
+          Number(row.group_id) === i[0] && Number(row.content_id) === 0);
+        bank('MapLocalVariable')[0] = Number((game.gil || 0) >= Number(fee?.coefficient ?? i[0]));
+        break;
+      }
+      case "RecoveryHP": recoveries.add('hp'); break;
+      case "RecoveryMP": recoveries.add('mp'); break;
       case "BranchByLeader":
         if (game.partySlots?.[game.partyIndex]?.[0] === i[0]) pc = i[1];
         break;
@@ -131,21 +143,29 @@ function project(
         break;
       case "ExecPuppet":
         if (i[0] === 0 && depth < 16) for (const binding of Object.values(bindings)) {
-          if (![-1001, -1010].includes(binding.actor)) continue;
+          if (![-1001, -1010].includes(binding.actor) && binding.actor <= 0) continue;
+          const isPlayer = [-1001, -1010].includes(binding.actor);
+          const initialPosition = isPlayer ? player : actorPositions.get(binding.actor) ||
+            map.entries.find(entry => String(entry.id) === String(binding.actor)) || {};
           const child = project(game, mapId, data.programs[programId].name, {
-            actor: binding.actor, startPc: binding.pc, position: player,
+            actor: binding.actor, startPc: binding.pc, position: initialPosition,
             depth: depth + 1, initialBanks: { ...initialBanks, ...banks },
             previousArea: map.areaId, sameMapContext: true, direction,
           });
-          if (child.landing) { player = child.landing; moved = true; }
+          if (child.landing) {
+            if (isPlayer) { player = child.landing; moved = true; }
+            else actorPositions.set(binding.actor, child.landing);
+          }
+          for (const [id, position] of child.actorPositions) actorPositions.set(id, position);
           Object.assign(banks, child.banks);
           destinations.push(...child.destinations);
           for (const name of child.syscalls) syscalls.add(name);
+          service(child);
         }
         for (const key of Object.keys(bindings)) delete bindings[key];
         break;
       case "SetPos":
-        if (actor === null || [-1001, -1010].includes(actor)) {
+        if (actor === null || actor > 0 || [-1001, -1010].includes(actor)) {
           if (i[3] === 1 && [-1001, -1010].includes(i[4]))
             setPosition(Math.floor(player.x) + i[0], Math.floor(player.y) + i[1], i[2]);
           else if (i[3] !== 1) setPosition(i[0] < 0 ? player.x : i[0], i[1] < 0 ? player.y : i[1], i[2]);
@@ -153,11 +173,11 @@ function project(
         break;
       case "Lerp":
       case "Route":
-        if (actor === null || [-1001, -1010].includes(actor)) setPosition(i[0], i[1], i[2]);
+        if (actor === null || actor > 0 || [-1001, -1010].includes(actor)) setPosition(i[0], i[1], i[2]);
         break;
       case "Move":
       case "MoveBirdView":
-        if (actor === null || [-1001, -1010].includes(actor)) {
+        if (actor === null || actor > 0 || [-1001, -1010].includes(actor)) {
           const [dx, dy] = [[0, -1], [1, 0], [0, 1], [-1, 0]][i[0]] || [0, 0];
           setPosition(Math.floor(player.x) + dx * i[1], Math.floor(player.y) + dy * i[1], 0);
         }
@@ -180,6 +200,7 @@ function project(
           destinations.push(...next.destinations);
           for (const name of next.scripts) scripts.add(name);
           for (const name of next.syscalls) syscalls.add(name);
+          service(next);
           Object.assign(banks, next.banks);
           if (next.landing) destinations.push({ mapId: i[0], position: next.landing });
         }
@@ -187,6 +208,7 @@ function project(
         }
       case "Encount":
       case "EncountBoss":
+        encounters.add(i[0]);
         if (s[0]) {
           scripts.add(s[0]);
           if (followContinuations && depth < 16) {
@@ -197,6 +219,7 @@ function project(
             if (next.destinations.some(dest => dest.entrance !== undefined)) leavesMap = true;
             for (const name of next.scripts) scripts.add(name);
             for (const name of next.syscalls) syscalls.add(name);
+            service(next);
             Object.assign(banks, next.banks);
             if (next.landing) destinations.push({ mapId, position: next.landing });
           }
@@ -226,6 +249,7 @@ function navigationState(game) {
     game.mapId,
     game.areaId,
     game.partySlots,
+    game.gil,
     game.player.vehicle,
     Object.entries(game.banks.PlaySystems?.vehicles || {}).filter(([id]) => [4, 5].includes(Number(id)))
       .map(([id, value]) => [id, value.mapId, value.enabled,
@@ -260,6 +284,8 @@ function navigationState(game) {
             one.destinations.push({ mapId, position: extra.landing });
           for (const target of extra.scripts) one.scripts.add(target);
           for (const name of extra.syscalls) one.syscalls.add(name);
+          for (const kind of extra.recoveries || []) one.recoveries.add(kind);
+          for (const id of extra.encounters || []) one.encounters.add(id);
           for (const group of extra.groups) one.groups.add(group);
         }
       }
@@ -292,20 +318,25 @@ function navigationState(game) {
     if (!maps.has(mapId)) {
       const map = game.data.navigation.maps[mapId];
       if (!map) return [];
+      const initialized = script(mapId, map.initializer, true);
       const groups =
         mapId === game.mapId
           ? game.groups
-          : script(mapId, map.initializer, true).groups;
+          : initialized.groups;
       maps.set(
         mapId,
         map.entries
           .filter((entry) => groups.has(entry.group))
-          .map((entry) => {
+          .map((sourceEntry) => {
+            const position = initialized.actorPositions.get(Number(sourceEntry.id));
+            const entry = position && mapId !== game.mapId ? { ...sourceEntry, ...position,
+              regions: entryRegions(map, { ...sourceEntry, ...position }) } : sourceEntry;
             const projected = entry.script ? script(mapId, entry.script, false, entry) : null,
               destinations = entry.destination ? [entry.destination] : [...(projected?.destinations || [])];
             if (projected?.landing && (projected.landing.x !== entry.x || projected.landing.y !== entry.y || projected.landing.layer !== entry.layer))
               destinations.push({ mapId, position: projected.landing });
-            return { ...entry, destinations, syscalls: projected?.syscalls || new Set(), scripts: projected
+            return { ...entry, destinations, syscalls: projected?.syscalls || new Set(),
+              recoveries: projected?.recoveries || new Set(), encounters: projected?.encounters || new Set(), scripts: projected
               ? reachableScripts(mapId, projected, groups) : new Set() };
           }),
       );
@@ -346,6 +377,19 @@ function pointRegions(map, point) {
     entrance.y === point.y && entrance.layer === point.layer)?.regions || [];
 }
 
+function entryRegions(map, entry) {
+  const regions = new Set(pointRegions(map, entry));
+  if ([3,5,6,7,8,10,17].includes(entry.kind))
+    for (const [dx,dy] of [[0,-1],[1,0],[0,1],[-1,0]]) {
+      const near = { ...entry,x:entry.x+dx,y:entry.y+dy };
+      const adjacent = pointRegions(map, near);
+      for (const region of adjacent) regions.add(region);
+      if (!adjacent.length && [5,6,7,8,10,17].includes(entry.kind))
+        for (const region of pointRegions(map,{ ...entry,x:entry.x+dx*2,y:entry.y+dy*2 })) regions.add(region);
+    }
+  return [...regions];
+}
+
 export function routeToStory(game, objective, pathTo) {
   const navigation = game.data.navigation;
   if (!navigation) return { status: "no-navigation" };
@@ -353,8 +397,10 @@ export function routeToStory(game, objective, pathTo) {
     [...(objective.scripts || []), ...(objective.after || [])];
   const state = navigationState(game),
     matches = (entry) =>
-      requested.some((name) => entry.scripts.has(name)) ||
-      (typeof objective !== "string" && objective.syscalls?.some(name => entry.syscalls?.has(name)));
+      requested.some((name) => entry.scripts?.has(name)) ||
+      (typeof objective !== "string" && (objective.syscalls?.some(name => entry.syscalls?.has(name)) ||
+        objective.shops?.includes(entry.productGroup) ||
+        objective.rest && !entry.encounters?.size && entry.recoveries?.has(objective.rest)));
   const actual = (entry) => {
     const source = game.entities.find(
       (e) => e.id === entry.id && e.script === entry.script,
@@ -399,7 +445,7 @@ export function routeToStory(game, objective, pathTo) {
             history: [...game.history, ...[...projected.scripts].map(script => ({ script }))],
           }, objective.complete), reaches: requested.some((name) =>
             state.reachableScripts(game.mapId, projected, game.groups).has(name),
-          ) || typeof objective !== "string" && objective.syscalls?.some(name => projected.syscalls.has(name)) };
+          ) || matches(projected) };
       });
       // Some scripts keep their name on an immediate direction-guarded Exit.
       // Prefer source branches that actually produce the objective's state;
@@ -419,8 +465,8 @@ export function routeToStory(game, objective, pathTo) {
   if (currentMap) {
     const fresh = project(game, game.mapId, currentMap.initializer, { initializer: true, newEntry: true });
     const refreshedTarget = matches(fresh) || currentMap.entries.some(entry =>
-      entry.script && !game.groups.has(entry.group) && fresh.groups.has(entry.group) &&
-      matches(state.script(game.mapId, entry.script, false, entry)));
+      !game.groups.has(entry.group) && fresh.groups.has(entry.group) &&
+      (matches(entry) || entry.script && matches(state.script(game.mapId, entry.script, false, entry))));
     if (refreshedTarget) {
       const doors = local.filter(entry => entry.kind === 3 && entry.destination?.mapId !== game.mapId)
         .map(entry => actual(entry)).filter(Boolean)
@@ -539,4 +585,51 @@ export function routeToStory(game, objective, pathTo) {
     status: "no-route",
     script: typeof objective === "string" ? objective : objective.id,
   };
+}
+
+// Player preparation may inspect the imminent source encounter, but still has
+// to walk, train and interact through normal inputs. This projection neither
+// starts that script nor changes its flags or the party's attributes.
+export function encountersForInput(game, input) {
+  const target = input?.target, name = target?.script || target?.npc?.interaction?.script;
+  if (!game.data.navigation?.maps[game.mapId]) return [];
+  const ids = new Set();
+  const destinations = target?.destination ? [target.destination] : [];
+  const upcoming = [];
+  let point = { ...game.player };
+  const steps = { up:[0,-1],right:[1,0],down:[0,1],left:[-1,0] };
+  for (const direction of input?.route || []) {
+    const [dx,dy] = steps[direction] || [0,0];
+    point = { ...point, x:point.x+dx, y:point.y+dy };
+    for (const entity of game.entities || []) {
+      const actual = { ...entity, ...game.actors.get(String(entity.id)) };
+      if (actual.visible === false || actual.layer != null && actual.layer !== point.layer ||
+          Math.abs(actual.x-point.x) > .6 || Math.abs(actual.y-point.y) > .6) continue;
+      if (entity.kind === 4 && entity.destinationLayer != null) point.layer = entity.destinationLayer;
+      if (entity.kind === 2 && entity.script && !game.triggered?.has(`${game.mapId}:${[...game.groups].join(',')}:${entity.id}`))
+        upcoming.push({ ...actual, direction });
+    }
+  }
+  for (const trigger of upcoming) {
+    const preview = project(game,game.mapId,trigger.script,{direction:trigger.direction,position:trigger});
+    for (const id of preview.encounters) ids.add(id);
+    destinations.push(...preview.destinations);
+  }
+  if (name) for (const direction of target.allowedDirections?.length ? target.allowedDirections : ['up','right','down','left']) {
+    const preview = project(game,game.mapId,name,{direction,position:target});
+    for (const id of preview.encounters) ids.add(id);
+    destinations.push(...preview.destinations);
+  }
+  const seen = new Set();
+  for (let head = 0; head < destinations.length && head < 16; head++) {
+    const destination = destinations[head], map = game.data.navigation.maps[destination.mapId];
+    const key = `${destination.mapId}:${destination.entrance}`;
+    if (!map?.initializer || seen.has(key)) continue;
+    seen.add(key);
+    const preview = project(game, map.id, map.initializer, { newEntry: true,
+      previousArea: game.areaId, position: destination.position || map.entrances[destination.entrance] });
+    for (const id of preview.encounters) ids.add(id);
+    destinations.push(...preview.destinations);
+  }
+  return [...ids];
 }

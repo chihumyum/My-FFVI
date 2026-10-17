@@ -1,4 +1,6 @@
 import { isVeldt } from './encounters.js';
+import { equipmentDefinition, emptyEquipment, recalculateEquipment } from './progression.js';
+import { optimizeEquipment } from './resources.js';
 const bank = (game, name) => game.banks[name] ??= {};
 const systems = game => bank(game, 'PlaySystems');
 const pose = actor => ({ x: actor.x, y: actor.y, layer: actor.layer, direction: actor.direction, vehicle: actor.vehicle });
@@ -99,20 +101,45 @@ const shopGroups = {
   'サウスフィガロの町(崩壊後_エドガー先頭)武器屋': 89, 'サウスフィガロの町(崩壊後_エドガー先頭)防具屋': 90,
   'サウスフィガロの町(崩壊後_エドガー先頭)アクセサリー屋': 91, 'サウスフィガロの町(崩壊後_エドガー先頭)道具屋': 92,
 };
-function stock(game, groupId) {
+export function shopStock(game, groupId) {
   return rows(game, 'product').filter(row => Number(row.group_id) === groupId && Number(row.content_id) > 0).map(row => {
     const contentId = Number(row.content_id), content = game.battleData.contents?.[contentId];
     const item = content?.type_id === 1 ? game.battleData.items?.[content.type_value] : content?.type_id === 2 ?
       game.battleData.weapons?.[content.type_value] : game.battleData.armors?.[content?.type_value];
-    return { id: contentId, name: game.text(content?.mes_id_name), price: Math.max(0, Number(row.coefficient) || item?.buy || 0) };
-  });
+    return { id: contentId, name: game.battleData.contentNames?.[contentId] || game.text(content?.mes_id_name), price: Math.max(0, (item?.buy ?? 0) + Number(row.coefficient || 0)),
+      limit: Number(row.purchase_limit) || 0, productId: Number(row.id) };
+  }).filter(product => product.price > 0);
+}
+export function openShop(game, groupId, task = null) {
+  game.shop = { groupId, stock: shopStock(game, groupId), task };
+  systems(game).shop = { groupId, stock: game.shop.stock };
+  if (task) task.waitFor = 'shop';
+  game.event('shop', systems(game).shop);
+  return true;
 }
 export function buyFromShop(game, contentId, count = 1) {
   const product = game.shop?.stock?.find(item => item.id === contentId);
-  count = Math.max(1, Math.trunc(count));
-  if (!product || game.gil < product.price * count) return false;
+  if (!Number.isInteger(count) || count <= 0) return false;
+  const worn = Object.values(game.roster ?? {}).reduce((total, unit) => total + (unit.equipment ?? []).filter(id => id === contentId).length, 0);
+  const held = Number(game.inventory[contentId] ?? 0) + worn;
+  const bought = Number(systems(game).purchases?.[product?.productId] ?? 0);
+  if (!product || game.gil < product.price * count || held + count > (game.battleData?.limits?.MAX_ITEM ?? 99) ||
+      product.limit > 0 && bought + count > product.limit) return false;
   game.gil -= product.price * count;
   game.inventory[contentId] = (game.inventory[contentId] ?? 0) + count;
+  systems(game).purchases ??= {};
+  systems(game).purchases[product.productId] = bought + count;
+  game.event('shop-buy', { contentId, count, price: product.price * count });
+  return true;
+}
+export function sellToShop(game, contentId, count = 1) {
+  if (!game.shop || !Number.isInteger(count) || count <= 0 || (game.inventory[contentId] ?? 0) < count) return false;
+  const content = game.battleData.contents?.[contentId];
+  const item = content?.type_id === 1 ? game.battleData.items?.[content.type_value] : equipmentDefinition(game.battleData, contentId);
+  if (!item || item.type_id === 2 || item.sales_not_possible || !(item.sell > 0)) return false;
+  game.inventory[contentId] -= count;
+  game.gil = Math.min(game.battleData?.limits?.MAX_GIL ?? 9999999, game.gil + item.sell * count);
+  game.event('shop-sell', { contentId, count, price: item.sell * count });
   return true;
 }
 
@@ -127,16 +154,20 @@ export function closeShop(game) {
 
 export function autoShopInput(game, purchase) {
   if (!game.shop) return false;
-  if (purchase) {
-    const needed = Math.max(0, (purchase.count || 1) - (game.inventory[purchase.contentId] || 0));
-    if (needed && !buyFromShop(game, purchase.contentId, needed))
-      game.warn(game.shop.task, `Cannot buy content ${purchase.contentId}: unavailable stock or insufficient gil.`);
+  for (const request of [purchase, ...(game.autoPurchase?.(game) ?? [])].filter(Boolean)) {
+    const needed = Math.max(0, (request.count || 1) - (game.inventory[request.contentId] || 0));
+    const price = game.shop.stock.find(item => item.id === request.contentId)?.price;
+    const count = Math.min(needed, Math.floor(game.gil / (price || Infinity)));
+    if (count && !buyFromShop(game, request.contentId, count))
+      game.warn(game.shop.task, `Cannot buy content ${request.contentId}: unavailable stock, inventory cap or insufficient gil.`);
+    else if (request === purchase && count < needed)
+      game.warn(game.shop.task, `Cannot fully buy required content ${request.contentId}: insufficient gil.`);
   }
   return closeShop(game);
 }
 
 export function shopScriptsForContent(game, contentId) {
-  const names = new Set(Object.entries(shopGroups).filter(([, id]) => stock(game, id).some(product => product.id === contentId)).map(([name]) => name));
+  const names = new Set(Object.entries(shopGroups).filter(([, id]) => shopStock(game, id).some(product => product.id === contentId)).map(([name]) => name));
   return Object.values(game.data.programs).filter(program => program.ops.some(op =>
     op[0] === 'SysCall' && names.has(op[3]?.[0]?.replace(/^ショップを開く:/, '')))).map(program => program.name);
 }
@@ -145,10 +176,8 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
   const state = systems(game), subject = name.split(/[：:]/).slice(1).join('：');
   if (name.startsWith('ショップを開く:')) {
     const groupId = shopGroups[subject];
-    game.shop = { groupId, stock: groupId ? stock(game, groupId) : [], task };
-    state.shop = { groupId, stock: game.shop.stock };
-    task.waitFor = 'shop';
-    game.event('shop', state.shop);
+    if (!groupId) warn(`Shop selector ${subject} has no mapped product group; using an empty shop.`);
+    openShop(game, groupId, task);
     return true;
   }
   if (name === 'リネームカード') { game.event('name', { id: game.party[0]?.id, name: game.party[0]?.name }); return true; }
@@ -212,17 +241,12 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
     for (const unit of Object.values(game.roster)) {
       if (unit.enabled === false || name.startsWith('控え') && current.has(unit.id)) continue;
       for (const contentId of unit.equipment ?? []) {
-        const content = game.battleData.contents?.[contentId];
-        const definition = content?.type_id === 2 ? game.battleData.weapons?.[content.type_value] : game.battleData.armors?.[content?.type_value];
-        if (definition && (definition.attack || definition.defense || definition.ability_defense))
+        const definition = equipmentDefinition(game.battleData, contentId);
+        if (definition && definition.type_id !== 2)
           game.inventory[contentId] = (game.inventory[contentId] ?? 0) + 1;
       }
-      unit.equipment = [];
-      if (!game.testBoost) {
-        const base = rows(game, 'characterStatus').find(row => Number(row.id) === unit.id);
-        if (base) Object.assign(unit, { attack: Number(base.attack), defense: Number(base.defense), magicDefense: Number(base.ability_defense),
-          strength: Number(base.strength), magic: Number(base.magic), speed: Number(base.agility) });
-      }
+      unit.equipment = Array.from({ length: 6 }, (_, slot) => emptyEquipment(game.battleData, slot));
+      recalculateEquipment(game.battleData, unit);
     }
     game.event('equipment-removed', { reserveOnly: name.startsWith('控え') });
     return true;
@@ -230,11 +254,9 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
   if (name.startsWith('最強装備：')) {
     const id = characterSelectors[subject];
     if (!id) return false;
-    const unit = game.unit(id), base = rows(game, 'characterStatus').find(row => Number(row.id) === id);
-    // Keep the source loadout when job-group membership has not been exported.
-    unit.equipment ??= base ? Array.from({ length: 6 }, (_, index) => Number(base[`content_id${index + 1}`])) : [];
+    const unit = game.unit(id);
+    optimizeEquipment(game, id, { duringEvent: true });
     game.event('equipment', { id, equipment: unit.equipment });
-    warn('Best-equipment selection currently keeps the character source loadout instead of guessing job restrictions.');
     return true;
   }
   if (name === 'バードビュー情報を保存') { state.worldPose = { ...pose(game.player), mapId: game.mapId }; return true; }

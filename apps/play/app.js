@@ -1,6 +1,7 @@
 import{buyFromShop,closeShop}from'/play-runtime/event-systems.js';
 import{submitPartyInput,cancelPartyInput}from'/play-runtime/party-input.js';
 import{openVehicleInput,vehicleInputState,submitVehicleInput,closeVehicleInput}from'/play-runtime/vehicle-input.js';
+import{renderPartyMenu}from'/game/party-menu.js';
 import {PlayGame} from '/play-runtime/game.js';import{advanceStory}from'/play-runtime/story-route.js';import{storyChoice}from'/play-runtime/story-plan.js';import{Battle}from'/play-runtime/battle.js';
 const $=id=>document.getElementById(id),canvas=$('screen'),ctx=canvas.getContext('2d'),cache=new Map();let game,auto=false,paused=false,started=false,frame=0,last=performance.now(),bgm=null,lastBgm=0;let data,battleData,walking=false,walkClock=0,autosavePending=false,titlePending=false;
 const json=async url=>{const r=await fetch(url);if(!r.ok)throw Error(await r.text());return r.json();};
@@ -12,15 +13,24 @@ function save(){if(game&&!game.busy){localStorage.setItem(game.testBoost?'ffvi-p
 $('walk').onclick=()=>{walking=!walking;$('walk').textContent=`自动行走：${walking?'开':'关'}`;if(walking&&!auto)$('auto').click();};$('switch').onclick=()=>game?.switchParty();$('retry').onclick=()=>{const bytes=localStorage.getItem(game?.testBoost?'ffvi-play-test':'ffvi-play');if(bytes)start(JSON.parse(bytes));else start(null,game?.testBoost);};$('test').onclick=()=>start(null,true);$('new').onclick=()=>start();$('loadtest').onclick=()=>{const bytes=localStorage.getItem('ffvi-play-test');if(bytes)start(JSON.parse(bytes));};$('load').onclick=()=>{const bytes=localStorage.getItem('ffvi-play');if(bytes)start(JSON.parse(bytes));};$('save').onclick=save;$('confirm').onclick=()=>game?.confirm();$('auto').onclick=()=>{auto=!auto;$('auto').textContent=`自动推进：${auto?'开':'关'}`;};$('close').onclick=()=>{paused=false;$('menu').hidden=true;};
 const keys=new Set();addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Enter'].includes(e.key))e.preventDefault();keys.add(e.key);if(!game)return;if(e.key==='Enter'||e.key===' '){game.confirm();}if(e.key==='q'||e.key==='Q')game.switchParty();if(e.key==='Escape'){paused=!paused;$('menu').hidden=!paused;renderMenu();}});addEventListener('keyup',e=>keys.delete(e.key));
 function renderMenu(){
- $('party').textContent=game.party.map(u=>`${u.name}   Lv ${u.level}   HP ${u.hp}/${u.maxHp}  MP ${u.mp}/${u.maxMp}`).join('\n')+`\nGil ${game.gil}`;
- $('items').replaceChildren();for(const[id,count]of Object.entries(game.inventory)){const item=battleData.items?.[battleData.contents?.[id]?.type_value];if(!count||!item||![1,2,3,4].includes(item.menu_function_group_id))continue;const button=document.createElement('button');button.textContent=({2:'恢复剂',3:'高级恢复剂',5:'以太',10:'凤凰之尾'})[id]||`道具 ${id}`;button.textContent+=` ×${count}`;button.onclick=()=>{const targets=$('items');targets.replaceChildren();for(const unit of game.party){const target=document.createElement('button');target.textContent=unit.name;target.onclick=()=>{game.useItem(id,unit.id);renderMenu();};targets.append(target);}};$('items').append(button);}
+ renderPartyMenu(game,{party:$('party'),items:$('items')},renderMenu);
 }
 let shopView=null;
 function renderShop(){
  const shop=game.shop;$('shop').hidden=!shop;if(!shop){shopView=null;return;}
  $('shop-gil').textContent=`Gil ${game.gil}`;
- if(shopView!==shop){shopView=shop;$('shop-stock').replaceChildren();for(const item of shop.stock){const button=document.createElement('button');button.textContent=`${item.name} · ${item.price} Gil`;button.onclick=()=>{buyFromShop(game,item.id);renderShop();};$('shop-stock').append(button);}}
+ const marker=game.gil+':'+JSON.stringify(game.inventory);
+ if(shopView!==shop||$('shop-stock').dataset.state!==marker){
+  shopView=shop;$('shop-stock').dataset.state=marker;$('shop-stock').replaceChildren();
+  for(const item of shop.stock){const button=document.createElement('button');button.textContent=`购买 ${item.name} · ${item.price} Gil`;button.disabled=game.gil<item.price;button.onclick=()=>{buyFromShop(game,item.id);renderShop();};$('shop-stock').append(button);}
+  for(const [id,count]of Object.entries(game.inventory)){
+   const content=battleData.contents?.[id],item=content?.type_id===1?battleData.items?.[content.type_value]:content?.type_id===2?battleData.weapons?.[content.type_value]:content?.type_id===3?battleData.armors?.[content.type_value]:null;
+   if(!(count>0)||!item?.sell||item.sales_not_possible)continue;
+   const button=document.createElement('button');button.textContent=`卖出 ${game.text(content.mes_id_name)} ×${count} · ${item.sell} Gil`;button.onclick=()=>{game.sell(Number(id));renderShop();};$('shop-stock').append(button);
+  }
+ }
 }
+$('escape').onclick=()=>game?.battle?.requestEscape();
 $('shop-close').onclick=()=>{closeShop(game);renderShop();};
 let vehicleView=null;
 function renderVehicle(){
@@ -51,8 +61,26 @@ function drawMap(){const m=game.map;if(!m)return;const tile=m.tileSize||16,focus
 for(const l of m.layers){if(!l.data)continue;ctx.globalAlpha=l.opacity??1;for(let y=Math.max(0,Math.floor(oy/tile));y<Math.min(l.height,Math.ceil((oy+H)/tile));y++)for(let x=Math.max(0,Math.floor(ox/tile));x<Math.min(l.width,Math.ceil((ox+W)/tile));x++){const raw=l.data[y*l.width+x]>>>0,gid=raw&0x1fffffff;if(!gid)continue;const set=[...m.tilesets].reverse().find(t=>t.firstgid<=gid);if(!set)continue;const img=image(m.textures[set.image]);if(!img)continue;let index=gid-set.firstgid;const anim=set.tiles?.find(t=>t.id===index)?.animation;if(anim?.length)index=anim[Math.floor(game.time*5)%anim.length].tileid;const sw=set.tilewidth||tile,sh=set.tileheight||tile;ctx.save();ctx.translate(x*tile+tile/2,y*tile+tile/2);ctx.scale(raw&0x80000000?-1:1,raw&0x40000000?-1:1);ctx.drawImage(img,(index%set.columns)*sw,Math.floor(index/set.columns)*sh,sw,sh,-tile/2,-tile/2,tile,tile);ctx.restore();}}
 ctx.globalAlpha=1;const actors=[...game.actors.values(),game.player].filter(a=>a.visible!==false&&a!==game.camera).sort((a,b)=>a.y-b.y);for(const a of actors){if(a.vehicle===6)sprite('mo_ff6_v006_c00',a.animation,a.x*tile,a.y*tile+tile);if(a.asset)sprite(a.asset,a.animation,a.x*tile+tile/2,a.y*tile+tile);}
 ctx.restore();if(game.fade){const f=game.fade,p=Math.min(1,(game.time-f.start)/f.duration);ctx.fillStyle=`rgba(0,0,0,${f.from+(f.to-f.from)*p})`;ctx.fillRect(0,0,960,640);}}
-function drawBattle(){const b=game.battle;ctx.fillStyle='#172638';ctx.fillRect(0,0,960,640);const bg=image(battleData.backgrounds?.[b.formation?.backgroundId]?.sprite?.url);if(bg)ctx.drawImage(bg,0,0,960,480);
+function drawBattle(){const b=game.battle;$('escape').disabled=!b.canEscape;$('escape').textContent=b.escapeState?.active?'正在逃跑…':'逃跑';ctx.fillStyle='#172638';ctx.fillRect(0,0,960,640);const bg=image(battleData.backgrounds?.[b.formation?.backgroundId]?.sprite?.url);if(bg)ctx.drawImage(bg,0,0,960,480);
 for(const[side,units]of[['enemy',b.enemies],['player',b.players]])units.forEach((u,n)=>{if(u.hp<=0||u.hidden||u.removed||u.escaped)return;const x=side==='enemy'?180+n%3*120:740+(n%2)*75,y=side==='enemy'?230+Math.floor(n/3)*90:130+n*70,img=image(u.sprite?.url);if(img)ctx.drawImage(img,x-img.width,y-img.height*2,img.width*2,img.height*2);else{ctx.fillStyle=side==='enemy'?'#ae4058':'#b4c1ef';ctx.fillRect(x,y,40,55);}ctx.fillStyle='#fff';ctx.font='18px system-ui';ctx.fillText(u.name,x-25,y+75);});
 $('battle-status').textContent=b.players.map(u=>`${u.name.padEnd(6,' ')} HP ${String(u.hp).padStart(4)}/${u.maxHp}  MP ${u.mp}  ATB ${Math.floor(u.atb||0)}`).join('\n')+'\n'+b.log.slice(-2).join(' · ');
-const ready=b.players.findIndex(u=>u.ready&&u.hp>0);const marker=ready+':'+b.phase;if($('commands').dataset.state!==marker){$('commands').dataset.state=marker;$('commands').replaceChildren();$('targets').replaceChildren();if(ready>=0)for(const cmd of b.commandsFor(ready)){const button=document.createElement('button');button.textContent=cmd.name;button.disabled=!!cmd.disabled;button.onclick=()=>{const units=cmd.target==='ally'?b.players:b.enemies;$('targets').replaceChildren();for(const[unit,n]of units.map((u,n)=>[u,n])){const target=document.createElement('button');target.textContent=unit.name;target.disabled=cmd.revive?unit.hp>0:unit.hp<=0||unit.hidden||unit.removed||unit.untargetable;target.onclick=()=>{b.choose(ready,cmd.id,n);$('commands').dataset.state='';};$('targets').append(target);}};$('commands').append(button);}}}
+const ready=b.players.findIndex(u=>u.ready&&u.hp>0),actor=b.players[ready];
+const marker=ready+':'+b.phase+':'+actor?.mp+':'+JSON.stringify(game.inventory);
+if($('commands').dataset.state!==marker){
+ $('commands').dataset.state=marker;$('commands').replaceChildren();$('targets').replaceChildren();
+ if(ready>=0)for(const cmd of b.commandsFor(ready)){
+  const button=document.createElement('button');button.textContent=cmd.name+(cmd.mp?' · '+cmd.mp+' MP':'');button.disabled=!!cmd.disabled;
+  button.onclick=()=>{
+   if(cmd.kind==='defend'||cmd.range===5){b.choose(ready,cmd.id,{side:'player',index:ready});$('commands').dataset.state='';return;}
+   const sides=cmd.targetSides||[cmd.target==='ally'?'player':'enemy'];
+   $('targets').replaceChildren();
+   for(const side of sides)for(const [n,unit]of(side==='player'?b.players:b.enemies).entries()){
+    const target=document.createElement('button');target.textContent=unit.name+' HP '+unit.hp+'/'+unit.maxHp;
+    target.disabled=unit.hidden||unit.removed||unit.escaped||(cmd.revive?unit.hp>0:unit.hp<=0||unit.untargetable);
+    target.onclick=()=>{b.choose(ready,cmd.id,{side,index:n});$('commands').dataset.state='';};$('targets').append(target);
+   }
+  };$('commands').append(button);
+ }
+}}
+
 function loop(now){const dt=Math.min(.1,(now-last)/1000);last=now;ctx.imageSmoothingEnabled=false;ctx.fillStyle='#080e1b';ctx.fillRect(0,0,960,640);if(started&&game){if(!paused){for(let n=0;n<(auto?(game.testBoost?16:4):1);n++){game.tick(dt,{auto});if(walking){walkClock+=dt;if(walkClock>=.1){walkClock-=.1;const input=advanceStory(game,{through:new URLSearchParams(location.search).get('through')||'all'});if(input.status==='done'){walking=false;auto=false;$('walk').textContent='自动行走：关';$('auto').textContent='自动推进：关';$('location').textContent=input.chapter?input.chapter+' 已完成':'已离开纳尔谢 · 世界地图';}else if(['no-route','no-input','game-over','needs-input','plan-end'].includes(input.status)){walking=false;$('walk').textContent='自动行走：关';$('location').textContent='自动行走暂停，请手动操作';}}}}if(autosavePending&&!game.busy){localStorage.setItem(game.testBoost?'ffvi-play-test':'ffvi-play',JSON.stringify(game.snapshot()));autosavePending=false;}if(titlePending&&!game.busy){titlePending=false;started=false;walking=false;auto=false;$('walk').textContent='自动行走：关';$('auto').textContent='自动推进：关';$('title').hidden=false;$('location').textContent=game.history.some(row=>row.script==='sc_e_1032_18')?'主线通关 · 已返回标题':'已返回标题';}if(++frame%7===0)for(const[k,d]of[['ArrowUp','up'],['w','up'],['ArrowDown','down'],['s','down'],['ArrowLeft','left'],['a','left'],['ArrowRight','right'],['d','right']])if(keys.has(k))game.move(d);}if(game.battle)drawBattle();else drawMap();renderFormation();renderShop();renderVehicle();$('battle').hidden=!game.battle;$('switch').hidden=!game.rts?.active;$('dialogue').hidden=!game.dialogue;if(game.dialogue){$('speaker').textContent=game.dialogue.speaker;$('message').textContent=game.dialogue.text;const choiceKey=game.dialogue.choices?.join('|')||'';if($('choices').dataset.key!==choiceKey){$('choices').dataset.key=choiceKey;$('choices').replaceChildren();for(const[label,n]of(game.dialogue.choices||[]).map((x,n)=>[x,n])){const button=document.createElement('button');button.textContent=label;button.onclick=()=>game.confirm(n);$('choices').append(button);}}$('confirm').hidden=!!game.dialogue.choices;}}requestAnimationFrame(loop);}requestAnimationFrame(loop);

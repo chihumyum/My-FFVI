@@ -21,19 +21,21 @@ export async function addNpcFlags(map){
   }
  }
  for(const entity of [...map.entities||[],...Object.values(map.groups||{}).flatMap(group=>group.entities||[])]){
-  if((!entity.npc&&entity.kind!==30)||!entity.source?.pointer)continue;
+  if(entity.npc)entity.npc.interaction={...entity.npc.interaction,actionId:0,productGroup:0};
+  if((!entity.npc&&![9,30].includes(entity.kind))||!entity.source?.pointer)continue;
   const source=entity.source,assets=await sourceBundle(source),asset=assets.find(item=>item.source.assetPath===source.assetPath);
   const object=source.pointer.split('/').filter(Boolean).reduce((value,key)=>value?.[key],asset?.data);
   const props=Object.fromEntries((object?.properties||[]).map(row=>[row.name,row.value]));
-  if(entity.npc){entity.npc.allLayers=props.all_layers===true;entity.npc.birdview=props.birdview_puppet===true;}
+  if(entity.npc){entity.npc.allLayers=props.all_layers===true;entity.npc.birdview=props.birdview_puppet===true;Object.assign(entity.npc.interaction,{actionId:Number(props.action_id)||0,productGroup:Number(props.product_group_id)||0});}
   if(entity.kind===30){entity.leaveScriptId=props.leave_script_id||0;entity.actionId=props.action_id||0;}
+  if(entity.kind===9)entity.savePoint={actionId:Number(props.action_id)||0,visible:object?.visible!==false};
  }
 }
 const omit=new Set(['source','sources','contentHash','sha256','blockers','limitations','rawHash','parentSourceSetHash','sourceSetHash']);
 function clean(v){if(Array.isArray(v))return v.map(clean);if(v&&typeof v==='object')return Object.fromEntries(Object.entries(v).filter(([k])=>!omit.has(k)&&!k.endsWith('Blockers')).map(([k,x])=>[k,clean(x)]));return v;}
 export async function preparePlayMap(id,{force=false}={}){
  const out=resolve(root,`build/play/maps/${id}.json`);
- if(!force){try{const old=JSON.parse(await readFile(out,'utf8'));const entities=[...old.entities||[],...Object.values(old.groups||{}).flatMap(g=>g.entities||[])];if(old.routes&&(old.layers?.length||old.entities?.length)&&entities.every(e=>(!e.npc||typeof e.npc.allLayers==='boolean')&&(e.kind!==30||'leaveScriptId'in e)))return out;}catch{}}
+ if(!force){try{const old=JSON.parse(await readFile(out,'utf8'));const entities=[...old.entities||[],...Object.values(old.groups||{}).flatMap(g=>g.entities||[])];if(old.routes&&(old.layers?.length||old.entities?.length)&&entities.every(e=>(!e.npc||typeof e.npc.allLayers==='boolean'&&'actionId'in(e.npc.interaction||{}))&&(e.kind!==30||'leaveScriptId'in e)&&(e.kind!==9||e.savePoint)))return out;}catch{}}
  const src=await read(`build/world/maps/${id}.json`);
  const map=src.map||await recoverSourceMap(src)||{width:64,height:64,tileSize:16,layers:[],tilesets:[],textures:{},collisions:{},entities:[],groups:{}};await addNpcFlags(map);const value=clean({id:Number(id),name:src.name,areaId:src.areaId,initializer:src.initializer,...map});value.id=Number(id);
  await mkdir(resolve(root,'build/play/maps'),{recursive:true});await writeFile(out,JSON.stringify(value));return out;
