@@ -10,6 +10,7 @@ Goal: port FF6 Pixel Remaster to the Web, playable from a new game to the ending
 - Original game assets, extracted text and generated output stay out of Git.
 
 ## Don't
+- Don't open external Chrome/Safari during development or acceptance. Use the ChatGPT in-app browser; record external-browser compatibility as pending unless the user explicitly asks to run it again.
 - Don't read legacy/ or reconnect archived builders, scripts or generated products.
 - Don't add game-strategy intelligence to the automatic player. Freeze existing policy; no new shopping, grinding, supplies, MP budgets or counter-cost prediction. Diagnose genuine game bugs and fix them; use explicit boosted mode for strategy failures.
 - Don't add source hashes, evidence levels or "verified" flags to objects.

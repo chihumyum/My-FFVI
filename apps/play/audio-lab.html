@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>FFVI 音频循环验收</title>
+    <style>
+      body {
+        font: 16px system-ui;
+        margin: 24px;
+        background: #101a30;
+        color: #e4ebff;
+        max-width: 1000px;
+      }
+      button,
+      select,
+      input {
+        font: inherit;
+        margin: 6px;
+        padding: 8px;
+      }
+      button {
+        cursor: pointer;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 8px;
+        border-bottom: 1px solid #354565;
+      }
+      pre {
+        white-space: pre-wrap;
+        background: #182640;
+        padding: 16px;
+      }
+      a {
+        color: #a6caff;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>FFVI · Web Audio 循环验收</h1>
+    <p>
+      原 PR 采样循环点 → 48 kHz Opus。点击曲目可从循环终点前 5
+      秒开始；播放自动跨过循环边界，暂停后可恢复原位置。所有播放均使用 AudioBufferSourceNode。
+    </p>
+    <p>
+      <button id="unlock">启用音频</button><button id="pause">暂停</button
+      ><button id="resume">恢复</button><button id="stop">淡出停止</button
+      ><label
+        >音量 <input id="volume" type="range" min="0" max="1" step="0.05" value="0.5"
+      /></label>
+    </p>
+    <p>
+      <label
+        >全部曲目
+        <select id="tracks"></select></label
+      ><button id="play">播放选中曲目</button><button id="near-loop">跳到循环点前 5 秒</button>
+    </p>
+    <p>
+      <button id="test">验证 10 首循环（离线 Web Audio，不插入空白样本）</button
+      ><button id="environment">环境音循环测试</button><button id="stop-env">停止环境音</button>
+    </p>
+    <pre id="status" role="status">正在加载音频清单…</pre>
+    <h2>10 首代表曲目</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>曲目</th>
+          <th>源采样率</th>
+          <th>48k 循环采样</th>
+          <th>循环秒</th>
+          <th>试听</th>
+        </tr>
+      </thead>
+      <tbody id="examples"></tbody>
+    </table>
+    <h2>验证结果</h2>
+    <button id="download">保存验证报告</button>
+    <pre id="results">尚未执行</pre>
+    <p>返回 <a href="/game/">游戏</a>。本页是音频测试工具，不写游戏存档。</p>
+    <script type="module" src="/game/audio-lab.js"></script>
+  </body>
+</html>

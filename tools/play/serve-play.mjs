@@ -10,6 +10,8 @@ const types = {
   ".png": "image/png",
   ".flac": "audio/flac",
   ".ogg": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".m4a": "audio/mp4",
 };
 http
   .createServer(async (req, res) => {

@@ -1,3 +1,4 @@
+import { withPresentation } from "../../apps/play/presentation-events.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { PlayGame } from "../../src/play/game.js";
 import { Battle } from "../../src/play/battle.js";
@@ -23,7 +24,12 @@ data.navigation = JSON.parse(await readFile(`${dataRoot}/navigation.json`));
 let through = process.env.PLAY_THROUGH;
 if (process.env.PLAY_CHECKPOINT_DIR)
   await mkdir(process.env.PLAY_CHECKPOINT_DIR, { recursive: true });
-const game = new PlayGame({
+const presentationCounts = {};
+const RegressionGame = withPresentation(PlayGame);
+const game = new RegressionGame({
+  onPresentation: (event) => {
+    presentationCounts[event.name] = (presentationCounts[event.name] || 0) + 1;
+  },
   data,
   battleData,
   Battle,
@@ -302,3 +308,9 @@ if (
   !(game.titleScreen && game.battles.some((b) => b.encounterId === 472 && b.outcome === "victory"))
 )
   process.exitCode = 1;
+
+if (process.env.PLAY_PRESENTATION_REPORT)
+  await writeFile(
+    process.env.PLAY_PRESENTATION_REPORT,
+    JSON.stringify(presentationCounts, null, 2) + "\n",
+  );

@@ -29,6 +29,9 @@ for (const tool of ["vgmstream-cli", "ffmpeg"]) {
   const check = spawnSync(tool, [tool === "ffmpeg" ? "-version" : "-V"], { encoding: "utf8" });
   if (check.error) throw Error(`Missing ${tool}; see README export prerequisites.`);
 }
+const encoders = spawnSync("ffmpeg", ["-hide_banner", "-encoders"], { encoding: "utf8" });
+if (!/\blibopus\b/.test(encoders.stdout || ""))
+  throw Error("FFmpeg lacks libopus; install an Opus-enabled FFmpeg (see README).");
 const pythonCheck = spawnSync(python, ["-c", "import UnityPy, PIL, capstone"], {
   encoding: "utf8",
 });
@@ -39,7 +42,7 @@ if (pythonCheck.status !== 0)
 const start = Date.now();
 await run("unity.py", ["--game", source, "--out", out]);
 await run("native.py", ["--game", source, "--out", path.join(out, "raw/magic-stones.json")]);
-await run("audio.py", ["--out", out]);
+await run("audio.py", ["--out", out, ...(args.includes("--aac") ? ["--aac"] : [])]);
 const counts = await compileRuntime(out);
 const categories = {};
 async function scan(directory, prefix = "") {

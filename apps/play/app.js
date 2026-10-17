@@ -1,3 +1,9 @@
+import { WebAudioPlayer } from "/game/audio.js";
+import {
+  withPresentation,
+  observingAudioInstruction,
+  isAudioInstruction,
+} from "/game/presentation-events.js";
 import { createBattleMenu } from "/game/battle-menu.js";
 import { buyFromShop, closeShop } from "/play-runtime/event-systems.js";
 import { submitPartyInput, cancelPartyInput } from "/play-runtime/party-input.js";
@@ -21,9 +27,7 @@ let game,
   paused = false,
   started = false,
   frame = 0,
-  last = performance.now(),
-  bgm = null,
-  lastBgm = 0;
+  last = performance.now();
 let data,
   battleData,
   walking = false,
@@ -45,26 +49,23 @@ function image(url) {
   const i = cache.get(url);
   return i.complete && i.naturalWidth ? i : null;
 }
-function sound(kind, id) {
-  if (kind === "bgm") {
-    if (lastBgm === id) return;
-    lastBgm = id;
-    bgm?.pause();
-    if (!id) return;
-  }
-  const catalog = data.audio[kind === "bgm" ? "bgm" : "se"];
-  const track = catalog?.tracks?.[id];
-  if (!track) return;
-  const a = new Audio(track.file);
-  a.volume = kind === "bgm" ? 0.25 : 0.35;
-  if (kind === "bgm") {
-    bgm = a;
-    a.loop = true;
-  }
-  a.play().catch(() => {});
+const audio = new WebAudioPlayer();
+const PresentationGame = withPresentation(PlayGame);
+addEventListener("pointerdown", () => audio.unlock().catch((error) => audio.warn(error.message)));
+addEventListener("keydown", () => audio.unlock().catch((error) => audio.warn(error.message)));
+function presentation(command) {
+  const result = audio.command(command);
+  result?.catch?.((error) => audio.warn(error.message));
 }
 function event(e) {
-  if (e.kind === "bgm" || e.kind === "se") sound(e.kind, e.id);
+  if ((e.kind === "bgm" || e.kind === "se") && !observingAudioInstruction(game)) {
+    const engine = game?.battle?.events;
+    const op = engine?.program?.ops?.[engine.pc - 1];
+    if (op && isAudioInstruction(op[0]))
+      presentation({ name: op[0], i: op[1], r: op[2], s: op[3] });
+    else audio.event(e)?.catch?.((error) => audio.warn(error.message));
+  }
+  if (e.kind === "battle-effect" && isAudioInstruction(e.name)) presentation(e);
   if (e.kind === "script") $("location").textContent = `${e.scene} · ${e.script}`;
   if (e.kind === "autosave" || e.kind === "save-menu") autosavePending = true;
   if (e.kind === "title-screen") titlePending = true;
@@ -82,7 +83,9 @@ async function start(saved = null, testBoost = false) {
       json("/play-data/battle.json"),
     ]);
     data.navigation = await json("/play-data/navigation.json");
-    game = new PlayGame({
+    audio.setCatalog(data.audio);
+    game = new PresentationGame({
+      onPresentation: presentation,
       data,
       battleData,
       Battle,
