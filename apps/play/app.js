@@ -1,5 +1,5 @@
 import { WebData, webIndexURL } from "./data.js";
-import { loadPresentation, presentText } from "./presentation.js";
+import { loadPresentation, loadBattlePresentation, presentText } from "./presentation.js";
 import { SaveLibrary, renderSaveSlots } from "./saves.js";
 import { GameRenderer } from "./renderer.js";
 import { GameUI, createWidget } from "./ui.js";
@@ -29,6 +29,7 @@ await renderer.init();
 const ui = new GameUI(renderer.layers.ui, (url) => renderer.getTexture(url));
 const $ = (id) => ui.get(id) || document.getElementById(id);
 let game,
+  battleDialogue = null,
   auto = false,
   paused = false,
   started = false,
@@ -42,6 +43,10 @@ let data,
   autosavePending = false,
   titlePending = false;
 const audio = new WebAudioPlayer();
+renderer.onBattleSound = (id) =>
+  audio
+    .command({ name: "PlaySE", i: [id], r: [], s: [] })
+    ?.catch?.((error) => audio.warn(error.message));
 const saveLibrary = new SaveLibrary();
 const menuState = { page: "队伍" };
 const PresentationGame = withPresentation(PlayGame);
@@ -56,6 +61,16 @@ function presentation(command) {
   result?.catch?.((error) => audio.warn(error.message));
 }
 function event(e) {
+  if (e.kind === "battle-message")
+    battleDialogue = {
+      text: presentText(game, e.text)
+        .replace(/<[^>]*>/g, "")
+        .replace(/\\n/g, "\n"),
+      speaker: data.speakers[e.key] || "",
+      choices: null,
+    };
+  if (e.kind === "battle-message-close" || e.kind === "battle-end") battleDialogue = null;
+  if (["battle-action", "battle-party", "battle-end"].includes(e.kind)) renderer.event(e);
   if ((e.kind === "bgm" || e.kind === "se") && !observingAudioInstruction(game)) {
     const engine = game?.battle?.events;
     const op = engine?.program?.ops?.[engine.pc - 1];
@@ -79,11 +94,13 @@ function event(e) {
 }
 async function start(saved = null, testBoost = false) {
   renderer.resetPresentation();
+  battleDialogue = null;
   $("new").disabled = true;
   try {
     repository = new WebData(webIndexURL());
     ({ data, battleData } = await repository.open(saved));
     renderer.setAssets(repository.index.assets.images, repository.baseURL);
+    await loadBattlePresentation(repository, renderer);
     audio.setAssets(repository.index.assets.audio, repository.baseURL);
     audio.setCatalog(data.audio);
     ui.setCharacters(battleData.characters);
@@ -203,7 +220,10 @@ $("load").onclick = () => {
 };
 $("menu-save").onclick = save;
 $("confirm").onclick = () => {
-  if (!ui.revealDialogue()) game?.confirm();
+  if (!ui.revealDialogue()) {
+    if (battleDialogue) battleDialogue = null;
+    else game?.confirm();
+  }
 };
 $("auto").onclick = () => {
   auto = !auto;
@@ -230,12 +250,12 @@ addEventListener("keydown", (e) => {
   if (e.target?.tagName === "BUTTON" && ["Enter", " "].includes(e.key)) return;
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Enter"].includes(e.key))
     e.preventDefault();
-  if (game?.battle && battleMenu.handleKey(e)) {
+  if (game?.battle && !battleDialogue && battleMenu.handleKey(e)) {
     e.preventDefault();
     return;
   }
   keys.add(e.key);
-  if (e.key === "Tab" && game?.battle) {
+  if (e.key === "Tab" && game?.battle && !battleDialogue) {
     e.preventDefault();
     battleMenu.cycle();
     return;
@@ -243,7 +263,8 @@ addEventListener("keydown", (e) => {
   if (!game) return;
   if (e.key === "Enter" || e.key === " ") {
     if (ui.revealDialogue()) return;
-    game.confirm();
+    if (battleDialogue) battleDialogue = null;
+    else game.confirm();
   }
   if (e.key === "q" || e.key === "Q") game.switchParty();
   if (e.key === "Escape") {
@@ -462,7 +483,7 @@ function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (started && game) {
-    if (!paused) {
+    if (!paused && (!battleDialogue || auto)) {
       for (let n = 0; n < (auto ? (game.testBoost ? 16 : 4) : 1); n++) {
         game.tick(dt, { auto });
         if (walking) {
@@ -535,27 +556,28 @@ function loop(now) {
     renderNaming();
     renderShop();
     renderVehicle();
-    $("battle").hidden = !game.battle;
+    $("battle").hidden = !game.battle || !!battleDialogue;
     $("switch").hidden = !game.rts?.active;
-    $("dialogue").hidden = !game.dialogue;
-    if (game.dialogue) {
-      const speaker = presentText(game, game.dialogue.speaker),
-        message = presentText(game, game.dialogue.text);
-      ui.setDialogue(game.dialogue, game.settings.textSpeed, auto, speaker, message);
+    const dialogue = battleDialogue || game.dialogue;
+    $("dialogue").hidden = !dialogue;
+    if (dialogue) {
+      const speaker = presentText(game, dialogue.speaker),
+        message = presentText(game, dialogue.text);
+      ui.setDialogue(dialogue, game.settings.textSpeed, auto, speaker, message);
       $("speaker").textContent = speaker;
       $("message").textContent = message;
-      const choiceKey = game.dialogue.choices?.join("|") || "";
+      const choiceKey = dialogue.choices?.join("|") || "";
       if ($("choices").dataset.key !== choiceKey) {
         $("choices").dataset.key = choiceKey;
         $("choices").replaceChildren();
-        for (const [label, n] of (game.dialogue.choices || []).map((x, n) => [x, n])) {
+        for (const [label, n] of (dialogue.choices || []).map((x, n) => [x, n])) {
           const button = createWidget("button");
           button.textContent = label;
           button.onclick = () => game.confirm(n);
           $("choices").append(button);
         }
       }
-      $("confirm").hidden = !!game.dialogue.choices;
+      $("confirm").hidden = !!dialogue.choices;
     } else ui.setDialogue(null);
   }
   ui.render();
@@ -592,14 +614,7 @@ if (import.meta.env.DEV) {
       game.dialogue = { text: game.text(key), speaker: data.speakers[key] || speaker, elapsed: 0 };
     } else if (panel === "shop") openShop(game, Number(params.get("shop")) || 1);
     else if (panel === "battle")
-      game.battle = new Battle({
-        data: battleData,
-        party: game.party,
-        inventory: game.inventory,
-        encounterId: Number(params.get("formation")) || 1,
-        context: { settings: game.settings },
-        random: () => 0.5,
-      });
+      game.encounter(Number(params.get("formation")) || 1, null, { waitFor: null }, {});
     $("location").textContent = `界面用例 · ${checkpoint} · ${panel || "地图"}（不计剧情覆盖）`;
   }
 }

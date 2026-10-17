@@ -13,6 +13,7 @@ const [data, battleData, fixtures] = await Promise.all([
 ]);
 const renderer = new GameRenderer($("webgl"));
 await renderer.init();
+renderer.setBattlePresentation(await read("/play-data/battle-presentation.json"));
 let game,
   oldDraw,
   selected,

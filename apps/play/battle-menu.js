@@ -130,7 +130,12 @@ export function createBattleMenu({
       close();
     }
     const eligible = (u) =>
-      u.ready && battle.alive(u) && battle.commandsFor(battle.players.indexOf(u)).length;
+      battle.phase === "active" &&
+      battle.events.interactive &&
+      !battle.events.paused &&
+      u.ready &&
+      battle.alive(u) &&
+      battle.commandsFor(battle.players.indexOf(u)).length;
     if (!eligible(battle.players[index] ?? {})) {
       index = battle.players.findIndex(eligible);
       close();

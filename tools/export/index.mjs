@@ -4,6 +4,8 @@ import { readFile, readdir, stat, writeFile, access } from "node:fs/promises";
 import path from "node:path";
 import { compileRuntime } from "./runtime.mjs";
 import { compilePresentation } from "./presentation.mjs";
+import { compileBattlePresentation } from "./battle-presentation.mjs";
+import { compileParticles } from "./particles.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
 const args = process.argv.slice(2),
   option = (name) => {
@@ -47,6 +49,8 @@ await run("native.py", ["--game", source, "--out", path.join(out, "raw/magic-sto
 await run("audio.py", ["--out", out, ...(args.includes("--aac") ? ["--aac"] : [])]);
 const counts = await compileRuntime(out);
 await compilePresentation(out, { game: source });
+const battlePresentationCounts = await compileBattlePresentation(out);
+const { summary: particleCounts } = await compileParticles(out);
 await prepareWeb({ dataRoot: out });
 const categories = {};
 async function scan(directory, prefix = "") {
@@ -102,6 +106,13 @@ const manifest = {
   categories,
   mediaClasses,
   audioClasses,
+  visualClasses: {
+    battle: {
+      ...battlePresentationCounts,
+      bytes: (await stat(path.join(out, "battle-presentation.json"))).size,
+    },
+    particles: { ...particleCounts, bytes: (await stat(path.join(out, "particles.json"))).size },
+  },
   totalBytes: Object.values(categories).reduce((sum, row) => sum + row.bytes, 0),
   seconds: (Date.now() - start) / 1000,
 };

@@ -15,6 +15,8 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
   const battle = await read(path.join(dataRoot, "battle.json"));
   const navigation = await read(path.join(dataRoot, "navigation.json"));
   const presentation = await read(path.join(dataRoot, "presentation.json"));
+  const battlePresentation = await read(path.join(dataRoot, "battle-presentation.json"));
+  const particles = await read(path.join(dataRoot, "particles.json"));
   const files = new Set();
   async function payload(value, label) {
     const bytes = Buffer.from(JSON.stringify(value));
@@ -100,12 +102,24 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
     mapPrograms[id] = [...ids];
   }
   const { programs, ...core } = data;
+  const effectFiles = {};
+  for (const [asset, effect] of Object.entries(particles.effects))
+    effectFiles[asset] = await payload(
+      { ...effect, warnings: particles.warnings.filter((w) => w.effect === asset) },
+      asset,
+    );
+  const { effects, warnings, ...effectIndex } = particles;
+  effectIndex.files = effectFiles;
+  delete effectIndex.summary.seconds;
+  effectIndex.warnings = warnings.filter((w) => !effects[w.effect]);
   const index = {
     version: 1,
     core: await payload(core, "core"),
     battle: await payload(battle, "battle"),
     navigation: await payload(navigation, "navigation"),
     presentation: await payload(presentation, "presentation"),
+    battlePresentation: await payload(battlePresentation, "battle-presentation"),
+    effects: await payload(effectIndex, "effect-index"),
     maps,
     mapPrograms,
     programFiles,

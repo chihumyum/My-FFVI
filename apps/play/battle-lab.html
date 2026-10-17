@@ -27,11 +27,21 @@
           >阵型
           <select id="formation">
             <option value="451">究极武器（Boss）</option>
+            <option value="433">尤弥尔（Boss）</option>
+            <option value="437">隧道装甲（Boss）</option>
+            <option value="454">凯夫卡（Boss）</option>
             <option value="4">卫兵（普通战斗）</option>
           </select></label
         ><button id="restart">开始测试战斗</button><button id="cycle">切换就绪角色（Tab）</button
         ><a href="./">返回游戏</a>
         <div id="gogo-commands" hidden></div>
+        <p>演出预览：独立测试阵型中的真实技能结算，定格在 0.5 秒；不计剧情覆盖。</p>
+        <label
+          >技能演出
+          <select id="visual-skill"></select
+        ></label>
+        <button id="visual-play">播放并定格演出</button>
+        <span id="visual-result" role="status"></span>
       </header>
       <canvas id="screen" width="320" height="180"></canvas>
       <section id="battle">
@@ -43,6 +53,10 @@
       <details open>
         <summary>本场战斗日志</summary>
         <pre id="action-log"></pre>
+      </details>
+      <details>
+        <summary>渲染性能</summary>
+        <pre id="render-metrics"></pre>
       </details>
     </main>
     <script type="module" src="./battle-lab.js"></script>

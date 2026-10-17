@@ -22,6 +22,15 @@ export function presentText(game, value) {
     return id ? game.roster[id]?.name || game.battleData.characters[id]?.name || token : token;
   });
 }
+export async function loadBattlePresentation(repository, renderer) {
+  const index = repository.index || (await repository.json(webIndexURL().href));
+  if (index.battlePresentation)
+    renderer.setBattlePresentation(await repository.json(index.battlePresentation));
+  if (index.effects)
+    renderer.setEffectCatalog(await repository.json(index.effects), (file) =>
+      repository.json(file),
+    );
+}
 // Specific PR UI assets and selected RectTransforms, rather than a Unity UI VM.
 export async function loadPresentation(repository, renderer, ui) {
   const index = (repository.index ||= await repository.json(webIndexURL().href));

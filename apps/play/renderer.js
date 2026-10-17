@@ -9,6 +9,10 @@ import {
   TextureStyle,
 } from "pixi.js";
 
+import { BattlePresentation } from "./battle-presentation.js";
+import { PRParticles } from "./particles.js";
+import { EffectLibrary } from "./effects.js";
+
 const WIDTH = 320;
 const HEIGHT = 180;
 const HORIZONTAL = 0x80000000;
@@ -51,10 +55,12 @@ export class GameRenderer {
     };
     this.layers.mapLayers.sortableChildren = true;
     this.layers.near.sortableChildren = true;
+    this.layers.actors.sortableChildren = true;
     // PR scene_title: CameraFieldMain/CameraTileMap orthographic size 90;
     // CanvasScaler referenceResolution 1920x1080, at six UI units per world pixel.
     this.referenceResolution = Object.freeze({
       world: Object.freeze({ width: WIDTH, height: HEIGHT, orthographicSize: 90 }),
+      battle: Object.freeze({ width: 384, height: 216, orthographicSize: 108 }),
       ui: Object.freeze({ width: 1920, height: 1080 }),
       source: "PR scene_title CameraFieldMain/CameraTileMap and CanvasScaler",
     });
@@ -90,6 +96,23 @@ export class GameRenderer {
     this._visibleTiles = 0;
     this._visibleActors = 0;
     this._ready = false;
+    this._width = WIDTH;
+    this._height = HEIGHT;
+    this._effectTasks = new Set();
+    this._particleLayer = container("battle-particles");
+    this.layers.effects.addChild(this._particleLayer);
+    this.particles = new PRParticles({
+      container: this._particleLayer,
+      getTexture: (url) => this._texture(url),
+      warn: (message) => this._warnOnce(`particles:${message}`, message),
+    });
+    this.battlePresentation = new BattlePresentation({
+      actors: this.layers.actors,
+      effects: this.layers.effects,
+      getTexture: (url) => this._texture(url),
+      warn: (message) => this._warnOnce(`battle:${message}`, message),
+      onEffect: (event, actor, target) => this._battleEffect(event, actor, target),
+    });
   }
 
   async init() {
@@ -116,6 +139,18 @@ export class GameRenderer {
     // Re-enable through the public API once initialization has finished.
     this.app.renderer.accessibility?.setAccessibilityEnabled(false);
     this.app.renderer.accessibility?.setAccessibilityEnabled(true);
+    const overlay = this.app.renderer.accessibility?.div;
+    if (overlay) {
+      overlay.classList.add("pixi-accessibility");
+      // Pixi 8.22's CanvasObserver uses viewport coordinates, while our canvas
+      // parent is positioned. A fixed overlay avoids applying that offset twice.
+      Object.assign(overlay.style, {
+        position: "fixed",
+        top: "0px",
+        left: "0px",
+        transformOrigin: "0 0",
+      });
+    }
     this.canvas.style.imageRendering = "pixelated";
     this._background = new Sprite(Texture.WHITE);
     this._background.tint = 0x172638;
@@ -153,18 +188,101 @@ export class GameRenderer {
     const parentWidth = this.canvas.parentElement?.clientWidth || window.innerWidth;
     const width = availableWidth ?? parentWidth;
     const height = availableHeight ?? Math.max(HEIGHT, window.innerHeight - 40);
-    const scale = Math.max(1, Math.floor(Math.min(width / WIDTH, height / HEIGHT)));
+    const scale = Math.max(1, Math.floor(Math.min(width / this._width, height / this._height)));
     const resolution = scale * Math.max(1, Math.round(window.devicePixelRatio || 1));
     if (resolution !== this._resolution) {
-      this.app.renderer.resize(WIDTH, HEIGHT, resolution);
+      this.app.renderer.resize(this._width, this._height, resolution);
       this._resolution = resolution;
     }
     this._displayScale = scale;
-    this.canvas.style.width = `${WIDTH * scale}px`;
-    this.canvas.style.height = `${HEIGHT * scale}px`;
+    this.canvas.style.width = `${this._width * scale}px`;
+    this.canvas.style.height = `${this._height * scale}px`;
+  }
+
+  setBattlePresentation(catalog) {
+    this.battlePresentation.setCatalog(catalog);
+  }
+
+  setEffectCatalog(catalog, json) {
+    this.effectLibrary = new EffectLibrary(this.particles, catalog, json);
+  }
+
+  _battleEffect(event, actor, target) {
+    if (event.abilityId === 1 && !event.result.hit) return;
+    const library = this.effectLibrary;
+    if (!library) return;
+    const battle = this.battlePresentation.battle;
+    const unit = (event.actorSide === "player" ? battle.players : battle.enemies)[event.actorIndex];
+    let effectId = library.catalog.abilities[event.abilityId];
+    if (String(event.abilityId).startsWith("item:")) {
+      const content = battle.data.contents[String(event.abilityId).slice(5)];
+      effectId = library.catalog.items[content?.type_value];
+    }
+    if (event.abilityId === 1) {
+      const content = battle.data.contents[unit?.equipment?.[0]];
+      effectId = library.catalog.weapons[content?.type_id === 2 ? content.type_value : 1];
+    }
+    if (!effectId) return;
+    const mapping = library.catalog.effectIds[effectId];
+    this._warnOnce(
+      "effect-anchors",
+      "PR battle effect position/display types are retained; web currently anchors type1 at the actor and other effects at the target body. Choreography and sound offsets are approximated.",
+    );
+    const origin = mapping?.positionType === 1 ? actor : target;
+    const position = { x: origin.x, y: origin.y - 14, mirror: !!actor.mirror };
+    for (const id of event.result.critical && mapping?.criticalSE
+      ? [mapping.criticalSE]
+      : mapping?.se || [])
+      this.onBattleSound?.(id);
+    const task = library
+      .play(effectId, position, () => this.battlePresentation.battle === battle)
+      .catch((error) =>
+        this._warnOnce(
+          `effect:${effectId}`,
+          `Effect ${effectId}: ${error.message}; battle continues.`,
+        ),
+      );
+    this._effectTasks.add(task);
+    task.finally(() => this._effectTasks.delete(task));
+  }
+
+  /** Visual-lab still frame: clocks and particles freeze here, never in src/play. */
+  async captureBattleFrame(game, data, battleData, age = 0.5) {
+    this._previewClock = performance.now() / 1000;
+    this.render(game, data, battleData);
+    await Promise.all([...this._effectTasks]);
+    this.particles.update(age);
+    this._previewClock += age;
+    for (let pass = 0; pass < 3; pass++) {
+      this.render(game, data, battleData);
+      await Promise.all(
+        [...this._textureSources.values()].filter((s) => s.pending).map((s) => s.promise),
+      );
+    }
+    this.render(game, data, battleData);
+  }
+
+  _viewport(battle) {
+    const width = battle ? this.battlePresentation.catalog?.camera.width || 384 : WIDTH;
+    const height = battle ? this.battlePresentation.catalog?.camera.height || 216 : HEIGHT;
+    if (width === this._width && height === this._height) return;
+    this._width = width;
+    this._height = height;
+    this._resolution = null;
+    this.layers.ui.scale.set(width / 1920);
+    this.world.filterArea = new Rectangle(0, 0, width, height);
+    for (const s of [this._background, this._fade, this._flashSprite]) {
+      s.width = width;
+      s.height = height;
+    }
+    this.resize();
   }
 
   resetPresentation() {
+    this.battlePresentation.clear();
+    this.particles.clear();
+    this._previewClock = null;
+    this._battleExit = null;
     this._shake = null;
     this._flash = null;
   }
@@ -203,6 +321,23 @@ export class GameRenderer {
 
   /** Receives source presentation instructions after execution; never calls into the VM. */
   event(event) {
+    if (event?.kind === "battle-end" && this.battlePresentation.battle) {
+      const battle = this.battlePresentation.battle;
+      this._battleExit = {
+        until: performance.now() / 1000 + 1.5,
+        battle: {
+          ...battle,
+          outcome: event.outcome,
+          players: battle.players.map((u) => ({ ...u })),
+          enemies: battle.enemies.map((u) => ({ ...u })),
+        },
+      };
+      return;
+    }
+    if (["battle-action", "battle-party"].includes(event?.kind)) {
+      this.battlePresentation.event(event);
+      return;
+    }
     if (event?.kind !== "presentation-command") return;
     const i = event.i || [];
     const r = event.r || [];
@@ -569,8 +704,8 @@ export class GameRenderer {
       const key = `battle-background:${background.uid}`;
       let texture = this._crops.get(key);
       if (!texture) {
-        const width = Math.min(WIDTH, background.width);
-        const height = Math.min(HEIGHT, background.height);
+        const width = Math.min(this._width, background.width);
+        const height = Math.min(this._height, background.height);
         texture = new Texture({
           source: background.source,
           frame: new Rectangle(
@@ -585,58 +720,17 @@ export class GameRenderer {
       this._battleBackground.texture = texture;
       this._battleBackground.scale.set(1);
       this._battleBackground.position.set(
-        Math.floor((WIDTH - texture.width) / 2),
-        Math.floor((HEIGHT - texture.height) / 2),
+        Math.floor((this._width - texture.width) / 2),
+        Math.floor((this._height - texture.height) / 2),
       );
     }
-    let count = 0;
-    for (const [side, units] of [
-      ["enemy", battle.enemies],
-      ["player", battle.players],
-    ]) {
-      for (let n = 0; n < (units || []).length; n++) {
-        const unit = units[n];
-        if (unit.hp <= 0 || unit.hidden || unit.removed || unit.escaped) continue;
-        const sprite = pooledSprite(this._battleSprites, this.layers.actors, count);
-        let name = this._battleNames[count];
-        if (!name) {
-          name = new Text({
-            text: "",
-            style: { fontFamily: "system-ui", fontSize: 6, fill: 0xffffff },
-          });
-          name.roundPixels = true;
-          name.anchor.set(0.5, 0);
-          this.layers.actors.addChild(name);
-          this._battleNames[count] = name;
-        }
-        const info =
-          side === "player" && this._assetBaseURL && !this._assetImages[unit.sprite?.url]
-            ? (unit.magitek
-                ? battleData?.characters?.[unit.id]?.magitekSprite
-                : battleData?.characters?.[unit.id]?.sprite) || unit.sprite
-            : unit.sprite;
-        const texture = this._texture(info?.url);
-        // Keep source sprite pixels 1:1. This replaces the previous stretched
-        // 960x640 composition with source-size art in the PR 320x180 camera.
-        const baseX = side === "enemy" ? 60 + (n % 3) * 40 : 247 + (n % 2) * 25;
-        const baseY = side === "enemy" ? 92 + Math.floor(n / 3) * 26 : 40 + n * 24;
-        const x = Math.round(Math.max((texture?.width || 0) / 2 + 4, baseX));
-        const y = Math.round(Math.max((texture?.height || 0) + 4, baseY));
-        sprite.texture = texture || Texture.WHITE;
-        sprite.tint = texture ? 0xffffff : side === "enemy" ? 0xae4058 : 0xb4c1ef;
-        sprite.position.set(Math.round(x - (texture?.width || 13) / 2), y);
-        sprite.anchor.set(0, 1);
-        sprite.scale.set(texture ? 1 : 13, texture ? 1 : 18);
-        sprite.visible = true;
-        if (name.text !== unit.name) name.text = unit.name || "";
-        name.position.set(x, y + 3);
-        name.visible = true;
-        count++;
-      }
-    }
-    hideUnused(this._battleSprites, count);
-    hideUnused(this._battleNames, count);
-    this._visibleActors = count;
+    hideUnused(this._battleSprites, 0);
+    hideUnused(this._battleNames, 0);
+    this._visibleActors = this.battlePresentation.draw(
+      battle,
+      battleData,
+      this._previewClock ?? performance.now() / 1000,
+    );
   }
 
   render(game, data, battleData) {
@@ -649,15 +743,22 @@ export class GameRenderer {
     this._previousFrame = start;
     this._visibleTiles = 0;
     this._visibleActors = 0;
-    const inBattle = !!game?.battle;
+    const displayedBattle =
+      game?.battle || (this._battleExit?.until > start / 1000 ? this._battleExit.battle : null);
+    const inBattle = !!displayedBattle;
+    this._viewport(inBattle);
     this.layers.mapLayers.visible = !inBattle;
     this.layers.near.visible = !inBattle;
     this._background.visible = false;
     this._battleBackground.visible = false;
     if (inBattle) {
       hideUnused(this._fieldSprites, 0);
-      this._drawBattle(game, battleData);
+      this._drawBattle({ battle: displayedBattle }, battleData);
     } else {
+      if (this.battlePresentation.battle) {
+        this.battlePresentation.clear();
+        this.particles.clear();
+      }
       hideUnused(this._battleSprites, 0);
       hideUnused(this._battleNames, 0);
       this._drawMap(game || {}, data);
@@ -671,7 +772,21 @@ export class GameRenderer {
       : 0;
     this._fade.visible = this._fade.alpha > 0;
     this._drawEffects(game);
+    if (this._previewClock == null)
+      this.particles.update(
+        Math.min(0.1, Math.max(0, (start - (this._particleTime || start)) / 1000)),
+      );
+    if (this._previewClock != null) this.particles.update(0);
+    this._particleTime = start;
+    this.layers.effects.setChildIndex(this._fade, this.layers.effects.children.length - 1);
+    this.layers.effects.setChildIndex(this._flashSprite, this.layers.effects.children.length - 1);
     this.app.render();
+    const overlay = this.app.renderer.accessibility?.div;
+    if (overlay) {
+      const rect = this.canvas.getBoundingClientRect();
+      // Position can change without a canvas resize (centered document layout).
+      overlay.style.transform = `translate(${rect.left}px, ${rect.top}px) scale(${rect.width / this._width}, ${rect.height / this._height})`;
+    }
     if (this._textureBudgetDirty || this._frameCount % 120 === 0) this._trimTextureCache();
     this._frameCount++;
     this._renderTimes.push(performance.now() - start);
@@ -690,8 +805,8 @@ export class GameRenderer {
       frames: this._frameCount,
       renderMs: mean(this._renderTimes),
       renderMaxMs: Math.max(0, ...this._renderTimes),
-      logicalWidth: WIDTH,
-      logicalHeight: HEIGHT,
+      logicalWidth: this._width,
+      logicalHeight: this._height,
       displayScale: this._displayScale || 1,
       resolution: this._resolution || 1,
       visibleTiles: this._visibleTiles,
@@ -710,10 +825,13 @@ export class GameRenderer {
       evictedPages: this._evictedPages,
       atlasImages: this._atlasViews.size,
       warnings: [...this._warnings],
+      particles: this.particles.metrics(),
     };
   }
 
   destroy() {
+    this.battlePresentation.clear();
+    this.particles.destroy();
     this._resizeObserver?.disconnect();
     if (this._resize) window.removeEventListener("resize", this._resize);
     this._assetGeneration++;

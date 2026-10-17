@@ -1,5 +1,5 @@
 import { WebData, webIndexURL } from "./data.js";
-import { loadPresentation } from "./presentation.js";
+import { loadPresentation, loadBattlePresentation } from "./presentation.js";
 import { GameRenderer } from "./renderer.js";
 import { GameUI, createWidget } from "./ui.js";
 import { configureGogo } from "../../src/play/battle-commands.js";
@@ -15,6 +15,7 @@ const index = await repository.json(webIndexURL().href);
 const data = await repository.json(index.battle);
 renderer.setAssets(index.assets.images, repository.baseURL);
 await loadPresentation(repository, renderer, ui);
+await loadBattlePresentation(repository, renderer);
 ui.setCharacters(data.characters);
 const menu = createBattleMenu({
   commands: $("commands"),
@@ -29,8 +30,12 @@ for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 31,
   $("actor").append(option);
 }
 let battle,
+  preview = false,
   last = performance.now();
 function start() {
+  renderer.resetPresentation();
+  preview = false;
+  $("visual-result").textContent = "";
   const id = Number($("actor").value),
     unit = createCharacter(data, id, true);
   learnNaturalAbilities(unit);
@@ -74,8 +79,9 @@ function start() {
     party: [unit, ...(id === 7 ? [] : [companion])],
     inventory,
     encounterId: Number($("formation").value),
-    isVeldt: true,
+    isVeldt: id === 12,
     context: { gil: 500000, settings: { atbMode: "wait", battleSpeed: 3 } },
+    event: (kind, event) => renderer.event({ kind, ...event }),
     onEnd: (result) => {
       $("result").textContent = `本次战斗：${result.outcome}。点击开始测试战斗可更换角色。`;
     },
@@ -113,6 +119,71 @@ function start() {
 }
 $("restart").onclick = start;
 $("cycle").onclick = () => menu.cycle();
+const visualSkills = [
+  1,
+  6,
+  8,
+  9,
+  11,
+  18,
+  21,
+  ...Array.from({ length: 33 }, (_, n) => n + 31),
+  71,
+  77,
+  80,
+  124,
+  132,
+  134,
+  136,
+  145,
+  151,
+  154,
+];
+for (const [n, id] of visualSkills.entries()) {
+  const option = document.createElement("option");
+  option.value = id;
+  option.textContent = `${String(n + 1).padStart(2, "0")} · ${data.abilities[id].name}`;
+  $("visual-skill").append(option);
+}
+const missOption = document.createElement("option");
+missOption.value = "miss";
+missOption.textContent = "MISS · 表现测试";
+$("visual-skill").append(missOption);
+$("visual-play").onclick = async () => {
+  $("visual-play").disabled = true;
+  $("visual-result").textContent = "正在读取演出资源…";
+  try {
+    start();
+    preview = true;
+    const id = $("visual-skill").value;
+    if (id === "miss")
+      renderer.event({
+        kind: "battle-action",
+        actorSide: "player",
+        actorIndex: 0,
+        targetSide: "enemy",
+        targetIndex: 0,
+        abilityId: 1,
+        result: { hit: false, amount: 0, mp: 0 },
+      });
+    else {
+      const ability = data.abilities[id],
+        actor = battle.players[0];
+      const target = ability.target === "ally" ? actor : battle.enemies[0];
+      if (ability.functions.some((f) => f.id === 34)) target.hp = 0;
+      else if (ability.kind === "heal") target.hp = Math.max(1, target.maxHp - 2000);
+      battle.perform(actor, target, ability, 1);
+    }
+    await renderer.captureBattleFrame({ battle, time: battle.elapsed }, null, data);
+    $("visual-result").textContent =
+      `演出已就绪 · ${id === "miss" ? "MISS" : data.abilities[id].name} · 0.5 秒`;
+  } catch (error) {
+    $("visual-result").textContent = `演出失败：${error.message}`;
+    console.error(error);
+  } finally {
+    $("visual-play").disabled = false;
+  }
+};
 addEventListener("keydown", (e) => {
   if (ui.handleKey(e)) return;
   if (menu.handleKey(e)) {
@@ -128,12 +199,15 @@ function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (battle) {
-    battle.tick(dt);
+    if (!preview) battle.tick(dt);
     menu.update(battle);
+    $("commands").hidden = preview;
+    $("targets").hidden = preview;
     $("action-log").textContent = battle.log.slice(-30).join("\n");
   }
   ui.render();
   renderer.render(battle ? { battle, time: battle.time } : null, null, data);
+  $("render-metrics").textContent = JSON.stringify(renderer.metrics(), null, 2);
   requestAnimationFrame(loop);
 }
 start();
