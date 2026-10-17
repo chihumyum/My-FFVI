@@ -111,6 +111,8 @@ export function configureSyscallTimer(game, task, i = [], r = [], s = []) {
     dispatched: false,
     source: timerSource(game, task),
   };
+  if (s.some((name) => name.endsWith("_t") && systems(game).gimmicks?.[name.slice(0, -2)]))
+    systems(game).timer.gimmickMapId = game.mapId;
   game.timer = game.time + duration;
   game.event("timer", { duration, visible: i[0] === 0 });
 }
@@ -122,8 +124,12 @@ export function finishSyscallTimer(game) {
 
 export function updateSyscallSystems(game, seconds) {
   const state = systems(game),
-    dt = Math.max(0, Number(seconds) || 0),
-    timer = state.timer;
+    dt = Math.max(0, Number(seconds) || 0);
+  let timer = state.timer;
+  if (timer?.gimmickMapId != null && timer.gimmickMapId !== game.mapId) {
+    state.timer = timer = null;
+    game.timer = null;
+  }
   if (timer && !timer.expired) {
     if (timerCanAdvance(game, timer)) timer.remaining = Math.max(0, timer.remaining - dt);
     game.timer = game.time + timer.remaining;
@@ -570,8 +576,20 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
   if (/^ギミック(開始|解除)：/.test(name)) {
     state.gimmicks ??= {};
     state.gimmicks[subject] = name.startsWith("ギミック開始");
+    const callback = `${subject}_t`,
+      program = game.data.programs[game.resolve(callback)],
+      repeat = program?.ops?.find((op) => op[0] === "SetTimer" && op[3].includes(callback));
+    if (state.gimmicks[subject] && repeat) {
+      configureSyscallTimer(game, task, repeat[1], repeat[2], repeat[3]);
+      warn(
+        `PR gimmick ${subject} starts its authored callback ${callback}; the initial delay uses the callback's own repeat interval (${repeat[2][0]}s), inferred from the source script.`,
+      );
+    } else if (!state.gimmicks[subject] && state.timer?.callbacks.includes(callback)) {
+      finishSyscallTimer(game);
+    } else if (state.gimmicks[subject]) {
+      warn(`Gimmick ${subject} has no exported timed callback; only its active state is retained.`);
+    }
     game.event("gimmick", { name: subject, active: state.gimmicks[subject] });
-    warn("Gimmicks retain active state; detailed painting and switch motion is deferred.");
     return true;
   }
   if (name === "ダリルの墓") {

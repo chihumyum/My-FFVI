@@ -30,6 +30,30 @@ function host() {
 }
 const caller = { program: 1, pc: 6 };
 
+test("PR timed bridge gimmicks start source callbacks, cancel only their own timer and stop at map exit", () => {
+  const game = host(),
+    callbacks = { "bridge-a_t": 2, "bridge-b_t": 3 };
+  game.resolve = (name) => callbacks[name];
+  for (const [name, id] of Object.entries(callbacks))
+    game.data.programs[id] = { name, ops: [["SetTimer", [1, 1, 0, 0], [3], [name]]] };
+  const run = (name) => executeEventSystem(game, caller, name, [], [], { warn() {} });
+  run("ギミック開始：bridge-a");
+  assert.equal(pendingEventInput(game).callback, "bridge-a_t");
+  updateSyscallSystems(game, 3);
+  assert.deepEqual(game.started, ["bridge-a_t"]);
+  run("ギミック開始：bridge-b");
+  run("ギミック解除：bridge-a");
+  assert.equal(pendingEventInput(game).callback, "bridge-b_t");
+  run("ギミック解除：bridge-b");
+  updateSyscallSystems(game, 10);
+  assert.deepEqual(game.started, ["bridge-a_t"]);
+  run("ギミック開始：bridge-a");
+  game.mapId++;
+  updateSyscallSystems(game, 3);
+  assert.equal(game.banks.PlaySystems.timer, null);
+  assert.deepEqual(game.started, ["bridge-a_t"]);
+});
+
 test("source timer exposes a read-only waiting input instead of authorizing early callbacks", () => {
   const game = host();
   assert.equal(pendingEventInput(game), null);

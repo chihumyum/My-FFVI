@@ -277,6 +277,7 @@ export class PlayGame {
     if (next) this.startScript(next);
   }
   refreshActors({ preserveMissing = false } = {}) {
+    const previous = new Set((this.actorEntitySource || []).map((e) => String(e.id)));
     const entities = [...this.map.entities.filter((e) => !e.group || e.group === "entity_default")];
     for (const g of this.groups)
       if (g !== "entity_default") entities.push(...(this.map.groups?.[g]?.entities || []));
@@ -287,9 +288,15 @@ export class PlayGame {
       // Its missing-entity placeholder is not the later PR group's real body.
       if (
         ([6, 7, 10, 14, 17].includes(e.kind) && !actor && !preserveMissing) ||
+        (!preserveMissing && e.kind === 2 && actor && !previous.has(String(e.id))) ||
         (Number(e.id) > 0 && actor && actor.kind == null)
       )
-        this.actors.set(String(e.id), { ...e, visible: true, animation: "Default", motion: null });
+        this.actors.set(String(e.id), {
+          ...e,
+          visible: e.kind === 2 ? true : actor?.visible !== false,
+          animation: "Default",
+          motion: null,
+        });
     }
     this.actorEntitySource = entities;
   }
@@ -305,7 +312,16 @@ export class PlayGame {
       selector = -(this.partySlots[this.partyIndex][-selector - 1001] || 1);
     const key = String(selector);
     if (!this.actors.has(key)) {
-      const entity = selector > 0 ? this.entities?.find((entry) => String(entry.id) === key) : null;
+      // Initializers can Hide/SetPos objects before enabling their group.
+      // Resolve the actual source row so those operations retain its type and
+      // geometry, rather than creating an untyped object at the player cell.
+      const entity =
+        selector > 0
+          ? this.entities?.find((entry) => String(entry.id) === key) ||
+            Object.values(this.map?.groups || {})
+              .flatMap((group) => group.entities)
+              .find((entry) => String(entry.id) === key)
+          : null;
       if (entity) {
         this.actors.set(key, {
           ...entity,

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PlayGame } from "./game.js";
 
-test("publishing a PR group replaces missing-entity placeholders with its actual touch trigger", () => {
+test("publishing a PR group activates its touch trigger and retains preconfigured collision bodies", () => {
   const started = [];
   const game = new PlayGame({
     data: { programs: { publish: { ops: [["SetEntities", [], [], ["crates"]]] } } },
@@ -16,7 +16,10 @@ test("publishing a PR group replaces missing-entity placeholders with its actual
     collisions: { 1: Array(36).fill(0) },
     groups: {
       crates: {
-        entities: [{ id: "60", kind: 2, x: 2, y: 1, layer: 1, script: "climb-crates" }],
+        entities: [
+          { id: "60", kind: 2, x: 2, y: 1, layer: 1, script: "climb-crates" },
+          { id: "20", kind: 5, x: 3, y: 1, layer: 1, collision: true },
+        ],
       },
     },
   };
@@ -25,11 +28,18 @@ test("publishing a PR group replaces missing-entity placeholders with its actual
   // Map initialization mentions60 before source373 publishes group0374.
   const missing = game.actor(60);
   missing.visible = false;
-  assert.equal(missing.kind, undefined);
+  assert.equal(missing.kind, 2);
+  game.actor(20).visible = false;
   game.step({ program: "publish", pc: 0, actor: null, locals: [], stack: [] });
   assert.equal(game.actors.get("60").kind, 2);
   assert.equal(game.actors.get("60").x, 2);
   assert.equal(game.actors.get("60").visible, true);
+  assert.equal(
+    game.actors.get("20").visible,
+    false,
+    "bridge initialization can hide an unpublished wall",
+  );
+  assert.equal(game.actors.get("20").x, 3);
   game.startScript = (name) => started.push(name);
   assert.equal(game.move("right"), true);
   assert.deepEqual(started, ["climb-crates"]);
