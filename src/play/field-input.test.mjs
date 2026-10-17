@@ -72,3 +72,70 @@ test("a source-armed trigger interruption survives Hide without enabling ordinar
   game.checkTriggers();
   assert.equal(started.length, 1);
 });
+
+test("rearmed source overlap runs before its parent resumes and can repeat without moving", () => {
+  const trigger = { id: "12", kind: 2, x: 1, y: 0, layer: 0, script: "safe" };
+  const game = new PlayGame({
+    data: {
+      byMap: {},
+      global: { cycle: "cycle", safe: "safe", ordinary: "ordinary" },
+      programs: {
+        cycle: {
+          name: "cycle",
+          ops: [
+            ["Calc", [1, 1], [], ["MapLocalVariable", "←", "imm"]],
+            ["SetEntities", [], [], ["armed"]],
+            ["ChangeScriptAtOnTrigger", [1, -1001], [], []],
+            ["SetPuppet", [0, 12, 9], [], []],
+            ["ExecPuppet", [0], [], []],
+            ["Branch", [1, 0, 7], [], ["MapLocalVariable", "＝", "imm"]],
+            ["SetFlag", [3], [], ["ScenarioFlag1"]],
+            ["Calc", [2, 1], [], ["ScenarioVariable", "＋", "imm"]],
+            ["Exit", [], [], []],
+            ["Hide", [], [], []],
+            ["Exit", [], [], []],
+          ],
+        },
+        safe: {
+          name: "safe",
+          ops: [
+            ["Calc", [1, 0], [], ["MapLocalVariable", "←", "imm"]],
+            ["Exit", [], [], []],
+          ],
+        },
+        ordinary: {
+          name: "ordinary",
+          ops: [
+            ["SetFlag", [4], [], ["ScenarioFlag1"]],
+            ["Exit", [], [], []],
+          ],
+        },
+      },
+    },
+  });
+  const ordinary = { ...trigger, id: "13", script: "ordinary" };
+  Object.assign(game, {
+    mapId: 504,
+    map: {
+      width: 4,
+      height: 4,
+      entities: [ordinary],
+      groups: { armed: { entities: [trigger] } },
+    },
+    triggered: new Set(),
+  });
+  game.refreshActors();
+  Object.assign(game.player, { x: 1, y: 0, layer: 0 });
+  for (let cycle = 1; cycle <= 2; cycle++) {
+    game.startScript("cycle");
+    for (let tick = 0; tick < 8; tick++) game.tick(0.1);
+    assert.equal(game.banks.ScenarioVariable[2], cycle, "the parent finishes each cycle");
+    assert.equal(game.banks.MapLocalVariable[1], 0);
+    assert.equal(game.banks.ScenarioFlag1?.[3] || 0, 0, "no false unsafe branch");
+    assert.equal(game.banks.ScenarioFlag1?.[4] || 0, 0, "ordinary contacts stay disabled");
+    assert.equal(game.busy, false);
+    assert.equal(game.player.x, 1, "no extra player step is needed");
+    assert.equal(game.actors.get("12").visible, false);
+    assert.equal(game.history.filter((entry) => entry.script === "safe").length, cycle);
+  }
+});

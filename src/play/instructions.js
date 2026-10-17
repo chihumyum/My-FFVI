@@ -288,7 +288,7 @@ export function executeInstruction(
       warning(
         game,
         task,
-        "Trigger interruption applies to this source program and current map; Unity overlap interruption is approximated at the next accepted player step.",
+        "Trigger interruption applies to this source program and current map; source-reset overlap callbacks are checked while stationary and before the parent resumes. Exact Unity callback ordering is approximated.",
       );
       return true;
     case "InvalidateTelepo":

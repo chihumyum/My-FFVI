@@ -452,6 +452,7 @@ export class PlayGame {
       this.dialogue.elapsed += dt;
       if (this.dialogue.elapsed > this.dialogue.duration) this.confirm();
     }
+    this.checkTriggers({ armedOnly: true });
     for (const task of [...this.tasks]) {
       if (task.done) continue;
       if (task.wait > 0) {
@@ -486,6 +487,7 @@ export class PlayGame {
     this.tasks = this.tasks.filter(
       (t) => !t.done || this.tasks.some((o) => o.children.includes(t)),
     );
+    this.checkTriggers({ armedOnly: true });
     updateCooperativeInput(this);
     updateNpcMovement(this, dt);
     if (!this.busy) this.tickNpc(dt);
@@ -652,9 +654,10 @@ export class PlayGame {
           );
         }
         if (a.triggerEnabled) {
+          this.triggered.delete(`${this.mapId}:${[...this.groups].join(",")}:${a.id}`);
           this.warn(
             t,
-            "PR Hide resets a touch trigger in the source-armed ChangeScriptAtOnTrigger context; web cell contact approximates Unity overlap interruption callbacks.",
+            "PR Hide resets a source-armed touch trigger, including existing overlap. Overlap callbacks run before the parent event resumes; Unity callback ordering is approximated without cancelling the source parent.",
           );
         }
         return;
@@ -1211,10 +1214,21 @@ export class PlayGame {
     if (!this.busy) walkEncounter(this);
     return true;
   }
-  checkTriggers() {
-    if (this.busy || (this.map?.worldTerrain && this.player.vehicle > 1)) return;
+  checkTriggers({ armedOnly = false } = {}) {
+    if (
+      this.loading ||
+      this.over ||
+      this.battle ||
+      (armedOnly ? !this.triggerChangesScript : this.busy) ||
+      (this.map?.worldTerrain && this.player.vehicle > 1)
+    )
+      return;
     for (const e of this.entities) {
       const actual = this.actors.get(String(e.id)) || e;
+      // Ordinary contacts/portals remain disabled during events. A source
+      // explicitly rearming its touch entities also receives callbacks for a
+      // stationary player, before its waiting parent evaluates the result.
+      if (armedOnly && !(e.kind === 2 && actual.triggerEnabled)) continue;
       if (!fieldEntityVisible(this, e) && !(e.kind === 2 && actual.triggerEnabled)) continue;
       if (
         e.transportationIds?.length &&
@@ -1233,7 +1247,11 @@ export class PlayGame {
       if ((e.kind === 2 || touchNpc) && e.script) {
         this.triggered.add(key);
         if (touchNpc) (this.banks.MapLocalVariable ??= {})[0] = this.partyIndex;
-        this.startScript(e.script);
+        const callback = this.startScript(e.script);
+        if (armedOnly && callback) {
+          this.tasks.splice(this.tasks.indexOf(callback), 1);
+          this.tasks.unshift(callback);
+        }
         break;
       }
       if (e.kind === 3 && e.destination) {
