@@ -18,7 +18,16 @@ const audioInstructions = new Set([
   "SetVolume",
   "LoadSE",
 ]);
-const visualInstructions = new Set(["Shake", "Flash", "ScreenEffect"]);
+const visualInstructions = new Set([
+  "Shake",
+  "Flash",
+  "ScreenEffect",
+  "ColorFade",
+  "Water",
+  "ChangeView",
+  "BackdropColor",
+]);
+const visualSelector = /モノクロフィルター|幻獣界フィルター|近景|遠景|背景変更|スクロール/;
 export const observingAudioInstruction = (game) => Boolean(listening.get(game));
 export const isAudioInstruction = (name) => audioInstructions.has(name);
 export function withPresentation(Base) {
@@ -33,7 +42,12 @@ export function withPresentation(Base) {
         index = task.pc,
         op = program?.ops[index];
       const audio = audioInstructions.has(op?.[0]);
-      if (!audio && !visualInstructions.has(op?.[0])) return super.step(task);
+      if (
+        !audio &&
+        !visualInstructions.has(op?.[0]) &&
+        !(op?.[0] === "SysCall" && visualSelector.test(op[3]?.[0] || ""))
+      )
+        return super.step(task);
       listening.set(this, (listening.get(this) || 0) + 1);
       try {
         const result = super.step(task);

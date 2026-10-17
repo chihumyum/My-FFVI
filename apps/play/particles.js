@@ -1,4 +1,5 @@
 import { Container, Sprite, Texture, Rectangle, extensions, SubtractBlend } from "pixi.js";
+import { PRMaterialCache } from "./pr-filters.js";
 
 // Pixi exports advanced blend classes without registering them by default.
 // Register only the built-in mode used by PR materials, without a plugin.
@@ -247,7 +248,14 @@ function shapeSample(shape, random) {
 
 /** Pure presentation: local RNG, pooled Sprites, no game-state or VM access. */
 export class PRParticles {
-  constructor({ container, getTexture, maxParticles = 4096, warn = console.warn } = {}) {
+  constructor({
+    container,
+    getTexture,
+    maxParticles = 4096,
+    warn = console.warn,
+    renderer = null,
+    materials = null,
+  } = {}) {
     if (!container || !getTexture) throw Error("PRParticles requires container and getTexture");
     this.parent = container;
     this.getTexture = getTexture;
@@ -265,6 +273,9 @@ export class PRParticles {
     this._particleCount = 0;
     this._time = 0;
     this._frames = 0;
+    this._materials =
+      materials || (renderer ? new PRMaterialCache({ renderer, getTexture, warn }) : null);
+    this._ownsMaterials = !materials;
   }
   setCatalog(catalog) {
     this.catalog = {
@@ -273,6 +284,28 @@ export class PRParticles {
       effects: { ...this.catalog.effects, ...catalog.effects },
       effectIds: { ...this.catalog.effectIds, ...catalog.effectIds },
     };
+    return this;
+  }
+  setRenderer(renderer) {
+    if (this._materials?.renderer === renderer) return this;
+    // Replacing a GPU context must not leave active Sprite/UV views pointing
+    // at a destroyed material RenderTexture. Simulation state is preserved.
+    for (const instance of this.instances)
+      for (const state of instance.systems)
+        for (const p of state.particles) {
+          if (p.sprite) {
+            p.sprite.texture = Texture.EMPTY;
+            p.sprite.visible = false;
+          }
+          for (const trail of p.trail) this._release(trail.sprite);
+          p.trail.length = 0;
+        }
+    this._clearCrops();
+    if (this._ownsMaterials) this._materials?.destroy();
+    this._materials = renderer
+      ? new PRMaterialCache({ renderer, getTexture: this.getTexture, warn: this.warn })
+      : null;
+    this._ownsMaterials = true;
     return this;
   }
   _warning(key, text) {
@@ -295,7 +328,7 @@ export class PRParticles {
       return null;
     }
     for (const row of this.catalog.warnings || [])
-      if (row.effect === asset)
+      if (row.effect === asset && !(this._materials && row.module === "shader"))
         this._warning(
           `${asset}:${row.module}:${row.reason}`,
           `${asset}/${row.system || "root"}: ${row.reason}`,
@@ -638,7 +671,7 @@ export class PRParticles {
       this._draw(instance, state, p, velocity);
     }
   }
-  _texture(image, uv, particle, state) {
+  _texture(image, uv, particle, state, materialTexture = undefined) {
     const t = clamp(particle.age / particle.lifetime);
     if (uv?.mode === 1 && uv.sprites?.length) {
       const count = uv.sprites.length;
@@ -657,10 +690,11 @@ export class PRParticles {
       );
       return this.getTexture(uv.sprites[((at % count) + count) % count].url);
     }
-    if (!image) return Texture.WHITE;
+    if (materialTexture === null) return null;
+    if (!image && materialTexture === undefined) return Texture.WHITE;
     // Calling the shared texture accessor each frame also pins atlas pages in
     // the renderer LRU. Null is a pending load, never a shared texture mutation.
-    const texture = this.getTexture(image.url);
+    const texture = materialTexture === undefined ? this.getTexture(image.url) : materialTexture;
     if (!texture) return null;
     if (!uv) return texture;
     const cols = Math.max(1, uv.tilesX || 1),
@@ -710,7 +744,25 @@ export class PRParticles {
             : d.renderer.material
         ],
       uv = d.modules.UVModule;
-    const texture = this._texture(material?.textures._MainTex, uv, p, state);
+    const processed = Boolean(
+      this._materials && uv?.mode !== 1 && this._materials.handles(material),
+    );
+    const materialTexture = processed ? this._materials.get(material, this._time) : undefined;
+    if (
+      !this._materials &&
+      material &&
+      ["_UseMask", "_Dissolve", "_UseGradient"].some((key) => material.floats?.[key])
+    )
+      this._warning(
+        "material-renderer",
+        "Pixi renderer was not supplied; mask/dissolve/gradient preprocessing is unavailable, using explicit Sprite approximation.",
+      );
+    if (this._materials && uv?.mode === 1 && this._materials.handles(material))
+      this._warning(
+        `sprite-material:${instance.asset}`,
+        `${instance.asset}: Sprite-list animation uses direct frames and Sprite tint; material preprocessing is not applied to these frames.`,
+      );
+    const texture = this._texture(material?.textures._MainTex, uv, p, state, materialTexture);
     const position = d.space ? transform(state.matrix, p.position) : p.position;
     if (!p.sprite) return;
     p.sprite.visible = Boolean(texture) && d.renderer.mode !== 5;
@@ -725,9 +777,9 @@ export class PRParticles {
       scaleY = Math.hypot(m[1], m[5], m[9]);
     const color = colorProduct(
       colorProduct(p.color, evaluateGradient(colorModule?.gradient, t, fraction(p.seed, 14))),
-      material?.color || WHITE,
+      processed ? WHITE : material?.color || WHITE,
     );
-    if (material?.floats._UseGradient && material.colors._GradientWhiteColor)
+    if (!processed && material?.floats._UseGradient && material.colors._GradientWhiteColor)
       for (let n = 0; n < 3; n++) color[n] *= material.colors._GradientWhiteColor[n];
     p.sprite.tint =
       (Math.round(clamp(color[0]) * 255) << 16) |
@@ -830,6 +882,7 @@ export class PRParticles {
       steps = Math.max(1, Math.ceil(dt * 30));
     this._time += dt;
     this._frames++;
+    this._materials?.beginFrame?.(this._time);
     for (let n = 0; n < steps; n++)
       for (let i = this.instances.length - 1; i >= 0; i--) {
         const instance = this.instances[i];
@@ -843,6 +896,7 @@ export class PRParticles {
         for (const texture of cache.values()) texture.destroy(false);
         this._crops.delete(base);
       }
+    this._materials?.prune(this._time);
   }
   stop(instance) {
     const index = this.instances.indexOf(instance);
@@ -865,10 +919,12 @@ export class PRParticles {
   clear() {
     for (const instance of [...this.instances]) this.stop(instance);
     this._clearCrops();
+    if (this._ownsMaterials) this._materials?.clear();
   }
   destroy() {
     this.clear();
     for (const sprite of this.pool) sprite.destroy();
+    if (this._ownsMaterials) this._materials?.destroy();
     this.pool.length = 0;
   }
   metrics() {
@@ -881,6 +937,7 @@ export class PRParticles {
       liveParticles: this._particleCount,
       warnings: this._warned.size,
       croppedTextures: [...this._crops.values()].reduce((n, cache) => n + cache.size, 0),
+      materials: this._materials?.metrics() || null,
     };
   }
 }

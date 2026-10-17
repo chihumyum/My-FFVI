@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" />
+  <title>FFVI · 场景表现验收</title>
+  <style>
+    body {
+      background: #080e1b;
+      color: white;
+      font: 15px system-ui;
+      margin: 10px;
+    }
+    button {
+      margin: 4px;
+      padding: 6px 10px;
+    }
+    #surface {
+      max-width: 1280px;
+    }
+    canvas {
+      image-rendering: pixelated;
+    }
+    pre {
+      white-space: pre-wrap;
+      font-size: 12px;
+    }
+  </style>
+  <h1>FFVI · PR 场景表现</h1>
+  <p>真实回归检查点绘制；飞行/滤镜按钮是表现层预览，不计剧情覆盖。</p>
+  <div id="scenes"></div>
+  <button id="flight">飞行预览</button
+  ><button id="ordinary">步行视角</button>
+  <button id="night">交叉淡入暗天</button
+  ><button id="day">交叉淡入蓝天</button>
+  <button id="gray">切换回忆滤镜</button
+  ><button id="measure">测量 10 秒</button>
+  <label
+    >源着色器操作预览
+    <select id="shader">
+      <option value="">场景默认</option>
+    </select></label
+  >
+  <p id="shader-status">采用 PR 参数；示例强度不计像素一致性。</p>
+  <p id="name"></p>
+  <div id="surface"><canvas id="screen"></canvas></div>
+  <pre id="metrics"></pre>
+  <script type="module" src="./field-lab.js"></script>
+</html>

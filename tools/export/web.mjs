@@ -17,6 +17,13 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
   const presentation = await read(path.join(dataRoot, "presentation.json"));
   const battlePresentation = await read(path.join(dataRoot, "battle-presentation.json"));
   const particles = await read(path.join(dataRoot, "particles.json"));
+  const fieldPresentation = await read(path.join(dataRoot, "field-presentation.json"));
+  const shaders = await read(path.join(dataRoot, "shaders.json"));
+  const shaderMaterials = Object.fromEntries(
+    Object.entries(shaders.materials).filter(
+      ([, material]) => material.shader !== "Last/LastEffectMaster",
+    ),
+  );
   const files = new Set();
   async function payload(value, label) {
     const bytes = Buffer.from(JSON.stringify(value));
@@ -119,6 +126,19 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
     navigation: await payload(navigation, "navigation"),
     presentation: await payload(presentation, "presentation"),
     battlePresentation: await payload(battlePresentation, "battle-presentation"),
+    fieldPresentation: await payload(fieldPresentation, "field-presentation"),
+    shaders: await payload(
+      {
+        ...shaders,
+        materials: shaderMaterials,
+        materialsByName: Object.fromEntries(
+          Object.entries(shaders.materialsByName).filter(([, ids]) =>
+            ids.some((id) => shaderMaterials[id]),
+          ),
+        ),
+      },
+      "shaders",
+    ),
     effects: await payload(effectIndex, "effect-index"),
     maps,
     mapPrograms,

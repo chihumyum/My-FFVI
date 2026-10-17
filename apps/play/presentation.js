@@ -26,6 +26,9 @@ export async function loadBattlePresentation(repository, renderer) {
   const index = repository.index || (await repository.json(webIndexURL().href));
   if (index.battlePresentation)
     renderer.setBattlePresentation(await repository.json(index.battlePresentation));
+  if (index.fieldPresentation)
+    renderer.setFieldPresentation(await repository.json(index.fieldPresentation));
+  if (index.shaders) renderer.setShaderCatalog(await repository.json(index.shaders));
   if (index.effects)
     renderer.setEffectCatalog(await repository.json(index.effects), (file) =>
       repository.json(file),

@@ -12,6 +12,8 @@ import {
 import { BattlePresentation } from "./battle-presentation.js";
 import { PRParticles } from "./particles.js";
 import { EffectLibrary } from "./effects.js";
+import { FieldPresentation } from "./field-presentation.js";
+import { PRFilter } from "./pr-filters.js";
 
 const WIDTH = 320;
 const HEIGHT = 180;
@@ -113,6 +115,11 @@ export class GameRenderer {
       warn: (message) => this._warnOnce(`battle:${message}`, message),
       onEffect: (event, actor, target) => this._battleEffect(event, actor, target),
     });
+    this.fieldPresentation = new FieldPresentation({
+      layers: this.layers,
+      getTexture: (url) => this._texture(url),
+      warn: (key, message) => this._warnOnce(key, message),
+    });
   }
 
   async init() {
@@ -139,6 +146,7 @@ export class GameRenderer {
     // Re-enable through the public API once initialization has finished.
     this.app.renderer.accessibility?.setAccessibilityEnabled(false);
     this.app.renderer.accessibility?.setAccessibilityEnabled(true);
+    this.particles.setRenderer(this.app.renderer);
     const overlay = this.app.renderer.accessibility?.div;
     if (overlay) {
       overlay.classList.add("pixi-accessibility");
@@ -172,6 +180,7 @@ export class GameRenderer {
     this._flashSprite.visible = false;
     this.layers.effects.addChild(this._flashSprite);
     this._ready = true;
+    this.setFilters([this.fieldPresentation.screenFilter]);
     this._resize = () => this.resize();
     window.addEventListener("resize", this._resize);
     if (typeof ResizeObserver !== "undefined" && this.canvas.parentElement) {
@@ -201,6 +210,18 @@ export class GameRenderer {
 
   setBattlePresentation(catalog) {
     this.battlePresentation.setCatalog(catalog);
+  }
+
+  setFieldPresentation(catalog) {
+    this.fieldPresentation.setCatalog(catalog);
+  }
+
+  setShaderCatalog(catalog) {
+    this.shaderCatalog = catalog;
+    this._backgroundShader ||= new PRFilter("Last/LastBackGround", {
+      getTexture: (url) => this._texture(url),
+      warn: (message) => this._warnOnce("background:" + message, message),
+    });
   }
 
   setEffectCatalog(catalog, json) {
@@ -285,6 +306,7 @@ export class GameRenderer {
     this._battleExit = null;
     this._shake = null;
     this._flash = null;
+    this.fieldPresentation.reset();
   }
 
   setFilters(filters) {
@@ -321,6 +343,7 @@ export class GameRenderer {
 
   /** Receives source presentation instructions after execution; never calls into the VM. */
   event(event) {
+    this.fieldPresentation.event(event);
     if (event?.kind === "battle-end" && this.battlePresentation.battle) {
       const battle = this.battlePresentation.battle;
       this._battleExit = {
@@ -346,6 +369,13 @@ export class GameRenderer {
       wall: performance.now() / 1000,
     };
     switch (event.name) {
+      case "ColorFade":
+      case "ScreenEffect":
+      case "Water":
+      case "BackdropColor":
+      case "ChangeView":
+      case "SysCall":
+        break;
       case "ShakeStop":
         this._shake = null;
         break;
@@ -594,12 +624,28 @@ export class GameRenderer {
       return;
     }
     const tile = map.tileSize || 16;
+    const viewWidth = this.fieldPresentation.flight ? 640 : WIDTH;
+    const viewHeight = this.fieldPresentation.flight ? 640 : HEIGHT;
+    const world = /^Map_100(?:10|20|30)/i.test(map.name);
+    const loop = world ? (map.worldTerrain?.loopType ?? 3) : 0;
+    const wrapX = !!(loop & 1),
+      wrapY = !!(loop & 2);
     const focus = game.camera?.manual ? game.camera : game.player;
     const ox = Math.floor(
-      Math.max(0, Math.min(map.width * tile - WIDTH, (focus?.x || 0) * tile - WIDTH / 2)),
+      wrapX
+        ? (focus?.x || 0) * tile - viewWidth / 2
+        : Math.max(
+            0,
+            Math.min(map.width * tile - viewWidth, (focus?.x || 0) * tile - viewWidth / 2),
+          ),
     );
     const oy = Math.floor(
-      Math.max(0, Math.min(map.height * tile - HEIGHT, (focus?.y || 0) * tile - HEIGHT / 2)),
+      wrapY
+        ? (focus?.y || 0) * tile - viewHeight / 2
+        : Math.max(
+            0,
+            Math.min(map.height * tile - viewHeight, (focus?.y || 0) * tile - viewHeight / 2),
+          ),
     );
     const metadata = this._metadata(map);
     for (let li = 0; li < (map.layers || []).length; li++) {
@@ -619,11 +665,25 @@ export class GameRenderer {
       state.container.alpha = layer.opacity ?? 1;
       let count = 0;
       if (layer.data) {
-        const bottom = Math.min(layer.height, Math.ceil((oy + HEIGHT) / tile));
-        const right = Math.min(layer.width, Math.ceil((ox + WIDTH) / tile));
-        for (let y = Math.max(0, Math.floor(oy / tile)); y < bottom; y++) {
-          for (let x = Math.max(0, Math.floor(ox / tile)); x < right; x++) {
-            const raw = layer.data[y * layer.width + x] >>> 0;
+        const bottom = wrapY
+          ? Math.ceil((oy + viewHeight) / tile)
+          : Math.min(layer.height, Math.ceil((oy + viewHeight) / tile));
+        const right = wrapX
+          ? Math.ceil((ox + viewWidth) / tile)
+          : Math.min(layer.width, Math.ceil((ox + viewWidth) / tile));
+        for (
+          let y = wrapY ? Math.floor(oy / tile) : Math.max(0, Math.floor(oy / tile));
+          y < bottom;
+          y++
+        ) {
+          for (
+            let x = wrapX ? Math.floor(ox / tile) : Math.max(0, Math.floor(ox / tile));
+            x < right;
+            x++
+          ) {
+            const sx = ((x % layer.width) + layer.width) % layer.width;
+            const sy = ((y % layer.height) + layer.height) % layer.height;
+            const raw = layer.data[sy * layer.width + sx] >>> 0;
             // Orthogonal Tiled maps also reserve bit 29 (hexagonal rotation).
             const gid = raw & 0x0fffffff;
             if (!gid) continue;
@@ -632,8 +692,15 @@ export class GameRenderer {
             const { set, animations } = entry;
             let index = gid - set.firstgid;
             const animation = animations.get(index);
-            // Retain the previous renderer's animation clock during the foundation migration.
-            if (animation) index = animation[Math.floor(game.time * 5) % animation.length].tileid;
+            if (animation) {
+              const duration = animation.reduce((sum, frame) => sum + (frame.duration || 200), 0);
+              let at = (((game.time * 1000) % duration) + duration) % duration;
+              for (const frame of animation) {
+                index = frame.tileid;
+                at -= frame.duration || 200;
+                if (at < 0) break;
+              }
+            }
             const texture = this._crop(map.textures?.[set.image], index, set, tile);
             if (!texture) continue;
             const sprite = pooledSprite(state.sprites, state.container, count++);
@@ -675,7 +742,7 @@ export class GameRenderer {
       if (!texture) return;
       const w = info.logicalWidth || info.width || texture.width;
       const h = info.logicalHeight || info.height || texture.height;
-      if (x + w < ox || x - w > ox + WIDTH || y < oy || y - h > oy + HEIGHT) return;
+      if (x + w < ox || x - w > ox + viewWidth || y < oy || y - h > oy + viewHeight) return;
       const sprite = pooledSprite(this._fieldSprites, this.layers.actors, count++);
       sprite.texture = texture;
       sprite.anchor.set(0, 1);
@@ -684,6 +751,7 @@ export class GameRenderer {
       sprite.visible = true;
     };
     for (const actor of actors) {
+      if (this.fieldPresentation.flight && actor === game.player) continue;
       if (actor.vehicle === 6)
         draw("mo_ff6_v006_c00", actor.animation, actor.x * tile, actor.y * tile + tile);
       if (actor.asset)
@@ -691,10 +759,20 @@ export class GameRenderer {
     }
     hideUnused(this._fieldSprites, count);
     this._visibleActors = count;
+    this.fieldPresentation.draw(game, { x: ox, y: oy }, data);
   }
 
   _drawBattle(game, battleData) {
     const battle = game.battle;
+    if (this._backgroundShader) {
+      const final = [47, 48, 49, 50].includes(battle.formation?.backgroundId);
+      this._battleBackground.filters = final ? [this._backgroundShader] : null;
+      if (final)
+        this._backgroundShader.update(this._previewClock ?? performance.now() / 1000, {
+          width: this._width,
+          height: this._height,
+        });
+    }
     this._background.visible = true;
     const background = this._texture(
       battleData?.backgrounds?.[battle.formation?.backgroundId]?.sprite?.url,
@@ -746,7 +824,9 @@ export class GameRenderer {
     const displayedBattle =
       game?.battle || (this._battleExit?.until > start / 1000 ? this._battleExit.battle : null);
     const inBattle = !!displayedBattle;
+    this.fieldPresentation.prepare(game, inBattle);
     this._viewport(inBattle);
+    this.layers.actors.visible = true;
     this.layers.mapLayers.visible = !inBattle;
     this.layers.near.visible = !inBattle;
     this._background.visible = false;
@@ -762,6 +842,7 @@ export class GameRenderer {
       hideUnused(this._battleSprites, 0);
       hideUnused(this._battleNames, 0);
       this._drawMap(game || {}, data);
+      this.fieldPresentation.project(this.app.renderer, this.layers, game);
     }
     const fade = game?.fade;
     const progress = fade
@@ -826,12 +907,15 @@ export class GameRenderer {
       atlasImages: this._atlasViews.size,
       warnings: [...this._warnings],
       particles: this.particles.metrics(),
+      field: this.fieldPresentation.metrics(),
     };
   }
 
   destroy() {
     this.battlePresentation.clear();
     this.particles.destroy();
+    this.fieldPresentation.destroy();
+    this._backgroundShader?.destroy();
     this._resizeObserver?.disconnect();
     if (this._resize) window.removeEventListener("resize", this._resize);
     this._assetGeneration++;
