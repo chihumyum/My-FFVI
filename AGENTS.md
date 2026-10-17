@@ -30,6 +30,6 @@ After the formatter is introduced, run npm run format:check before every commit.
 ## Modules
 - tools/export: independent data export from original PR files; hashes belong only in export caches/manifests.
 - src/play: game logic and core regression tests; no renderer imports. Existing automatic-player strategy is frozen.
-- apps/play: rendering and game UI; Pixi/WebGL migration follows audio, and reads state/events.
+- apps/play: Pixi/WebGL rendering and game UI; read state/presentation events and dispatch ordinary game inputs. Never import this layer from src/play.
 - tools/play: development service and regression harnesses; load only already exported data.
 - legacy/: archived old project; do not read.

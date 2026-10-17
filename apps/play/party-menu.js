@@ -1,11 +1,15 @@
-function button(label, action) {
-  const element = document.createElement("button");
-  element.textContent = label;
-  element.onclick = action;
-  return element;
-}
-
-export function renderPartyMenu(game, elements, refresh) {
+export function renderPartyMenu(
+  game,
+  elements,
+  refresh,
+  createElement = document.createElement.bind(document),
+) {
+  const button = (label, action) => {
+    const element = createElement("button");
+    element.textContent = label;
+    element.onclick = action;
+    return element;
+  };
   const data = game.battleData,
     name = (id) => {
       if (data.contentNames?.[id]) return data.contentNames[id];
@@ -15,14 +19,14 @@ export function renderPartyMenu(game, elements, refresh) {
     };
   elements.party.replaceChildren();
   elements.items.replaceChildren();
-  const gil = document.createElement("p");
+  const gil = createElement("p");
   gil.textContent = `Gil ${game.gil}`;
   elements.party.append(gil);
   const run = (action) => {
     const success = action();
     refresh();
     if (success === false) {
-      const status = document.createElement("p");
+      const status = createElement("p");
       status.textContent = "当前不能使用：请检查目标、装备限制和所需资源。";
       status.setAttribute("role", "status");
       elements.items.prepend(status);
@@ -30,7 +34,7 @@ export function renderPartyMenu(game, elements, refresh) {
   };
   const targetInput = (label, action, units = game.party) => {
     elements.items.replaceChildren();
-    const title = document.createElement("p");
+    const title = createElement("p");
     title.textContent = label;
     elements.items.append(title);
     for (const target of units)
@@ -39,8 +43,8 @@ export function renderPartyMenu(game, elements, refresh) {
       );
     elements.items.append(button("返回菜单", refresh));
   };
-  const settings = document.createElement("fieldset"),
-    title = document.createElement("legend");
+  const settings = createElement("fieldset"),
+    title = createElement("legend");
   title.textContent = "设置";
   settings.append(title);
   for (const [key, label, choices] of [
@@ -54,12 +58,12 @@ export function renderPartyMenu(game, elements, refresh) {
     ],
     ["battleSpeed", "战斗速度", Array.from({ length: 6 }, (_, i) => [i, `${i + 1}`])],
   ]) {
-    const labelNode = document.createElement("label"),
-      select = document.createElement("select");
+    const labelNode = createElement("label"),
+      select = createElement("select");
     labelNode.textContent = label;
     select.setAttribute("aria-label", label);
     for (const [value, text] of choices) {
-      const option = document.createElement("option");
+      const option = createElement("option");
       option.value = value;
       option.textContent = text;
       select.append(option);
@@ -72,8 +76,8 @@ export function renderPartyMenu(game, elements, refresh) {
   }
   elements.party.append(settings);
   for (const unit of game.party) {
-    const section = document.createElement("fieldset"),
-      title = document.createElement("legend");
+    const section = createElement("fieldset"),
+      title = createElement("legend");
     title.textContent = `${unit.name}  Lv ${unit.level}  HP ${unit.hp}/${unit.maxHp}  MP ${unit.mp}/${unit.maxMp}`;
     section.append(title);
     section.append(
@@ -84,10 +88,10 @@ export function renderPartyMenu(game, elements, refresh) {
     );
     if (unit.id === 13)
       for (let n = 0; n < 3; n++) {
-        const select = document.createElement("select");
+        const select = createElement("select");
         select.setAttribute("aria-label", `戈戈自选指令 ${n + 1}`);
         for (const id of [1, 3, 7, 10, 12, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23]) {
-          const option = document.createElement("option");
+          const option = createElement("option");
           option.value = id;
           option.textContent = data.commands[id]?.name ?? `指令 ${id}`;
           select.append(option);
@@ -104,8 +108,8 @@ export function renderPartyMenu(game, elements, refresh) {
     section.append(button("最强装备", () => run(() => game.optimizeEquipment(unit.id))));
     const slots = ["右手", "左手", "身体", "头部", "饰品 1", "饰品 2"];
     for (let slot = 0; slot < 6; slot++) {
-      const label = document.createElement("label"),
-        select = document.createElement("select");
+      const label = createElement("label"),
+        select = createElement("select");
       label.textContent = slots[slot];
       select.setAttribute("aria-label", `${unit.name} ${slots[slot]}`);
       const ids = [
@@ -120,7 +124,7 @@ export function renderPartyMenu(game, elements, refresh) {
         ]),
       ].filter((id) => !id || canEquip(data, unit, id, slot));
       for (const id of ids) {
-        const option = document.createElement("option");
+        const option = createElement("option");
         option.value = id;
         option.textContent = id ? name(id) : "卸下";
         select.append(option);
@@ -130,8 +134,8 @@ export function renderPartyMenu(game, elements, refresh) {
       label.append(select);
       section.append(label);
     }
-    const stoneLabel = document.createElement("label"),
-      stoneSelect = document.createElement("select");
+    const stoneLabel = createElement("label"),
+      stoneSelect = createElement("select");
     stoneLabel.textContent = "魔石";
     stoneSelect.setAttribute("aria-label", `${unit.name} 魔石`);
     for (const id of [
@@ -140,7 +144,7 @@ export function renderPartyMenu(game, elements, refresh) {
         .map(Number)
         .filter((id) => game.inventory[id] > 0),
     ]) {
-      const option = document.createElement("option");
+      const option = createElement("option");
       option.value = id;
       option.textContent = id ? data.magicStones[id].name || name(id) : "未装备";
       stoneSelect.append(option);
@@ -153,7 +157,7 @@ export function renderPartyMenu(game, elements, refresh) {
       .filter(([, value]) => value > 0 && value < 100)
       .map(([id, value]) => `${data.abilities?.[id]?.name || `魔法 ${id}`} ${value}%`);
     if (learning.length) {
-      const info = document.createElement("p");
+      const info = createElement("p");
       info.textContent = learning.join(" · ");
       section.append(info);
     }

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" /><title>FFVI · 渲染对照</title>
+  <script type="importmap">
+    { "imports": { "pixi.js": "/vendor/pixi.mjs" } }
+  </script>
+  <style>
+    [hidden] {
+      display: none !important;
+    }
+    h1 {
+      font-size: 22px;
+      margin: 8px 0;
+    }
+    p {
+      margin: 6px 0;
+    }
+    body {
+      margin: 0;
+      padding: 10px;
+      background: #080e1b;
+      color: #edf1ff;
+      font: 15px system-ui;
+    }
+    button {
+      padding: 4px 10px;
+      margin: 3px;
+      background: #24365a;
+      color: white;
+      border: 1px solid #a5bad8;
+    }
+    canvas {
+      display: block;
+      image-rendering: pixelated;
+      margin: 6px 0;
+    }
+    #reference {
+      width: 480px;
+      height: 320px;
+    }
+    #surface {
+      width: 960px;
+    }
+    pre {
+      white-space: pre-wrap;
+      font-size: 13px;
+      max-width: 960px;
+    }
+  </style>
+  <body>
+    <h1>FFVI · Canvas → Pixi WebGL</h1>
+    <div id="scenes"></div>
+    <button id="old">旧 Canvas 画面</button><button id="new">Pixi WebGL 画面</button
+    ><button id="stress">测量 10 秒</button>
+    <p id="name">加载真实回归检查点…</p>
+    <canvas id="reference" width="960" height="640" hidden></canvas>
+    <div id="surface"><canvas id="webgl" width="320" height="180"></canvas></div>
+    <pre id="metrics"></pre>
+    <script type="module" src="/game/render-lab.js"></script>
+  </body>
+</html>

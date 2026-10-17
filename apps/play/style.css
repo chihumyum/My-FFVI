@@ -239,3 +239,12 @@ progress {
   width: 100%;
   height: 22px;
 }
+
+/* In-game panels are retained Pixi controls; markup only seeds their labels. */
+.game main > section,
+.game main > aside {
+  visibility: hidden;
+}
+footer {
+  flex-wrap: wrap;
+}

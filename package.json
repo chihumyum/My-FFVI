@@ -21,5 +21,8 @@
   },
   "devDependencies": {
     "prettier": "3.9.10"
+  },
+  "dependencies": {
+    "pixi.js": "8.22.0"
   }
 }

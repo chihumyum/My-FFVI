@@ -18,6 +18,7 @@ const audioInstructions = new Set([
   "SetVolume",
   "LoadSE",
 ]);
+const visualInstructions = new Set(["Shake", "Flash", "ScreenEffect"]);
 export const observingAudioInstruction = (game) => Boolean(listening.get(game));
 export const isAudioInstruction = (name) => audioInstructions.has(name);
 export function withPresentation(Base) {
@@ -31,13 +32,14 @@ export function withPresentation(Base) {
       const program = this.data.programs[task.program],
         index = task.pc,
         op = program?.ops[index];
-      if (!audioInstructions.has(op?.[0])) return super.step(task);
+      const audio = audioInstructions.has(op?.[0]);
+      if (!audio && !visualInstructions.has(op?.[0])) return super.step(task);
       listening.set(this, (listening.get(this) || 0) + 1);
       try {
         const result = super.step(task);
         try {
           this.onPresentation?.({
-            kind: "audio-command",
+            kind: audio ? "audio-command" : "presentation-command",
             name: op[0],
             i: op[1],
             r: op[2],

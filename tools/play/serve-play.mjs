@@ -5,6 +5,7 @@ const root = resolve(import.meta.dirname, "../..");
 const types = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".png": "image/png",
@@ -22,6 +23,12 @@ http
       if (p === "/" || p === "/game/" || p === "/play/") {
         base = "apps/play";
         rel = "index.html";
+      } else if (p.startsWith("/evidence/")) {
+        base = "build/play";
+        rel = p.slice(10);
+      } else if (p === "/vendor/pixi.mjs") {
+        base = "node_modules/pixi.js/dist";
+        rel = "pixi.mjs";
       } else if (p.startsWith("/play-data/")) {
         base = process.env.PLAY_DATA_DIR || "build/web-data";
         rel = p.slice(11);

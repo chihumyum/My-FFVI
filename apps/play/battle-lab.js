@@ -1,13 +1,19 @@
+import { GameRenderer } from "/game/renderer.js";
+import { GameUI, createWidget } from "/game/ui.js";
 import { configureGogo } from "/play-runtime/battle-commands.js";
 import { Battle } from "/play-runtime/battle.js";
 import { createCharacter, learnNaturalAbilities } from "/play-runtime/progression.js";
 import { createBattleMenu } from "/game/battle-menu.js";
-const $ = (id) => document.getElementById(id),
-  data = await fetch("/play-data/battle.json").then((r) => r.json());
+const renderer = new GameRenderer(document.getElementById("screen"));
+await renderer.init();
+const ui = new GameUI(renderer.layers.ui);
+const $ = (id) => ui.get(id) || document.getElementById(id);
+const data = await fetch("/play-data/battle.json").then((r) => r.json());
 const menu = createBattleMenu({
   commands: $("commands"),
   targets: $("targets"),
   status: $("battle-status"),
+  createElement: createWidget,
 });
 for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 31, 32]) {
   const option = document.createElement("option");
@@ -101,6 +107,7 @@ function start() {
 $("restart").onclick = start;
 $("cycle").onclick = () => menu.cycle();
 addEventListener("keydown", (e) => {
+  if (ui.handleKey(e)) return;
   if (menu.handleKey(e)) {
     e.preventDefault();
     return;
@@ -110,43 +117,16 @@ addEventListener("keydown", (e) => {
     menu.cycle();
   }
 });
-const ctx = $("screen").getContext("2d"),
-  images = new Map();
-function sprite(url) {
-  if (!url) return null;
-  if (!images.has(url)) {
-    const i = new Image();
-    i.src = url;
-    images.set(url, i);
-  }
-  return images.get(url);
-}
 function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (battle) {
     battle.tick(dt);
-    ctx.fillStyle = "#172638";
-    ctx.fillRect(0, 0, 960, 480);
-    ctx.imageSmoothingEnabled = false;
-    for (const [side, units] of [
-      ["enemy", battle.enemies],
-      ["player", battle.players],
-    ])
-      units.forEach((u, n) => {
-        if (u.removed || u.hidden || u.hp <= 0) return;
-        const x = side === "enemy" ? 130 + n * 120 : 700,
-          y = side === "enemy" ? 270 : 120 + n * 100,
-          i = sprite(u.sprite?.url);
-        if (i?.complete && i.naturalWidth)
-          ctx.drawImage(i, x, y - i.height * 2, i.width * 2, i.height * 2);
-        ctx.fillStyle = "#fff";
-        ctx.font = "20px sans-serif";
-        ctx.fillText(u.name, x, y + 35);
-      });
     menu.update(battle);
     $("action-log").textContent = battle.log.slice(-30).join("\n");
   }
+  ui.render();
+  renderer.render(battle ? { battle, time: battle.time } : null, null, data);
   requestAnimationFrame(loop);
 }
 start();

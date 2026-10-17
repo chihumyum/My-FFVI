@@ -5,7 +5,10 @@
     content="width=device-width,initial-scale=1"
   /><title>FFVI 战斗指令操作测试</title
   ><link rel="stylesheet" href="/game/style.css" />
-  <body>
+  <script type="importmap">
+    { "imports": { "pixi.js": "/vendor/pixi.mjs" } }
+  </script>
+  <body class="game">
     <main>
       <header>
         <h1>战斗指令操作测试</h1>
@@ -33,7 +36,7 @@
         ><a href="/game/">返回游戏</a>
         <div id="gogo-commands" hidden></div>
       </header>
-      <canvas id="screen" width="960" height="480"></canvas>
+      <canvas id="screen" width="320" height="180"></canvas>
       <section id="battle">
         <div id="battle-status"></div>
         <div id="commands"></div>

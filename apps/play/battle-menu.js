@@ -1,15 +1,21 @@
 import { validBlitz } from "/play-runtime/battle-commands.js";
 // Manual controls submit ordinary Battle inputs; no regression policy lives here.
-export function createBattleMenu({ commands, targets, status }) {
+export function createBattleMenu({
+  commands,
+  targets,
+  status,
+  createElement = document.createElement.bind(document),
+}) {
   let battle = null,
     index = -1,
     menu = null,
     selection = null,
+    selectionMarker = "",
     marker = "",
     blitz = [],
     dual = [];
   const button = (label, run, disabled = false) => {
-    const b = document.createElement("button");
+    const b = createElement("button");
     b.textContent = label;
     b.disabled = disabled;
     b.onclick = run;
@@ -46,7 +52,19 @@ export function createBattleMenu({ commands, targets, status }) {
     else battle.choose(index, action.id, target);
     close();
   };
+  const targetState = (action) =>
+    JSON.stringify(
+      (action.targetSides ?? [action.target === "ally" ? "player" : "enemy"]).map((side) =>
+        (side === "player" ? battle.players : battle.enemies).map((u) => [
+          u.name,
+          side === "player" ? u.hp : null,
+          side === "player" ? u.maxHp : null,
+          battle.eligibleTarget(u, action),
+        ]),
+      ),
+    );
   const chooseTarget = (action) => {
+    selectionMarker = targetState(action);
     selection = action;
     targets.replaceChildren();
     battle.setInput(menu?.input === "dualcast" ? "dualcast" : "target");
@@ -128,7 +146,10 @@ export function createBattleMenu({ commands, targets, status }) {
         .join("\n") +
       "\n" +
       battle.log.slice(-2).join(" · ");
-    if (selection) return;
+    if (selection) {
+      if (selectionMarker !== targetState(selection)) chooseTarget(selection);
+      return;
+    }
     const level = menu?.input === "bushido" ? battle.bushidoLevel(index) : 0,
       reels = menu?.input === "slots" ? battle.slotSymbols() : [];
     const charge = commands.querySelector("progress");
@@ -172,12 +193,12 @@ export function createBattleMenu({ commands, targets, status }) {
       commands.append(button("← 指令", close));
       if (menu.input === "equipment") {
         for (const slot of [0, 1]) {
-          const label = document.createElement("label"),
-            select = document.createElement("select");
+          const label = createElement("label"),
+            select = createElement("select");
           label.textContent = slot ? "左手" : "右手";
           select.setAttribute("aria-label", slot ? "战斗左手装备" : "战斗右手装备");
           for (const item of battle.equipmentChoices(index, slot)) {
-            const option = document.createElement("option");
+            const option = createElement("option");
             option.value = item.id;
             option.textContent = item.name;
             select.append(option);
@@ -193,7 +214,7 @@ export function createBattleMenu({ commands, targets, status }) {
         return;
       }
       if (menu.input === "blitz") {
-        const info = document.createElement("p");
+        const info = createElement("p");
         info.textContent = "输入必杀技：" + blitz.join(" ");
         commands.append(info);
         for (const key of ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖", "X", "Y", "L", "R"])
@@ -211,14 +232,14 @@ export function createBattleMenu({ commands, targets, status }) {
         );
       }
       if (menu.input === "bushido") {
-        const bar = document.createElement("progress");
+        const bar = createElement("progress");
         bar.max = 8;
         bar.value = level;
         bar.setAttribute("aria-label", "必杀剑蓄力");
         commands.append(bar);
       }
       if (menu.input === "slots") {
-        const text = document.createElement("strong");
+        const text = createElement("strong");
         text.dataset.reels = "";
         text.textContent = reels
           .map((n) => ["7", "龙", "BAR", "飞空艇", "陆行鸟", "钻石"][n])
@@ -234,7 +255,7 @@ export function createBattleMenu({ commands, targets, status }) {
         return;
       }
       if (menu.input === "dualcast") {
-        const info = document.createElement("strong");
+        const info = createElement("strong");
         info.textContent = `连续魔：第 ${dual.length + 1} 次`;
         commands.append(info);
       }

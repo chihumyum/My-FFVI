@@ -5,9 +5,12 @@
     content="width=device-width,initial-scale=1"
   /><title>FINAL FANTASY VI · Web</title
   ><link rel="stylesheet" href="/game/style.css" />
-  <body>
+  <script type="importmap">
+    { "imports": { "pixi.js": "/vendor/pixi.mjs" } }
+  </script>
+  <body class="game">
     <main>
-      <canvas id="screen" width="960" height="640"></canvas>
+      <canvas id="screen" width="320" height="180"></canvas>
       <section id="title">
         <h1>FINAL FANTASY VI</h1>
         <p>Web 移植</p>
@@ -30,8 +33,7 @@
         <span id="mode" hidden>剧情测试 · 强化队伍</span
         ><span id="location">方向键 / WASD 移动 · Enter / 空格确认 · Esc 菜单 · Q 换队</span
         ><button id="walk">自动行走：关</button><button id="switch" hidden>切换队伍（Q）</button
-        ><button id="auto">自动推进：关</button><button id="vehicle-open" hidden>载具操作</button
-        ><button id="save">存档</button>
+        ><button id="auto">自动推进：关</button><button id="vehicle-open" hidden>载具操作</button>
       </footer>
       <aside id="over" hidden>
         <h2>任务失败</h2>
@@ -60,7 +62,7 @@
         <h2>队伍</h2>
         <div id="party"></div>
         <div id="items"></div>
-        <button id="close">返回游戏</button>
+        <button id="menu-save">存档</button><button id="close">返回游戏</button>
       </aside>
     </main>
     <script type="module" src="/game/app.js"></script>
