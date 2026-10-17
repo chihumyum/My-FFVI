@@ -9,7 +9,9 @@ import { routeToStory } from './navigation.js';
 export function randomEncounterInput(game, objective, pathTo) {
   const buy = objective.buy;
   if (buy && (game.inventory[buy.contentId] || 0) < (buy.count || 1))
-    return routeToStory(game, { scripts: shopScriptsForContent(game, buy.contentId) }, pathTo);
+    return routeToStory(game, { scripts: shopScriptsForContent(game, buy.contentId),
+      shops: [...new Set((game.data.systemTables?.product || []).filter(row =>
+        Number(row.content_id) === buy.contentId).map(row => Number(row.group_id)))] }, pathTo);
   if (!game.map.worldTerrain) {
     const worlds = Object.values(game.battleData.encounters?.maps || {}).filter(map => map.grid).map(map => map.id);
     return routeToStory(game, { action: 'visit-map', maps: worlds }, pathTo);

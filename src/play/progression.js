@@ -65,8 +65,8 @@ export function recalculateEquipment(data, unit) {
   unit.permanentConditions = [];
   for (const { item } of equipment) {
     for (const row of data.attributeGroups ?? []) if (row.group_id === item.resistance_attribute) {
-      // PR: one weak, two immune, three resist, four absorb.
-      const priority = { 0: 0, 1: 1, 2: 3, 3: 2, 4: 4 };
+      // PR: one weak, two resist, three immune, four absorb.
+      const priority = { 0: 0, 1: 1, 2: 2, 3: 3, 4: 4 };
       if ((priority[row.type_id] ?? 0) >= (priority[unit.affinities[row.attribute_id]] ?? 0)) unit.affinities[row.attribute_id] = row.type_id;
     }
     for (const row of data.conditionGroups ?? []) {

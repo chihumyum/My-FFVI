@@ -336,6 +336,7 @@ function navigationState(game) {
             if (projected?.landing && (projected.landing.x !== entry.x || projected.landing.y !== entry.y || projected.landing.layer !== entry.layer))
               destinations.push({ mapId, position: projected.landing });
             return { ...entry, destinations, syscalls: projected?.syscalls || new Set(),
+              projectedBanks: projected?.banks || {},
               recoveries: projected?.recoveries || new Set(), encounters: projected?.encounters || new Set(), scripts: projected
               ? reachableScripts(mapId, projected, groups) : new Set() };
           }),
@@ -349,6 +350,7 @@ function navigationState(game) {
     script,
     reachableScripts,
     distances: new Map(),
+    stateTravels: new Map(),
   });
 }
 
@@ -390,12 +392,14 @@ function entryRegions(map, entry) {
   return [...regions];
 }
 
-export function routeToStory(game, objective, pathTo) {
+export function routeToStory(game, objective, pathTo, { allowStateTravel = true,
+  avoidBattles = typeof objective === 'object' && Boolean(objective.rest || objective.shops?.length) } = {}) {
   const navigation = game.data.navigation;
   if (!navigation) return { status: "no-navigation" };
   const requested = typeof objective === "string" ? [objective] :
     [...(objective.scripts || []), ...(objective.after || [])];
   const state = navigationState(game),
+    entriesFor = id => state.entries(id).filter(entry => !avoidBattles || !entry.encounters.size),
     matches = (entry) =>
       requested.some((name) => entry.scripts?.has(name)) ||
       (typeof objective !== "string" && (objective.syscalls?.some(name => entry.syscalls?.has(name)) ||
@@ -426,7 +430,7 @@ export function routeToStory(game, objective, pathTo) {
     }
     return {status:'wait-npc',target};
   };
-  const local = state.entries(game.mapId);
+  const local = entriesFor(game.mapId);
   for (const entry of local.filter(matches)) {
     const target = actual(entry);
     if (!target) continue;
@@ -476,7 +480,7 @@ export function routeToStory(game, objective, pathTo) {
     }
   }
   const intersects = (a, b) => a?.some((region) => b?.includes(region));
-  const cacheKey = JSON.stringify(objective);
+  const cacheKey = JSON.stringify([objective,avoidBattles]);
   if (!state.distances.has(cacheKey)) {
     const reverse = new Map(),
       distances = new Map(),
@@ -490,7 +494,7 @@ export function routeToStory(game, objective, pathTo) {
       return `${dest.mapId}:${entrance}`;
     };
     for (const map of Object.values(navigation.maps))
-      for (const entry of state.entries(map.id))
+      for (const entry of entriesFor(map.id))
         for (const dest of entry.destinations) if (dest.position && navigation.maps[dest.mapId]) {
           const key = destinationKey(dest), regions = pointRegions(navigation.maps[dest.mapId], dest.position);
           if (!regions.length) continue;
@@ -498,7 +502,7 @@ export function routeToStory(game, objective, pathTo) {
             regions } });
         }
     for (const map of Object.values(navigation.maps)) {
-      const entries = state.entries(map.id),
+      const entries = entriesFor(map.id),
         initial = state.script(map.id, map.initializer, true);
       const autoTarget =
         matches(initial) ||
@@ -581,10 +585,58 @@ export function routeToStory(game, objective, pathTo) {
     if (route) return { status: "target", target, route };
     const routeMotion=movingInput(entry,target);if(routeMotion)return routeMotion;
   }
+  if (allowStateTravel) {
+    const travel = stateChangingTravel(game,objective,pathTo,state,avoidBattles);
+    if (travel) return travel;
+  }
   return {
     status: "no-route",
     script: typeof objective === "string" ? objective : objective.id,
   };
+}
+
+// A transport can return to the same room after changing which world exit
+// that room exposes. Consider that source transaction, then plan the remaining
+// route against a copy. The live game still walks to the operator, chooses the
+// dialogue option and runs the original journey before the graph is rebuilt.
+function stateChangingTravel(game, objective, pathTo, state, avoidBattles) {
+  const key = JSON.stringify([objective,avoidBattles]);
+  if (state.stateTravels.has(key)) {
+    const script = state.stateTravels.get(key);
+    return script ? { ...routeToStory(game,{scripts:[script]},pathTo,{allowStateTravel:false,avoidBattles}),transport:true } : null;
+  }
+  for (const map of Object.values(game.data.navigation.maps)) for (const entry of state.entries(map.id)) {
+    if (!entry.script || ![5,6,17].includes(entry.kind) || entry.encounters.size ||
+        !entry.destinations.some(destination => destination.mapId === map.id)) continue;
+    const changes = Object.entries(entry.projectedBanks).some(([category,values]) =>
+      /^ScenarioFlag/.test(category) && Object.entries(values).some(([key,value]) =>
+        value !== Number(game.banks[category]?.[key] || 0)));
+    if (!changes) continue;
+    const after = Object.assign(Object.create(game),{ banks:{ ...game.banks,...entry.projectedBanks },
+      mapId:map.id,areaId:map.areaId,navigationCache:null,actors:new Map(),map });
+    const initialized = project(after,map.id,map.initializer,{initializer:true,newEntry:true});
+    after.groups = initialized.groups;
+    after.entities = map.entries.filter(entity => after.groups.has(entity.group)).map(entity => {
+      const position = initialized.actorPositions.get(Number(entity.id));
+      return position ? { ...entity,...position,regions:entryRegions(map,{...entity,...position}) } : entity;
+    });
+    const destination = entry.destinations.find(destination => destination.mapId === map.id);
+    const point = destination.position || map.entrances[destination.entrance];
+    if (!point) continue;
+    after.player = { ...game.player,...point };
+    const regions = point.regions || pointRegions(map,point);
+    const probePath = (_game,target) => regions.some(region =>
+      (target.regions || entryRegions(map,target)).includes(region)) ? [] : null;
+    const onward = routeToStory(after,objective,probePath,{allowStateTravel:false,avoidBattles});
+    if (onward.status !== 'target') continue;
+    const input = routeToStory(game,{scripts:[entry.script]},pathTo,{allowStateTravel:false,avoidBattles});
+    if (input.status === 'target' || input.status === 'wait-npc') {
+      state.stateTravels.set(key,entry.script);
+      return { ...input,transport:true };
+    }
+  }
+  state.stateTravels.set(key,null);
+  return null;
 }
 
 // Player preparation may inspect the imminent source encounter, but still has

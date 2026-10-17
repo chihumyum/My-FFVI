@@ -9,7 +9,8 @@ export async function buildNavigation({ force = false } = {}) {
   if (!force) {
     try {
       const cached = JSON.parse(await readFile(output, "utf8"));
-      if (cached.maps[1]?.world && Object.values(cached.maps).some(map => map.entries.some(entry => entry.productGroup)))
+      if (cached.maps[1]?.world && Object.values(cached.maps).some(map => map.entries.some(entry => entry.productGroup)) &&
+          cached.maps[1].regionRuns?.[0]?.some(([,region]) => region === 0))
         return output;
     } catch {}
   }

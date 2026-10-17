@@ -203,8 +203,9 @@ export class BattleEvents {
       // The AI accepts Item23, whose inventory Content ID is looked up from
       // PR. Content26 is a different consumable and must not become food.
       const food = b.itemsFor(b.players.indexOf(unit)).find(item => item.itemId === 23);
-      return food && this.mode(gau) === 0 ? { abilityId: food.id,
-        targetIndex: { side: 'enemy', index: b.enemies.indexOf(gau) } } : { abilityId: 2 };
+      if (this.mode(gau) !== 0) return { abilityId: 2 };
+      return { abilityId: food?.id ?? 1,
+        targetIndex: { side: 'enemy', index: b.enemies.indexOf(gau) } };
     }
     if (this.state.magicOnly) {
       const ability = this.battle.commandsFor(this.battle.players.indexOf(unit)).find(ability =>

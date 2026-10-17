@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { executeAbilityEffects, setCondition, functionsFor, applyRecovery, abilityFromItem, tickConditions, conditionSpeed, periodicStatusInterval, periodicStatusAmount, forcedConditionAction, throwableCommands } from './ability-effects.js';
+import { executeAbilityEffects, setCondition, functionsFor, applyRecovery, abilityFromItem, tickConditions, conditionSpeed, periodicStatusInterval, periodicStatusAmount, forcedConditionAction, throwableCommands, applyWeaponEffects } from './ability-effects.js';
 import { Battle, calculateDamage } from './battle.js';
 import { auditAbilities } from '../../scripts/audit-play-abilities.mjs';
 const data=JSON.parse(fs.readFileSync(new URL('../../build/play/battle.json',import.meta.url),'utf8'));
@@ -107,6 +107,96 @@ test('sleep expires and poison uses the retained PR divisor without changing MP'
   tickConditions(f.host,f.target,8.6);assert.equal(f.target.hp,438);assert.equal(f.target.mp,40);
 });
 
+test('PR Image/type14 never creates a death clock; Doom/type404 uses its own countdown',()=>{
+  const image=fixture();setCondition(image.host,image.target,19,true);
+  assert.equal(data.conditions[19].condition_type,14);assert.equal(image.target.conditionUntil?.[19],undefined);
+  image.host.elapsed=60;tickConditions(image.host,image.target,60);
+  assert.equal(image.target.hp,500);assert(image.target.conditions.includes(19));assert(!image.target.conditions.includes(5));
+  for(const id of [14,54]){
+    const f=fixture(),duration=data.conditions[id].until_value;setCondition(f.host,f.target,id,true);
+    assert.equal(data.conditions[id].condition_type,404);assert.equal(f.target.conditionUntil[id],duration);
+    f.host.elapsed=duration-0.01;tickConditions(f.host,f.target,0.01);assert.equal(f.target.hp,500);
+    f.host.elapsed=duration;tickConditions(f.host,f.target,0.01);assert.equal(f.target.hp,0);assert(f.target.conditions.includes(5));
+  }
+});
+
+test('PR Fenrir Image dodges physical hits, can dissipate after that miss and never becomes Doom',()=>{
+  const f=fixture();f.cast(105);assert(f.target.conditions.includes(19));
+  f.host.random=()=>0.5;
+  let calculations=0;const damage=()=>{calculations++;return {amount:80,missed:false,critical:false};};
+  const strike=()=>executeAbilityEffects(f.host,f.actor,f.target,data.abilities[1],1,{},damage);
+  let result=strike();assert.equal(result.hit,false);assert.equal(result.amount,0);assert.equal(calculations,0);
+  assert(f.target.conditions.includes(19));f.host.elapsed=60;tickConditions(f.host,f.target,60);assert.equal(f.target.hp,500);
+  f.host.random=()=>0;result=strike();assert.equal(result.hit,false);assert.equal(result.amount,0);
+  assert(!f.target.conditions.includes(19));assert(!f.target.conditions.includes(5));
+  result=strike();assert.equal(result.hit,true);assert.equal(result.amount,80);assert.equal(calculations,1);
+});
+
+test('guaranteed physical hits and magic bypass Image without consuming its removal roll',()=>{
+  const f=fixture();setCondition(f.host,f.target,19,true);f.host.random=()=>{throw Error('Image should not roll');};
+  const damage=()=>({amount:80,missed:false,critical:false});
+  for(const ability of [{...data.abilities[1],flags:[1]},{...data.abilities[1],accuracy:255},data.abilities[40]]){
+    const result=executeAbilityEffects(f.host,f.actor,f.target,ability,1,{},damage);
+    assert.equal(result.hit,true);assert.equal(result.amount,80);assert(f.target.conditions.includes(19));
+  }
+});
+
+test('PR Imp self-negation makes two casts toggle, while an ordinary overlapping condition stays applied',()=>{
+  const f=fixture();f.cast(75);assert(f.target.conditions.includes(13));
+  f.cast(75);assert(!f.target.conditions.includes(13));
+  f.cast(75);assert(f.target.conditions.includes(13));
+  setCondition(f.host,f.target,21,true);setCondition(f.host,f.target,21,true);assert(f.target.conditions.includes(21));
+});
+
+const weaponProcRows=JSON.parse(fs.readFileSync(new URL('../../build/corpus/bundles/battleextradata_assets_all_1295049eaf8a1a34aca99fdc338e0a02.json',import.meta.url),'utf8'))[0].data.add_ability_weapon;
+const equipWeapon=(f,weaponId)=>{
+  const content=Object.values(data.contents).find(row=>row.type_id===2&&row.type_value===weaponId),weapon=data.weapons[weaponId];
+  f.actor.weaponEffects=[{contentId:content.id,process:weapon.process_prog,triggerAbilityId:weapon.trigger_ability_id,additionalConditionGroup:weapon.additional_condition_group_id}];
+  f.host.data={...data,weaponAdditionalAbilities:weaponProcRows};
+  return content;
+};
+
+test('PR weapon additional abilities roll their own 25 percent chance and rods never substitute the break ability',()=>{
+  const f=fixture();equipWeapon(f,55);const seen=[];f.host.random=()=>0.249;f.host.inventory={7:2};
+  f.host.perform=(actor,target,ability,count,options)=>{
+    seen.push({ability,options});
+    executeAbilityEffects(f.host,actor,target,ability,count,options,()=>({amount:80,missed:false,critical:false}));
+    assert.deepEqual(applyWeaponEffects(f.host,actor,target,data.abilities[1],{hit:true},options),[]);
+  };
+  const primary=f.cast(1);assert.equal(f.target.hp,420);
+  applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],primary);
+  assert.equal(f.target.hp,340);assert.equal(seen[0].ability.id,272);assert.notEqual(seen[0].ability.id,data.weapons[55].trigger_ability_id);
+  assert.equal(seen[0].ability.mp,0);assert.equal(f.actor.mp,40);assert.deepEqual(f.host.inventory,{7:2});
+  f.host.random=()=>0.25;applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],{hit:true});assert.equal(seen.length,1);
+});
+
+test('weapon spell follow-ups retain the selected recipient even when the ordinary hit missed',()=>{
+  const f=fixture();equipWeapon(f,15);f.host.random=()=>0;let recipient,abilityId;
+  f.host.perform=(_actor,target,ability)=>{recipient=target;abilityId=ability.id;};
+  applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],{hit:false,amount:0});
+  assert.equal(recipient,f.target);assert.equal(abilityId,263);
+});
+
+test('PR Assassin condition group respects rate, immunity and undead healing without consuming inventory',()=>{
+  const f=fixture();equipWeapon(f,7);f.host.random=()=>0.25;
+  applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],{hit:true});assert.equal(f.target.hp,500);
+  f.host.random=()=>0;f.target.conditionImmunities=[5];
+  applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],{hit:true});assert.equal(f.target.hp,500);
+  f.target.conditionImmunities=[];f.target.boss=true;
+  applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],{hit:true});assert.equal(f.target.hp,500);
+  f.target.boss=false;f.target.undead=true;
+  applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],{hit:true});assert.equal(f.target.hp,1000);assert(!f.target.conditions.includes(5));
+  f.target.undead=false;applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],{hit:true});assert.equal(f.target.hp,0);assert(f.target.conditions.includes(5));
+});
+
+test('Thief Knife performs a source Steal attempt at 50 percent and only for an ordinary landed Fight',()=>{
+  const f=fixture();equipWeapon(f,6);const seen=[];f.host.perform=(_actor,_target,ability)=>seen.push(ability.id);
+  f.host.random=()=>0.499;applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],{hit:true});assert.deepEqual(seen,[8]);
+  f.host.random=()=>0.5;applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],{hit:true});
+  f.host.random=()=>0;applyWeaponEffects(f.host,f.actor,f.target,data.abilities[1],{hit:false});
+  applyWeaponEffects(f.host,f.actor,f.target,data.abilities[40],{hit:true});assert.deepEqual(seen,[8]);
+});
+
 test('PR Shell/type412 reduces magic and Protect/type19 reduces physical damage, including provider variants',()=>{
   const f=fixture();Object.assign(f.actor,{side:'player',strength:35,attack:40,magic:30});Object.assign(f.target,{defense:100,magicDefense:100});
   const physical={kind:'physical',power:40,accuracy:255},magic={kind:'magic',power:40,accuracy:255};
@@ -123,8 +213,8 @@ test('PR Shell/type412 reduces magic and Protect/type19 reduces physical damage,
 test('periodic PR rates keep Regen at five percent and poison element immunity/absorption in PR order',()=>{
   const u=unit();assert.equal(periodicStatusAmount(u,data.conditions[20]),-50);
   assert.equal(periodicStatusAmount(u,data.conditions[10]),62);
-  u.affinities={6:2};assert.equal(periodicStatusAmount(u,data.conditions[10]),0);
-  u.affinities={6:3};assert.equal(periodicStatusAmount(u,data.conditions[10]),31);
+  u.affinities={6:3};assert.equal(periodicStatusAmount(u,data.conditions[10]),0);
+  u.affinities={6:2};assert.equal(periodicStatusAmount(u,data.conditions[10]),31);
   u.affinities={6:4};assert.equal(periodicStatusAmount(u,data.conditions[10]),-62);
 });
 

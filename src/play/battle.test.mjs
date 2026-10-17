@@ -17,8 +17,22 @@ test('PR beam power is used with SNES magic scaling and elemental priority', () 
   assert.equal(calculateDamage(actor, target, fire, () => 0.5).amount, 169);
   assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 1 } }, fire, () => 0.5).amount, 338);
   assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 4 } }, fire, () => 0.5).amount, -169);
-  assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 2 } }, fire, () => 0.5).amount, 0);
-  assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 3 } }, fire, () => 0.5).amount, 84);
+  assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 3 } }, fire, () => 0.5).amount, 0);
+  assert.equal(calculateDamage(actor, { ...target, elementResistances: { 1: 2 } }, fire, () => 0.5).amount, 84);
+});
+
+test('PR initial status providers apply to monsters and Float supplies its Earth immunity', () => {
+  const data={parties:{1:{members:[{monsterId:1}]}},
+    monsters:{1:{id:1,hp:100,maxHp:100,initialConditions:[93,96]}},
+    conditions:{93:{condition_type:19},96:{condition_type:409,attribute_group_id:6}},
+    attributeGroups:[{group_id:6,attribute_id:4,type_id:3}]};
+  const battle=new Battle({data,party:[{id:1,hp:100,maxHp:100}],encounterId:1,random:()=>.5});
+  const enemy=battle.enemies[0];
+  assert(enemy.protect);assert.deepEqual(enemy.conditions,[93,96]);
+  const earth={...fire,elements:[4]};
+  assert.equal(calculateDamage(actor,enemy,earth,()=>.5,1,data).amount,0);
+  assert(calculateDamage(actor,{...enemy,conditions:[]},earth,()=>.5,1,data).amount>0);
+  assert.equal(data.monsters[1].conditions,undefined);
 });
 
 test('evasion can prevent ordinary hits and unblockable attacks bypass it', () => {
@@ -127,6 +141,22 @@ test('equipment conditions apply on entry and temporary conditions expire at the
   const next=new Battle({data,party,encounterId:1,random:()=>.25});
   assert(next.players[0].protect);
   assert(next.players[0].conditions.includes(10));
+});
+
+test('equipped magicite exposes its source summon once per battle and charges real MP', () => {
+  const data={parties:{1:{members:[{monsterId:1}]}},monsters:{1:{id:1,hp:1000,maxHp:1000}},
+    magicStones:{62:{summonAbilityId:88}},abilities:{88:{id:88,name:'Ramuh',kind:'magic',range:3,mp:25,power:20,
+      functions:[{id:3,values:[1,0,0]}]}}};
+  const party=[{id:2,hp:200,maxHp:200,mp:80,maxMp:80,magicite:62}];
+  const battle=new Battle({data,party,encounterId:1,random:()=>.25});
+  assert(battle.commandsFor(0).some(command=>command.id===88));
+  party[0].ready=true;assert.equal(battle.choose(0,88,0),true);
+  assert.equal(party[0].mp,55);
+  assert(!battle.commandsFor(0).some(command=>command.id===88));
+  party[0].ready=true;assert.equal(battle.choose(0,88,0),false);
+  assert.equal(party[0].mp,55);
+  const next=new Battle({data,party,encounterId:1,random:()=>.25});
+  assert(next.commandsFor(0).some(command=>command.id===88));
 });
 
 test('battle items use fixed PR recovery, shared content stock and an ordinary action turn', () => {

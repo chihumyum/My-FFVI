@@ -22,6 +22,38 @@ function sourceBosses(game, names, seen = new Set()) {
   }
   return [...ids];
 }
+function sourcePartyAfter(game, input) {
+  const away = new Set(), seen = new Set();
+  const visit = name => {
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    for (const [op, ints = [], , strings = []] of programFor(game, name)?.ops || []) {
+      if (op === 'OrganizePartySlot' && ints[0] > 1) for (const id of ints.slice(1, 5)) if (id > 0) away.add(id);
+      if (op === 'ChangeScript' || op === 'ChangeMap') for (const next of strings) if (next?.startsWith('sc_')) visit(next);
+    }
+  };
+  visit(input?.target?.script || input?.target?.npc?.interaction?.script);
+  return game.party.filter(unit => !away.has(unit.id));
+}
+const knowsHealing = (game, unit) => (unit.abilities || []).some(id =>
+  game.battleData.abilities?.[id]?.kind === 'heal' && game.battleData.abilities[id].power > 0);
+function healingLesson(game, members) {
+  if (!members.length || members.some(unit => knowsHealing(game, unit))) return null;
+  const candidates = [];
+  for (const stone of Object.values(game.battleData.magicStones || {}).filter(stone => game.inventory[stone.contentId] > 0))
+    for (const entry of stone.learning || []) {
+      const ability = game.battleData.abilities?.[entry.abilityId];
+      if (ability?.kind !== 'heal' || !(ability.power > 0) || !ability.menuFunctionGroup) continue;
+      for (const unit of members.filter(unit => unit.id > 0 && unit.id <= 12 && ability.mp <= unit.maxMp * .5)) {
+        const remaining = 100 - (unit.magicLearning?.[entry.abilityId] || 0);
+        candidates.push({ memberId: unit.id, abilityId: entry.abilityId, stoneId: stone.contentId,
+          score: entry.rate / Math.max(1, remaining) * (1 + unit.magic / 100) / Math.max(1, ability.mp) });
+      }
+    }
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0] || null;
+}
+const trainingRoute = (game, objective, pathTo) => routeToStory(game, objective, pathTo, { avoidBattles: true });
 function formationMembers(game, encounterIds) {
   return encounterIds.flatMap(id => game.battleData.parties?.[id]?.members || [])
     .map(member => game.battleData.monsters?.[member.monsterId]).filter(Boolean);
@@ -31,19 +63,20 @@ function multiPartyMenu(game, input) {
   return (programFor(game, name)?.ops || []).some(([op, , , strings]) => op === 'SysCall' &&
     /^パーティ編成[：:](?:２|３|2|3)/.test(strings?.[0] || ''));
 }
-function viablePool(game, choices, level) {
+function viablePool(game, choices, level, learning = false) {
   const formations = choices.filter(choice => choice.id && choice.weight > 0).map(choice => {
     const enemies = formationMembers(game, [choice.id]);
-    return { enemies, weight: choice.weight, xp: enemies.reduce((sum, enemy) => sum + (enemy.exp || 0), 0) };
+    return { enemies, weight: choice.weight, xp: enemies.reduce((sum, enemy) => sum + (enemy.exp || 0), 0),
+      ap: game.battleData.parties?.[choice.id]?.ap || 0 };
   });
   if (!formations.length || formations.some(formation => formation.enemies.some(enemy => enemy.boss)) ||
-      formations.every(formation => !formation.xp)) return false;
+      formations.every(formation => !(learning ? formation.ap : formation.xp))) return false;
   const enemies = formations.flatMap(formation => formation.enemies);
   return enemies.length > 0 && average(enemies) <= level + 4 && Math.max(...enemies.map(enemy => enemy.level)) <= level + 6;
 }
 function currentTrainingStep(game, state) {
   if (game.rts?.active || isVeldt(game) || (game.player.vehicle || 1) > 1 || currentFoot(game).subtract <= 0 ||
-      !viablePool(game, encounterPool(game), average(game.party))) return null;
+      !viablePool(game, encounterPool(game), average(game.party), Boolean(state.lesson))) return null;
   const directions = [['right', 1, 0], ['left', -1, 0], ['down', 0, 1], ['up', 0, -1]];
   const first = state.direction || 0;
   for (let step = 0; step < directions.length; step++) {
@@ -67,6 +100,8 @@ function currentTrainingStep(game, state) {
 // started by ordinary movement; this code never edits units or source flags.
 export function prepareBattleReadiness(game, objective, input, pathTo) {
   if (game.testBoost || game.busy || !objective || game.rts?.active) return null;
+  const timer = game.banks.PlaySystems?.timer;
+  if (timer && !timer.expired && !timer.dispatched) return null;
   if (game.preparationTraining && game.preparationTraining.objective !== objective.id) game.preparationTraining = null;
   const active = game.preparationTraining;
   const multi = active?.multi ?? multiPartyMenu(game, input);
@@ -74,31 +109,40 @@ export function prepareBattleReadiness(game, objective, input, pathTo) {
   const declared = multi ? sourceBosses(game, (chapter?.objectives || []).flatMap(item => item.scripts || [])) :
     encountersForInput(game, input);
   const bosses = formationMembers(game, declared).filter(enemy => enemy.boss);
-  if (!bosses.length && !active) return null;
-  const level = active?.level ?? Math.ceil(Math.max(...bosses.map(boss => boss.level)) * .65);
+  const after = sourcePartyAfter(game, input);
+  const lesson = active?.lesson ?? ((bosses.length || after.length < game.party.length) ? healingLesson(game, after) : null);
+  if (!bosses.length && !lesson && !active) return null;
+  const level = active?.level ?? (bosses.length ? Math.ceil(Math.max(...bosses.map(boss => boss.level)) * .65) : 0);
   const roster = rosterFor(game, multi);
-  if (average(roster) >= level && (!multi || roster.every(unit => unit.level >= level - 2))) {
+  const progress = () => lesson ? game.unit(lesson.memberId).abilities?.includes(lesson.abilityId) ? 100 :
+    game.unit(lesson.memberId).magicLearning?.[lesson.abilityId] || 0 : experience(roster);
+  const learned = !lesson || game.unit(lesson.memberId).abilities?.includes(lesson.abilityId);
+  if (average(roster) >= level && (!multi || roster.every(unit => unit.level >= level - 2)) && learned) {
     if (active?.originMap && game.mapId !== active.originMap) {
-      const back = routeToStory(game, { action: 'visit-map', maps: [active.originMap] }, pathTo);
+      const back = trainingRoute(game, { action: 'visit-map', maps: [active.originMap] }, pathTo);
       if (!['no-route', 'no-input'].includes(back.status)) return { ...back, training: true };
       game.warn(null, `Training ${objective.id}: cannot return to the original preparation map; following the main route.`);
     }
     game.preparationTraining = null;
     return null;
   }
-  const key = `${objective.id}:${level}:${multi ? 'all' : game.party.map(unit => unit.id).join(',')}`;
+  const key = `${objective.id}:${level}:${multi ? 'all' : game.party.map(unit => unit.id).join(',')}:${lesson ? `${lesson.memberId}:${lesson.abilityId}` : ''}`;
   let state = game.preparationTraining;
   if (state?.key !== key) {
-    state = game.preparationTraining = { key, objective: objective.id, multi, originMap: game.mapId, level, steps: 0, failedMaps: [], battles: game.battles.length,
-      exp: experience(roster), escapes: 0, stalledBattles: 0 };
-    game.event('training-start', { targetLevel: level, objective: objective.id, members: roster.map(unit => unit.id) });
+    state = game.preparationTraining = { key, objective: objective.id, multi, originMap: game.mapId, level, lesson, steps: 0, failedMaps: [], battles: game.battles.length,
+      progress: progress(), escapes: 0, stalledBattles: 0 };
+    game.event('training-start', { targetLevel: level, lesson, objective: objective.id, members: roster.map(unit => unit.id) });
   }
   if (state.abandoned) return null;
+  if (lesson && !learned && game.unit(lesson.memberId).magicite !== lesson.stoneId && !game.equipMagicite(lesson.memberId, lesson.stoneId)) {
+    game.warn(null, `Training ${objective.id}: cannot equip the owned teaching magicite; continuing the main route.`);
+    state.abandoned = true; return null;
+  }
   if (state.battles !== game.battles.length) {
     const recent = game.battles.slice(state.battles);
     state.escapes = recent.at(-1)?.outcome === 'escape' ? state.escapes + 1 : 0;
-    state.stalledBattles = experience(roster) <= state.exp ? state.stalledBattles + recent.length : 0;
-    state.exp = experience(roster); state.battles = game.battles.length;
+    state.stalledBattles = progress() <= state.progress ? state.stalledBattles + recent.length : 0;
+    state.progress = progress(); state.battles = game.battles.length;
     if (state.escapes >= 2 || state.stalledBattles >= 4) {
       if (!state.failedMaps.includes(game.mapId)) state.failedMaps.push(game.mapId);
       state.escapes = state.stalledBattles = 0;
@@ -109,9 +153,10 @@ export function prepareBattleReadiness(game, objective, input, pathTo) {
     if (!selected.every(id => game.party.some(unit => unit.id === id))) {
       state.partyPreference = { include: selected, count: selected.length };
       if (vehicleInputState(game).flying && autoVehicleInput(game, { action: 'deck' })) return { status: 'training-walk', training: true };
-      const menu = routeToStory(game, { syscalls: ['パーティ編成：１パーティ'] }, pathTo);
+      const menu = trainingRoute(game, { syscalls: ['パーティ編成：１パーティ'] }, pathTo);
       if (!['no-route', 'no-input'].includes(menu.status)) return { ...menu, training: true };
       game.warn(null, `Training ${objective.id}: no reachable source party menu for reserve training; continuing the main route.`);
+      state.partyPreference = null;
       state.abandoned = true;
       return null;
     }
@@ -123,12 +168,13 @@ export function prepareBattleReadiness(game, objective, input, pathTo) {
   }
   const possible = Object.values(game.battleData.encounters?.maps || {}).filter(map => map.subtract > 0 && map.set > 0 &&
     map.id !== game.mapId && !state.failedMaps.includes(map.id) &&
-    viablePool(game, game.battleData.encounters.sets?.[map.set]?.choices || [], average(game.party))).map(map => map.id);
+    viablePool(game, game.battleData.encounters.sets?.[map.set]?.choices || [], average(game.party), Boolean(lesson))).map(map => map.id);
   if (possible.length) {
-    const route = routeToStory(game, { action: 'visit-map', maps: possible }, pathTo);
+    const route = trainingRoute(game, { action: 'visit-map', maps: possible }, pathTo);
     if (!['no-route', 'no-input'].includes(route.status)) return { ...route, training: true };
   }
   game.warn(null, `Training ${objective.id}: no reachable suitable PR encounter pool; continuing the main route.`);
+  state.partyPreference = null;
   state.abandoned = true;
   return null;
 }

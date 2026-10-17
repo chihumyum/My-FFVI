@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PlayGame } from './game.js';
-import { preparationPurchases, prepareBattleReadiness } from './field-preparation.js';
+import { preparationPurchases, prepareBattleReadiness, prepareFieldInput } from './field-preparation.js';
 import { openShop, autoShopInput } from './event-systems.js';
+import { raiseLevel, applyBattleRewards } from './progression.js';
 
 const read = path => JSON.parse(readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8'));
 const data = read('build/play/data.json'), battleData = read('build/play/battle.json');
@@ -70,4 +71,51 @@ test('boss readiness inspects the PR Tunnel Armor script but trains only by norm
   assert.equal(directEncounters, 0);
   assert.equal(JSON.stringify(game.banks), before.banks);
   assert.deepEqual(game.party.map(unit => [unit.level, unit.exp]), before.units);
+});
+
+test('ordinary field preparation picks up the live PR Kirin object through its source script', () => {
+  const game = gameOn(395);
+  game.groups.add('ev_e_0306'); game.refreshActors();
+  const pickup = game.entities.find(entity => entity.script === 'sc_e_0306');
+  assert.ok(pickup);
+  Object.assign(game.player, { x: pickup.x, y: pickup.y + 1, layer: pickup.layer, direction: 'up' });
+  const input = prepareFieldInput(game, (current, target) => target.id === pickup.id ? [] : null);
+  assert.equal(input.target.id, pickup.id);
+  assert.equal(game.inventory[63] || 0, 0);
+  assert.equal(game.confirm(), true);
+  for (let tick = 0; tick < 100; tick++) game.tick(.1, { auto: true });
+  assert.equal(game.inventory[63], 1);
+  assert.equal(game.banks.ScenarioFlag1[153], 1);
+  assert.equal(game.history.some(entry => entry.script === 'sc_e_0306'), true);
+});
+
+test('source party splits prepare an owned healing lesson through AP encounters before removing the only healer', () => {
+  const game = gameOn(53);
+  game.roster = {}; game.partySlots = [[3, 5, 2, 7], [], []];
+  for (const unit of game.party) { unit.enabled = true; raiseLevel(battleData, unit, 15); }
+  game.inventory[63] = 1; game.equipMagicite(5, 63);
+  let position;
+  for (let y = 1; y < game.map.height - 1 && !position; y++) for (let x = 1; x < game.map.width - 1; x++) {
+    if (![x - 1, x, x + 1].every(px => game.canWalk(px, y, 1))) continue;
+    if (game.entities.some(entity => [2, 3, 23, 30].includes(entity.kind) && entity.layer === 1 &&
+      Math.abs(entity.x - x) < 3 && Math.abs(entity.y - y) < 3)) continue;
+    position = { x, y, layer: 1 }; break;
+  }
+  Object.assign(game.player, position);
+  const objective = { id: 'source-party-split', chapter: 'M5' }, input = { target: { script: 'sc_e_0315', ...position } };
+  const banks = JSON.stringify(game.banks);
+  const first = prepareBattleReadiness(game, objective, input, () => null);
+  assert.equal(first.status, 'training-walk');
+  assert.equal(game.preparationTraining.lesson.memberId, 5);
+  assert.equal(game.preparationTraining.lesson.abilityId, 31);
+  assert.equal(game.unit(5).abilities.includes(31), false);
+  assert.equal(JSON.stringify(game.banks), banks);
+  applyBattleRewards(battleData, game.party, { outcome: 'victory', exp: 0, ap: 20 });
+  assert.equal(game.unit(5).abilities.includes(31), true);
+  assert.equal(prepareBattleReadiness(game, objective, input, () => null), null);
+  assert.equal(game.preparationTraining, null);
+  game.banks.PlaySystems = { timer: { remaining: 60, expired: false, dispatched: false } };
+  assert.equal(prepareFieldInput(game, () => { throw new Error('A timed source event must not navigate to services'); }).action, 'heal');
+  for (const unit of game.party) { unit.hp = unit.maxHp; unit.mp = unit.maxMp; }
+  assert.equal(prepareFieldInput(game, () => { throw new Error('A timed source event must not navigate to services'); }), null);
 });

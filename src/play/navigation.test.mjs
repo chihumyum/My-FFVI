@@ -45,6 +45,20 @@ test('a merchant without a dialogue script remains reachable through its PR prod
   assert.deepEqual(game.banks, {});
 });
 
+test('supply shopping cannot use an unfinished source boss battle as a shortcut', () => {
+  const gate={id:'gate',kind:2,x:1,y:0,layer:0,script:'battle-door',regions:[1],group:'entity_default'};
+  const merchant={id:'merchant',kind:6,x:1,y:0,layer:0,productGroup:8,regions:[1],group:'entity_default'};
+  const data={byMap:{},global:{'battle-door':0},programs:{0:{name:'battle-door',ops:[
+    ['Encount',[1]],['ChangeMap',[2,1]],['Exit']]}},navigation:{maps:{
+      1:{id:1,entrances:{1:{regions:[1]}},entries:[gate]},
+      2:{id:2,entrances:{1:{regions:[1]}},entries:[merchant]},
+  }}};
+  const g=new PlayGame({data});Object.assign(g,{mapId:1,entities:[gate],groups:new Set(['entity_default'])});
+  assert.equal(routeToStory(g,{shops:[8]},()=>[]).status,'no-route');
+  assert.equal(routeToStory(g,{action:'visit-map',maps:[2]},()=>[]).target.id,'gate');
+  assert.equal(g.tasks.length,0);
+});
+
 test('readiness previews a portal that immediately starts a source battle on entry', () => {
   const data = { byMap: {}, global: { init: 0, battle: 1 }, programs: {
     0: { name: 'init', ops: [['ChangeScript', [0], [], ['battle']], ['Exit']] },
@@ -57,6 +71,46 @@ test('readiness previews a portal that immediately starts a source battle on ent
   assert.deepEqual(encountersForInput(game, { target: { destination: { mapId: 2, entrance: 1 } } }), [437]);
   assert.equal(game.tasks.length, 0);
   assert.deepEqual(game.banks, {});
+});
+
+test('PR walking terrain blocks ocean both in actual movement and the navigation connectivity index', () => {
+  const door=(id,x,to)=>({id,kind:3,x,y:1,layer:0,objectId:1,group:'entity_default',destination:{mapId:to,entrance:1}});
+  const map={width:5,height:3,collisions:{},entities:[door('left',0,2),door('right',4,3)],worldTerrain:{
+    width:5,height:3,loopType:0,cells:[3,3,16,3,3,3,3,16,3,3,3,3,16,3,3],
+    footRows:{3:{typeId:3},16:{typeId:16}},transportRules:{1:{collisionByFoot:{3:0,16:1}}},
+  }};
+  const game=new PlayGame({data:{}});
+  Object.assign(game,{mapId:1,map,entities:[],player:{x:1,y:1,layer:0}});
+  assert.equal(game.move('right'),false);assert.equal(game.player.x,1);
+  const indexed=navigationRegions(map,map.entities,()=>false);
+  assert(!indexed.entries[0].regions.some(region=>indexed.entries[1].regions.includes(region)));
+  assert(indexed.regionRuns[0].some(([,region])=>region===0));
+});
+
+test('a source transport returning to its room can change the world exit without injecting its flag', () => {
+  const entry=(id,x,regions,extra={})=>({id,kind:3,x,y:0,layer:0,group:'entity_default',regions,...extra});
+  const castle=entry('castle',1,[1],{destination:{mapId:2,entrance:1}});
+  const operator=entry('operator',1,[1],{kind:6,script:'travel'});
+  const exit=entry('exit',2,[1],{kind:2,script:'leave'});
+  const data={byMap:{},global:{travel:0,leave:1,init:2},programs:{
+    0:{name:'travel',ops:[['SetFlag',[1],[],['ScenarioFlag1']],['ChangeMap',[2,1]],['Exit']]},
+    1:{name:'leave',ops:[['Branch',[1,1,2],[],['ScenarioFlag1','＝','imm']],
+      ['ChangeMap',[1,1]],['ChangeMap',[1,2]],['Exit']]},
+    2:{name:'init',ops:[['Exit']]},
+  },navigation:{maps:{
+    1:{id:1,width:5,height:1,initializer:'init',entrances:{1:{x:0,y:0,layer:0,regions:[1]},2:{x:4,y:0,layer:0,regions:[2]}},
+      entries:[castle,entry('goal-door',4,[2],{destination:{mapId:3,entrance:1}})]},
+    2:{id:2,width:3,height:1,initializer:'init',entrances:{1:{x:0,y:0,layer:0,regions:[1]}},entries:[operator,exit]},
+    3:{id:3,width:1,height:1,initializer:'init',entrances:{1:{x:0,y:0,layer:0,regions:[1]}},entries:[]},
+  }}};
+  const g=new PlayGame({data});Object.assign(g,{mapId:1,map:data.navigation.maps[1],entities:[castle],
+    player:{x:0,y:0,layer:0},groups:new Set(['entity_default'])});
+  const objective={action:'visit-map',maps:[3]},path=()=>['right'];
+  assert.equal(routeToStory(g,objective,path,{allowStateTravel:false}).status,'no-route');
+  const before=JSON.stringify([g.player,g.banks]);
+  const input=routeToStory(g,objective,path);
+  assert.equal(input.target.id,'castle');assert.equal(input.transport,true);
+  assert.equal(JSON.stringify([g.player,g.banks]),before);assert.equal(g.tasks.length,0);
 });
 
 test('rest navigation checks the real inn fee and does not seek healing behind a boss', () => {

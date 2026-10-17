@@ -1,5 +1,5 @@
 import { equipmentDefinition, emptyEquipment, recalculateEquipment, abilityMpCost } from './progression.js';
-import { functionsFor, isRevival, applyRecovery } from './ability-effects.js';
+import { functionsFor, isRevival, applyRecovery, setCondition, conditionIdsForGroup } from './ability-effects.js';
 export { functionsFor } from './ability-effects.js';
 const validMember = (game, id) => game.roster[id] && game.roster[id].enabled !== false;
 const changed = unit => JSON.stringify([unit.hp, unit.mp, unit.conditions]);
@@ -155,12 +155,18 @@ function fieldEffect(game, actor, target, functions, power, isItem) {
   const data = game.battleData, revive = isRevival(data, { functions });
   const holyWater = functions.some(fn => fn.id === 11 && fn.values[0] === 15);
   if (holyWater && !hasType(data, target, [34])) return false;
-  if (revive ? target.hp > 0 && !hasType(data, target, [5]) : target.hp <= 0) return false;
+  if (!holyWater && (revive ? hasType(data, target, [34]) || target.hp > 0 && !hasType(data, target, [5]) : target.hp <= 0)) return false;
+  const before = changed(target);
+  const host = { data, elapsed: game.time || 0, warning: message => game.warn(null, message) };
+  for (const fn of functions) if (fn.id === 9 || fn.id === 10)
+    for (const id of fn.id === 9 ? [fn.values[0]] : conditionIdsForGroup(data, fn.values[0]))
+      setCondition(host, target, id, true);
   const variance = 224 + Math.floor(game.random() * 32);
   const magicAmount = isItem ? power : Math.floor((power * 4 + Math.floor(actor.level * actor.magic * power / 32)) * variance / 256) + 1;
-  for (const fn of functions) if (![1, 11, 12, 23, 28, 34].includes(fn.id))
+  for (const fn of functions) if (![1, 9, 10, 11, 12, 23, 28, 34].includes(fn.id))
     game.warn(null, `Field effect function ${fn.id} uses a provisional no-op.`);
-  return applyRecovery(data, target, functions, { power, magicAmount }).changed;
+  applyRecovery(data, target, functions, { power, magicAmount });
+  return changed(target) !== before;
 }
 
 export function activeSavePoint(game) {
@@ -225,6 +231,8 @@ export function useFieldAbility(game, abilityId, memberId, targetId = memberId) 
   const cost = abilityMpCost(actor, ability ?? {});
   if (!ability || ![...(actor.abilities ?? []), ...(actor.equipmentAbilities ?? [])].includes(abilityId) || actor.hp <= 0 ||
       hasType(game.battleData, actor, [5, 6, 11, 34]) || actor.mp < cost) return false;
+  const forbiddenTypes = (ability.forbiddenConditions || []).map(id => conditionType(game.battleData, id));
+  if (hasType(game.battleData, actor, forbiddenTypes)) return false;
   const functions = functionsFor(game.battleData, ability.menuFunctionGroup);
   if (!functions.length || !fieldEffect(game, actor, target, functions, ability.power, false)) return false;
   actor.mp -= cost;

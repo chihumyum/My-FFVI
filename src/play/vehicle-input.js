@@ -2,6 +2,7 @@
 // callbacks (ordinary takeoff/landing/deck scripts) may be dispatched here.
 // Destination story scripts, ScenarioFlags and arbitrary coordinates are never
 // accepted as input. SetVehicle/LoseVehicle legitimately change release flags.
+import { worldCollisionByFoot } from './encounters.js';
 const selectors = Object.freeze({
   '乗り物に乗る：船': 2, '乗り物に乗る：チョコボ': 3,
   '乗り物に乗る：チョコボ(アニメ・BGMなし)': 3,
@@ -194,7 +195,7 @@ function cell(game, x, y) {
 export function canVehicleMove(game, x, y, id = currentId(game)) {
   const point = cell(game, x, y);
   if (!point) return false;
-  const code = game.map?.worldTerrain?.transportRules?.[id]?.collisionByFoot?.[point.foot];
+  const code = worldCollisionByFoot(game.map,point.foot,id);
   if (code !== undefined) return code !== 1;
   if (airship(Number(id)) && world(game)) return true;
   return game.canWalk?.(point.x, point.y, game.player.layer) ?? true;

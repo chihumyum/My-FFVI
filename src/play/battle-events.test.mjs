@@ -49,6 +49,17 @@ test('Vargas ordinary damage preserves the scene defeat condition and Sabin sele
   assert.equal(battle.enemies[0].hp, 0);
 });
 
+test('a hungry Gau without owned food is met with an ordinary attack instead of endless defending', () => {
+  const gau={monsterId:549,slot:0,hp:50000,aiState:{mode:0}};
+  const battle=host({name:'event',ops:[]},[gau]); battle.itemsFor=()=>[];
+  const events=new BattleEvents(battle),unit=battle.players[0];
+  assert.deepEqual(events.autoCommand(unit),{abilityId:1,targetIndex:{side:'enemy',index:0}});
+  battle.itemsFor=()=>[{id:'item:24',itemId:23}];
+  assert.deepEqual(events.autoCommand(unit),{abilityId:'item:24',targetIndex:{side:'enemy',index:0}});
+  gau.aiState.mode=2;
+  assert.deepEqual(events.autoCommand(unit),{abilityId:2});
+});
+
 test('Ultros position bodies hide, carry shared HP on a source swap and all finish when the active body falls', () => {
   const enemies = [2, 4, 8].map((slot, index) => ({ id: 302, monsterId: 302, slot, hp: index === 1 ? 37 : 100,
     maxHp: 100, hidden: index !== 1, conditions: index === 1 ? [] : [67], aiState: { vars: Array(15).fill(0) } }));

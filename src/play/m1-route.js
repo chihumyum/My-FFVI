@@ -1,4 +1,4 @@
-import { isMapExit } from './navigation.js';
+import { isMapExit, routeToStory } from './navigation.js';
 export function pathTo(game,target){
  const start=[Math.round(game.player.x),Math.round(game.player.y),game.player.layer],cacheKey=`${game.mapId}:${target.id}:${target.x},${target.y},${target.layer}:${target.allowedDirections||''}:${!!target.approach}:${[...game.groups]}:${game.history.length}`;
  const cache=game.walkCache;if(cache?.key===cacheKey){const n=cache.cells.findIndex(cell=>cell.join(',')===start.join(','));if(n>=0)return cache.route.slice(n);}
@@ -11,7 +11,7 @@ export function pathTo(game,target){
  for(let n=0;n<q.length&&n<100000;n++){
   const [x,y,layer]=q[n],direction=target.y>y?'down':target.y<y?'up':target.x>x?'right':'left';if((target.layer==null||layer===target.layer||target.npc?.allLayers)&&(approach?(target.approach?Math.abs(x-target.x)+Math.abs(y-target.y)===1:game.interactionDistance(target,x,y,layer)>0)&&(!target.allowedDirections||target.allowedDirections.includes(direction)):Math.abs(x-target.x)<.6&&Math.abs(y-target.y)<.6)){found=q[n];break;}
   for(const[d,dx,dy]of[['up',0,-1],['right',1,0],['down',0,1],['left',-1,0]]){
-   let nx=x+dx,ny=y+dy;const terrain=game.player.vehicle>1&&game.map.worldTerrain;
+   let nx=x+dx,ny=y+dy;const terrain=game.map.worldTerrain;
    if(terrain?.loopType&1)nx=(nx+game.map.width)%game.map.width;
    if(terrain?.loopType&2)ny=(ny+game.map.height)%game.map.height;
    if(!game.canMove(nx,ny,layer))continue;
@@ -46,7 +46,17 @@ export function advanceM1(game){
   const best=game.partySlots.reduce((a,slot,n)=>health(slot)>health(game.partySlots[a])?n:a,game.partyIndex);
   if(best!==game.partyIndex&&health(game.partySlots[game.partyIndex])<.6){while(game.partyIndex!==best)game.switchParty();return {status:'party',party:best};}
  }
- const target=targetForM1(game);if(!target)return {status:'no-input'};
+ let target=targetForM1(game);
+ if(!target){
+  const played=name=>game.history.some(entry=>entry.script===name);
+  const next=played('sc_e_0018_5')?'sc_e_0001_0':!played('sc_e_0010')?'sc_e_0010':
+   !played('sc_e_0011')?'sc_e_0011':!played('sc_e_0012')?'sc_e_0012':
+   !played('sc_e_0013')?'sc_e_0013':'sc_e_0018';
+  const input=routeToStory(game,{scripts:[next]},pathTo);
+  if(input.status==='wait-npc')return input;
+  if(!input.target)return{status:'no-input'};
+  target=input.target;
+ }
  const route=pathTo(game,target);if(!route)return {status:'no-route',target};
  if(route.length){game.move(route[0]);return {status:'walk',target};}
  game.checkTriggers();if(!game.busy){const dx=target.x-game.player.x,dy=target.y-game.player.y;game.player.direction=Math.abs(dx)>Math.abs(dy)?dx>0?'right':'left':dy>0?'down':'up';game.confirm();}

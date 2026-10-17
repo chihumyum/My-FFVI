@@ -1,5 +1,19 @@
 // PR terrain and encounter masters determine eligibility and the formation
 // pool. The step accumulator and Veldt pool order remain logged approximations.
+export function worldCollisionByFoot(map, foot, transportId = 1) {
+  const terrain = map?.worldTerrain, rule = terrain?.transportRules?.[transportId];
+  if (!rule) return undefined;
+  const collision = rule.collisionByFoot?.[foot];
+  if (collision !== undefined) return Number(collision);
+  const type = terrain.footRows?.[foot]?.typeId ?? foot, flag = rule.groupFlags?.[type - 1];
+  return flag === undefined ? undefined : Number(flag) === 1 ? 0 : 1;
+}
+
+export function worldCollisionAt(map, x, y, transportId = 1) {
+  const terrain = map?.worldTerrain;
+  return terrain ? worldCollisionByFoot(map,terrain.cells[Math.floor(y)*terrain.width+Math.floor(x)],transportId) : undefined;
+}
+
 export function currentFoot(game, x = game.player.x, y = game.player.y) {
   const terrain = game.map.worldTerrain;
   if (!terrain) return { type: 0, subtract: game.battleData.encounters?.maps[game.mapId]?.subtract || 0 };

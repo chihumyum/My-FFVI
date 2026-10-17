@@ -68,4 +68,3 @@ export function renderPartyMenu(game, elements, refresh) {
   }
 }
 import { canEquip } from '/play-runtime/resources.js';
-

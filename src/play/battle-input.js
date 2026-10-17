@@ -15,6 +15,67 @@ function predictedDamage(calculate, actor, target, ability, count) {
   return result.missed ? 0 : Math.max(0, result.amount || 0);
 }
 
+function fatalFinalAttack(battle, enemy, allies, calculate) {
+  if ((enemy.conditions || []).some(id => battle.data.conditions?.[id]?.condition_type === 12)) return null;
+  for (const [op, ids = [], weights = []] of enemy.aiState?.program?.ops || []) {
+    if (op !== 'FinalAttackAct') continue;
+    for (const [index,id] of ids.entries()) {
+      const ability = battle.data.abilities?.[id];
+      if (!ability || weights[index] === 0 || !hurtsHp(ability) ||
+          ability.mp > enemy.mp || ability.forbiddenConditions?.some(id => (enemy.conditions || []).includes(id))) continue;
+      const targets = ability.all ? allies : [allies.reduce((a,b) => a.hp < b.hp ? a : b)];
+      const killed = targets.filter(target => predictedDamage(calculate,enemy,target,ability,targets.length) >= target.hp).length;
+      if (killed === allies.length) return ability;
+    }
+  }
+  return null;
+}
+
+function counterControl(battle, unit, enemy, threat) {
+  const useful = new Set([12, ...(threat.forbiddenConditions || []).map(id => battle.data.conditions?.[id]?.condition_type ?? id)]);
+  return battle.commandsFor(battle.players.indexOf(unit)).find(command => !command.disabled && command.target !== 'ally' &&
+    functionsOf(command).some(fn => {
+      const ids = fn.id === 9 ? [fn.values[0]] : fn.id === 10 ?
+        (battle.data.conditionGroups || []).filter(row => row.group_id === fn.values[0]).map(row => row.condition_id) : [];
+      return ids.some(id => useful.has(battle.data.conditions?.[id]?.condition_type ?? id) &&
+        !(enemy.conditionImmunities || []).includes(id));
+    }));
+}
+
+function predictedCounterCost(battle, actor, target, command, damage, calculate) {
+  const live = target.aiState;
+  if (!live || live.running || typeof live.wake !== 'function' ||
+      !live.program.ops.some(([op]) => /Counter|Recevie|Receive|Damaged/.test(op))) return 0;
+  let total = 0;
+  // Reuse the actual PR interpreter on private state. Predictions never
+  // execute effects or consume the live random sequence and AI variables.
+  for (const roll of [0.1, 0.5, 0.9]) {
+    const copies = new Map([...battle.players,...battle.enemies].map(unit=>[unit,{...unit,conditions:[...(unit.conditions||[])]}]));
+    const defender = copies.get(target), source = copies.get(actor), actions = [];
+    defender.hp = Math.max(0, defender.hp - damage);
+    const preview = { data:battle.data,elapsed:battle.elapsed,encounterId:battle.encounterId,
+      players:battle.players.map(unit=>copies.get(unit)),enemies:battle.enemies.map(unit=>copies.get(unit)),
+      aiQueue:[],random:()=>roll,warning:()=>{},addLog:()=>{},event:()=>{},queueAIAction:action=>actions.push(action) };
+    const ai = Object.assign(Object.create(Object.getPrototypeOf(live)),live,{
+      battle:preview,unit:defender,vars:[...live.vars],pending:[],output:[],visits:new Set(live.visits),running:false,
+    });
+    defender.aiState=ai;
+    ai.wake(defender.hp>0?'reaction':'final',{actor:source,target:defender,ability:command,amount:damage,hit:true});
+    for (const action of actions) {
+      const response=battle.data.abilities?.[action.abilityId];
+      if (!response || !hurtsHp(response) || response.mp>defender.mp ||
+          response.forbiddenConditions?.some(id=>defender.conditions.includes(id))) continue;
+      const allies=preview.players.filter(unit=>unit.hp>0&&!unit.removed&&!unit.escaped&&!unit.hidden);
+      const targets=response.all||action.all?allies:action.target?.side==='player'?[action.target]:[source];
+      for (const victim of targets) {
+        const amount=predictedDamage(calculate,defender,victim,response,targets.length);
+        total+=Math.min(victim.hp,amount)+(amount>=victim.hp?victim.maxHp:0);
+      }
+    }
+  }
+  return total/3;
+}
+
 export function autoBattleInput(battle, unit, calculate) {
   const index = battle.players.indexOf(unit);
   if (index < 0) return false;
@@ -24,7 +85,17 @@ export function autoBattleInput(battle, unit, calculate) {
   const commands = battle.commandsFor(index).filter(command => !command.disabled &&
     (command.kind === 'item' || battle.supported(command)));
   const allies = living(battle, battle.players), enemies = living(battle, battle.enemies);
+  if (battle.escapeState?.active) return battle.choose(index,2);
   if (battle.context.randomEncounter && !battle.isVeldt && battle.canEscape) {
+    for (const enemy of enemies) {
+      const threat = fatalFinalAttack(battle,enemy,allies,calculate);
+      if (!threat) continue;
+      const control = counterControl(battle,unit,enemy,threat);
+      battle.warning('Automatic input detected a potentially lethal PR final attack; attempting condition control or an ordinary escape. Confusion is treated as suppressing the final-action branch.');
+      if (control && battle.choose(index,control.id,{side:'enemy',index:battle.enemies.indexOf(enemy)})) return true;
+      if (allies.some(ally => counterControl(battle,ally,enemy,threat))) return battle.choose(index,2);
+      return battle.requestEscape();
+    }
     const incoming = enemies.reduce((sum, enemy) => sum + predictedDamage(calculate, enemy, unit,
       battle.data.abilities?.[1] || {kind:'physical',power:0}, 1), 0);
     const outgoing = allies.reduce((sum, ally) => sum + Math.max(1, ...battle.commandsFor(battle.players.indexOf(ally))
@@ -38,6 +109,25 @@ export function autoBattleInput(battle, unit, calculate) {
   const fallen = battle.players.filter(target => !target.removed && !target.escaped && !target.hidden && target.hp <= 0);
   const revivals = commands.filter(command => command.revive ||
     hasFunction(command, 34) && conditionIds(battle, command).includes(5));
+  const heal = () => {
+    if (!weak) return false;
+    const heals = commands.filter(command => command.kind === 'heal' && command.power > 0 && !command.revive ||
+      command.kind === 'item' && !command.revive &&
+      [1, 4].includes(battle.data.items?.[command.itemId]?.battle_function_group_id));
+    const missing = weak.maxHp - weak.hp;
+    heals.sort((a, b) => healingCost(a) - healingCost(b));
+    for (const command of heals)
+      if (battle.choose(index, command.id, sameSideTarget(battle.players, weak))) return true;
+    return false;
+    function healingCost(command) {
+      const amount = command.kind === 'item' ? Number(command.amount || missing) :
+        predictedDamage(calculate, unit, weak, { ...command, kind: 'heal' }, 1);
+      return Math.max(0, missing - amount) * 2 + (command.mp || 0) + Math.max(0, amount - missing) / 20;
+    }
+  };
+  // A Phoenix Down restores little HP. Stabilise the remaining party before
+  // spending every turn raising a member who cannot survive the next attack.
+  if (fallen.length && weak && weak.hp < weak.maxHp * (allies.length === 1 ? 0.75 : 0.3) && heal()) return true;
   if (fallen.length) {
     // Preserve a healer when possible. A Phoenix Down remains a normal item
     // use and costs the acting character's turn.
@@ -51,23 +141,7 @@ export function autoBattleInput(battle, unit, calculate) {
       [3, 4].includes(battle.data.items?.[command.itemId]?.battle_function_group_id));
     if (ether && battle.choose(index, ether.id, sameSideTarget(battle.players, unit))) return true;
   }
-  if (weak && weak.hp / weak.maxHp < 0.55) {
-    const heals = commands.filter(command => command.kind === 'heal' && command.power > 0 && !command.revive ||
-      command.kind === 'item' && !command.revive &&
-      [1, 4].includes(battle.data.items?.[command.itemId]?.battle_function_group_id));
-    const missing = weak.maxHp - weak.hp;
-    heals.sort((a, b) => healingCost(a) - healingCost(b));
-    for (const command of heals) {
-      if (battle.choose(index, command.id, sameSideTarget(battle.players, weak))) return true;
-    }
-    function healingCost(command) {
-      const amount = command.kind === 'item' ? Number(command.amount || missing) :
-        predictedDamage(calculate, unit, weak, { ...command, kind: 'heal' }, 1);
-      // Prefer a sufficient heal; avoid spending a turn on fifty HP late in
-      // the game when the actor has a stronger affordable spell.
-      return Math.max(0, missing - amount) * 2 + (command.mp || 0) + Math.max(0, amount - missing) / 20;
-    }
-  }
+  if (weak && weak.hp / weak.maxHp < 0.55 && heal()) return true;
   const runic = commands.find(command => functionsOf(command).some(fn => fn.id === 9 &&
     battle.data.conditions?.[fn.values?.[0]]?.condition_type === 612));
   if (runic && enemies.some(enemy => (enemy.aiState?.program?.ops || []).some(([op, ids = []]) =>
@@ -99,6 +173,8 @@ export function autoBattleInput(battle, unit, calculate) {
       const targets = command.all ? enemies : [victim];
       let score = targets.reduce((sum, enemy) => sum +
         Math.min(enemy.hp, predictedDamage(calculate, unit, enemy, command, targets.length)), 0);
+      score -= targets.reduce((sum, enemy) => sum + predictedCounterCost(battle,unit,enemy,command,
+        predictedDamage(calculate,unit,enemy,command,targets.length),calculate),0);
       // MP is finite and must last between rests. Cast when it materially
       // outperforms a free move; retain enough for one emergency Cure.
       score -= (command.mp || 0) * (unit.mp < unit.maxMp * 0.3 ? 5 : 1.5);

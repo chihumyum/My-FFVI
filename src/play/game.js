@@ -1,6 +1,6 @@
 import {executeInstruction} from './instructions.js';
 import {executePartyInput,autoPartyInput} from './party-input.js';
-import {walkEncounter} from './encounters.js';
+import {walkEncounter,worldCollisionAt} from './encounters.js';
 import {executeVehicleInstruction,executeVehicleSyscall,updateVehicleInput,moveVehicle,canVehicleMove} from './vehicle-input.js';
 import {autoShopInput,openShop,buyFromShop,sellToShop} from './event-systems.js';
 import {createCharacter} from './progression.js';
@@ -178,9 +178,9 @@ export class PlayGame{
  buy(contentId,count=1){return buyFromShop(this,contentId,count);}
  sell(contentId,count=1){return sellToShop(this,contentId,count);}
  switchParty(){if(this.busy||!this.rts?.active)return false;executeSyscall(this,{locals:[],pc:0},'RTS：操作パーティ切替',[],[]);return true;}
- canWalk(x,y,layer=this.player.layer){if(x<0||y<0||x>=this.map.width||y>=this.map.height)return false;const grid=this.map.collisions?.[layer]||this.map.collisions?.[0],v=grid?.[Math.floor(y)*this.map.width+Math.floor(x)];return v===undefined||v!==1;}
+ canWalk(x,y,layer=this.player.layer){if(x<0||y<0||x>=this.map.width||y>=this.map.height)return false;const terrain=worldCollisionAt(this.map,x,y);if(terrain!==undefined)return terrain!==1;const grid=this.map.collisions?.[layer]||this.map.collisions?.[0],v=grid?.[Math.floor(y)*this.map.width+Math.floor(x)];return v===undefined||v!==1;}
  canMove(x,y,layer=this.player.layer){return this.player.vehicle>1&&this.map?.worldTerrain?canVehicleMove(this,x,y):this.canWalk(x,y,layer);}
- move(direction){if(this.player.vehicle>1&&this.map?.worldTerrain)return moveVehicle(this,direction);if(this.busy||!this.control||this.player.motion)return false;const n=dirs.indexOf(direction);if(n<0)return false;this.player.direction=direction;this.player.animation='Walk'+({up:'B',down:'',left:'L',right:'R'}[direction]);const d=delta[n],x=this.player.x+d[0],y=this.player.y+d[1];if(!this.canMove(x,y))return false;this.player.x=x;this.player.y=y;this.stepCount++;this.camera.manual=false;updateCooperativeInput(this);this.checkTriggers();if(!this.busy)walkEncounter(this);return true;}
+ move(direction){if(this.player.vehicle>1&&this.map?.worldTerrain)return moveVehicle(this,direction);if(this.busy||!this.control||this.player.motion)return false;const n=dirs.indexOf(direction);if(n<0)return false;this.player.direction=direction;this.player.animation='Walk'+({up:'B',down:'',left:'L',right:'R'}[direction]);const d=delta[n];let x=this.player.x+d[0],y=this.player.y+d[1];if(this.map.worldTerrain?.loopType&1)x=(x+this.map.width)%this.map.width;if(this.map.worldTerrain?.loopType&2)y=(y+this.map.height)%this.map.height;if(!this.canMove(x,y))return false;this.player.x=x;this.player.y=y;this.stepCount++;this.camera.manual=false;updateCooperativeInput(this);this.checkTriggers();if(!this.busy)walkEncounter(this);return true;}
  checkTriggers(){if(this.busy||this.map?.worldTerrain&&this.player.vehicle>1)return;for(const e of this.entities){
   const actual=this.actors.get(String(e.id))||e;if(actual.visible===false)continue;if(actual.layer!=null&&actual.layer!==this.player.layer&&!e.npc?.allLayers)continue;
   const touchNpc=e.kind===6&&e.npc?.moveType===3&&this.rts?.active;

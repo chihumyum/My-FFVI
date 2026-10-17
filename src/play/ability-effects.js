@@ -84,6 +84,9 @@ export function setCondition(host, unit, id, add=true, {force=false}={}) {
   const row=host.data.conditions?.[id]||{},type=row.condition_type??id;
   unit.conditions??=[];
   const rulesFor = condition => (host.data.eraseConditionGroups||[]).filter(r=>r.group_id===host.data.conditions?.[condition]?.erase_condition_group_id);
+  // Only a source self-negation rule toggles a repeated application. PR Imp
+  // explicitly names itself in type4; overlap alone never implies a toggle.
+  if(add && unit.conditions.includes(id) && rulesFor(id).some(r=>r.type_id===4 && r.erase_condition===id))add=false;
   if(add && !force) {
     const immune = unit.conditionImmunities||unit.resistanceConditions||[];
     const inherited = unit.conditions.some(active=>conditionIdsForGroup(host.data,host.data.conditions?.[active]?.condition_group_id).includes(id));
@@ -101,9 +104,11 @@ export function setCondition(host, unit, id, add=true, {force=false}={}) {
     const remove=rules.filter(r=>r.type_id===3).map(r=>r.erase_condition);
     unit.conditions=unit.conditions.filter(active=>active===id || (unit.permanentConditions||[]).includes(active) ||
       (clearAll ? preserved.includes(active) : !remove.includes(active)));
-    if(unit.conditions.includes(id) && (type===7 || type===14 || type===17 || [7,15,16].includes(row.until_type) && row.until_value>0)) {
+    // PR type404 is Doom. Type14 is Image: its until_type16/value25
+    // describes removal on a physical dodge, not a 25-second death clock.
+    if(unit.conditions.includes(id) && (type===7 || type===404 || type===17 || [7,15].includes(row.until_type) && row.until_value>0)) {
       unit.conditionUntil??={};unit.conditionUntil[id]=host.elapsed+Math.max(1,row.until_value || 30);
-      if(type===14)host.warning?.(`Condition ${id}: doom countdown uses PR until_value seconds; native tick cadence is simplified.`);
+      if(type===404)host.warning?.(`Condition ${id}: doom countdown uses PR until_value seconds; native tick cadence is simplified.`);
     }
   }
   for(const removed of previous.filter(active=>!unit.conditions.includes(active)))if(unit.conditionUntil)delete unit.conditionUntil[removed];
@@ -165,6 +170,77 @@ export function throwableCommands(data, inventory, unit) {
       throwContentId:contentId}];
   });
 }
+export const WEAPON_EFFECTS = {
+  None: 'ordinary hit; ID-specific numerical weapons still require the damage host',
+  ADD_MAGIC: 'PR BattleExtraDesc additional-ability rows',
+  THIEFS_KNIFE: 'SNES 50 percent Steal attempt',
+  ASSASIN_WEAPON: 'PR additional-condition rows; SNES 25 percent fallback for absent death group',
+  SWORD_THAT_CUTS_IRON: 'deferred pre-hit instant-kill replacement',
+  HAWK_EYE: 'deferred pre-hit damage multiplier',
+  DICE: 'deferred fixed dice damage',
+  CHEAT_DICE: 'deferred fixed three-dice damage',
+};
+// Call after a real ordinary Fight, once per actual weapon strike. This never
+// changes the base hit into fabricated damage and never uses a rod's separate
+// trigger_ability_id (its break/use command) as its on-hit spell.
+export function applyWeaponEffects(host, actor, target, ability, result, options={}) {
+  if(ability?.id!==1 || options.weaponProc || !actor || !target || target.hp<=0)return [];
+  const data=host.data,random=host.random||Math.random,records=[];
+  const effects=(actor.weaponEffects||[]).filter(effect=>options.weaponContentId===undefined || effect.contentId===options.weaponContentId);
+  if(effects.length>1)host.warning?.('Dual-wield weapon effects are rolled for each equipped weapon; the damage host must split ordinary Fight into actual hand strikes and pass weaponContentId.');
+  const additional=data.weaponAdditionalAbilities?.additionalAbilities??data.weaponAdditionalAbilities??[];
+  const follow=(weaponId,abilityId)=>{
+    const source=data.abilities?.[abilityId];
+    if(!source){host.warning?.(`Weapon ${weaponId}: missing PR additional ability ${abilityId}; skipped.`);return;}
+    if(!host.perform){host.warning?.(`Weapon ${weaponId}: host.perform is unavailable for additional ability ${abilityId}.`);return;}
+    // Automatic weapon spells cost no MP and do not break or consume equipment.
+    const proc={...source,mp:0},sequence={};
+    const targets=proc.all?(host.selectAITargets?.(actor,proc,target,true)??[target]):[target];
+    for(const [index,recipient] of targets.entries())host.perform(actor,recipient,proc,targets.length,
+      {weaponProc:true,weaponContentId:options.weaponContentId,updateVariables:index===0,sequence});
+    records.push({kind:'ability',weaponId,abilityId});
+  };
+  for(const effect of effects){
+    const content=data.contents?.[effect.contentId],weapon=content?.type_id===2?data.weapons?.[content.type_value]:null;
+    if(!weapon){host.warning?.(`Weapon content ${effect.contentId}: equipped PR weapon row is unavailable; effect skipped.`);continue;}
+    const weaponId=weapon.id,process=effect.process??weapon.process_prog??'None';
+    const group=effect.additionalConditionGroup??weapon.additional_condition_group_id;
+    const rows=group?(data.conditionGroups||[]).filter(row=>row.group_id===group):[];
+    const inflict=(id,chance)=>{
+      if(random()*100>=clamp(chance,0,100))return;
+      const type=data.conditions?.[id]?.condition_type??id;
+      if(type===5 && target.boss)return;
+      if(type===5 && process==='ASSASIN_WEAPON' && target.undead){
+        // SNES instant-death weapons heal undead rather than bypassing them.
+        setCondition(host,target,id,false);target.hp=target.maxHp;
+        records.push({kind:'undead-recovery',weaponId,conditionId:id});return;
+      }
+      if(setCondition(host,target,id,true))records.push({kind:'condition',weaponId,conditionId:id});
+    };
+    if(result?.hit)for(const row of rows)inflict(row.condition_id,row.invocation_rate??100);
+    switch(process){
+      case 'None':break;
+      case 'ADD_MAGIC':{
+        const entries=additional.filter(row=>(row.weaponId??row.weapon_id)===weaponId);
+        if(!entries.length)host.warning?.(`Weapon ${weaponId}: ADD_MAGIC has no exported BattleExtraDesc row; trigger_ability_id is its separate use/break ability and is not substituted.`);
+        // SNES CheckWeaponSpellCast rolls after the attack, even when its
+        // physical part missed; it retains the original recipient.
+        for(const row of entries)if(random()*100<(row.chance??row.ability_per??0))follow(weaponId,row.abilityId??row.ability_id);
+        break;
+      }
+      case 'THIEFS_KNIFE':if(result?.hit && random()<0.5)follow(weaponId,8);break;
+      case 'ASSASIN_WEAPON':
+        if(result?.hit && !rows.length){host.warning?.(`Weapon ${weaponId}: absent PR death-condition group uses the SNES instant-death weapon rate25 percent.`);inflict(5,25);}
+        break;
+      case 'SWORD_THAT_CUTS_IRON':case 'HAWK_EYE':case 'DICE':case 'CHEAT_DICE':
+        host.warning?.(`Weapon ${weaponId} (${process}): numerical/replacement effect needs the ordinary-hit damage host; base hit is retained.`);break;
+      default:host.warning?.(`Weapon ${weaponId}: unknown process ${process}; base hit is retained.`);
+    }
+    if([11,20,30,53,61].includes(weaponId))host.warning?.(`Weapon ${weaponId}: its HP/MP-dependent, drain, healing or MP-critical primary hit needs the ordinary-hit damage host; additional effects do not replace that formula.`);
+    if(target.hp<=0)break;
+  }
+  return records;
+}
 export function periodicStatusInterval(data, unit, type) {
   // timer.asm DecCounters: one character slot every sixteen 30-Hz updates;
   // +32/+64/+84 status gauge -> overflow256. Poison fires every eight
@@ -179,8 +255,8 @@ export function periodicStatusAmount(unit, row) {
     Math.max(1,Math.floor(unit.maxHp/32));
   if(type===10){const affinity=(unit.affinities??unit.elementResistances)?.[6];
     if(affinity===1)amount*=2;
-    if(affinity===2)amount=0;
-    if(affinity===3)amount=Math.max(1,Math.floor(amount/2));
+    if(affinity===3)amount=0;
+    if(affinity===2)amount=Math.max(1,Math.floor(amount/2));
     if(affinity===4)amount=-amount;
   }
   return type===25?-amount:amount;
@@ -188,7 +264,7 @@ export function periodicStatusAmount(unit, row) {
 export function tickConditions(host, unit, seconds) {
   const wasStopped=hasConditionType(host.data,unit,17);
   for(const [id,until] of Object.entries(unit.conditionUntil||{}))if(host.elapsed>=until){
-    if(host.data.conditions?.[id]?.condition_type===14)setCondition(host,unit,5,true,{force:true});
+    if(host.data.conditions?.[id]?.condition_type===404)setCondition(host,unit,5,true,{force:true});
     setCondition(host,unit,Number(id),false);
   }
   if(unit.hp<=0 || wasStopped || host.events?.paused)return;
@@ -236,7 +312,18 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
     return actual;
   };
   const damage=(kind=ability.kind,resource='hp',extra={})=>{
-    const result=calculateDamage(actor,target,{...ability,kind,...extra},random,targetCount);
+    numeric=true;
+    const effect={...ability,kind,...extra};
+    const imageId=(target.conditions||[]).find(id=>data.conditions?.[id]?.condition_type===14);
+    const guaranteed=effect.flags?.includes(1) || (effect.accuracy??actor.accuracy??100)>=255;
+    if(kind==='physical' && !guaranteed && imageId!==undefined){
+      // SNES CheckHit always misses this dodgeable physical hit, then rolls
+      // whether Image dissipates. PR supplies the removal percent (25).
+      const chance=data.conditions[imageId].until_value??25;
+      if(random()*100<clamp(chance,0,100))setCondition(host,target,imageId,false);
+      hit=false;return;
+    }
+    const result=calculateDamage(actor,target,effect,random,targetCount);
     hit &&= !result.missed;critical ||= result.critical;
     if(!result.missed){let n=result.amount;
       if(kind==='heal')n=-Math.abs(n);

@@ -79,6 +79,21 @@ test('removing a source permanent-condition accessory removes its lingering stat
   assert.deepEqual(unit.conditions, [10]);
 });
 
+test('PR immunity type3 outranks half damage type2 while changing equipment', () => {
+  const { data, game, unit } = fixture();
+  data.attributeGroups = [{ group_id: 90, attribute_id: 4, type_id: 3 }, { group_id: 91, attribute_id: 4, type_id: 2 }];
+  for (const [id, group] of [[301, 90], [302, 91]]) {
+    data.contents[id] = { id, type_id: 3, type_value: id };
+    data.armors[id] = { type_id: 1, parts_group_id: 5, equip_job_group_id: 1, resistance_attribute: group };
+    game.inventory[id] = 1;
+  }
+  assert.equal(equip(game, 1, 4, 301), true);
+  assert.equal(equip(game, 1, 5, 302), true);
+  assert.equal(unit.affinities[4], 3);
+  assert.equal(equip(game, 1, 4, 0), true);
+  assert.equal(unit.affinities[4], 2);
+});
+
 test('one battle reward applies each PR level increment once and learns AP without healing for free', () => {
   const { data, game, unit } = fixture();
   unit.hp = 20; unit.mp = 3;

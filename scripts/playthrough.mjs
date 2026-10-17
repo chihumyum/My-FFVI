@@ -3,21 +3,21 @@ let randomState=Number(process.env.PLAY_SEED||1)>>>0;const random=()=>{randomSta
 const data=JSON.parse(await readFile('build/play/data.json')),battleData=JSON.parse(await readFile('build/play/battle.json'));let last='';const events=[];
 data.navigation=JSON.parse(await readFile(await buildNavigation()));const through=process.env.PLAY_THROUGH||'all';
 const game=new PlayGame({data,battleData,Battle,testBoost:process.env.PLAY_TEST_BOOST==='1',random,loadMap:async id=>JSON.parse(await readFile(await preparePlayMap(id))),onEvent:e=>{if(['script','map','battle','battle-end'].includes(e.kind)){events.push(e);if(e.kind==='script'&&last!==e.script){console.log(`${Math.floor(e.time)}s map${e.mapId} ${e.script} ${e.scene}`);last=e.script;}}}});
-game.autoChoice=storyChoice;if(process.env.PLAY_RESUME){const saved=JSON.parse(await readFile(process.env.PLAY_RESUME));await game.restore(saved.snapshot||saved);}else await game.start();let idle=0,stop='time-budget',targetKey='',objectiveKey='',objectiveTicks=0,checkpointObjective='';
-const battleDetails=[];let observedBattle=null;
-function recordBattle(battle){if(!battle)return;battleDetails.push({encounterId:battle.encounterId,outcome:battle.outcome,code:battle.result?.code,elapsed:battle.elapsed,turns:battle.turns,players:battle.players.map(({id,level,hp,maxHp,mp,maxMp,exp,equipment,magicite,abilities,conditions})=>({id,level,hp,maxHp,mp,maxMp,exp,equipment,magicite,abilities,conditions})),enemies:battle.enemies.map(({monsterId,hp,maxHp,conditions})=>({monsterId,hp,maxHp,conditions})),log:battle.log.slice(-24),warnings:[...battle.warnings]});}
+game.autoChoice=storyChoice;if(process.env.PLAY_RESUME){const saved=JSON.parse(await readFile(process.env.PLAY_RESUME));await game.restore(saved.snapshot||saved);}else await game.start();let idle=0,stop='time-budget',targetKey='',objectiveKey='',objectiveTicks=0,checkpointObjective='',routeVisits=new Map();
+const battleDetails=[], battleStarts=new WeakMap();let observedBattle=null;
+function recordBattle(battle){if(!battle)return;battleDetails.push({encounterId:battle.encounterId,context:battle.context,entryPlayers:battleStarts.get(battle),outcome:battle.outcome,code:battle.result?.code,elapsed:battle.elapsed,turns:battle.turns,players:battle.players.map(({id,level,hp,maxHp,mp,maxMp,exp,equipment,magicite,abilities,conditions})=>({id,level,hp,maxHp,mp,maxMp,exp,equipment,magicite,abilities,conditions})),enemies:battle.enemies.map(({monsterId,hp,maxHp,conditions})=>({monsterId,hp,maxHp,conditions})),log:battle.log.slice(-24),warnings:[...battle.warnings]});}
 for(let tick=0;tick<Number(process.env.TICKS||90000);tick++){
- if(game.battle)observedBattle=game.battle;
+ if(game.battle){observedBattle=game.battle;if(!battleStarts.has(observedBattle))battleStarts.set(observedBattle,observedBattle.players.map(({id,level,hp,maxHp,mp,maxMp,conditions})=>({id,level,hp,maxHp,mp,maxMp,conditions:[...(conditions||[])]})));}
  game.tick(.1,{auto:true});if(game.loading)await game.pending;
  if(observedBattle&&observedBattle.phase!=='active'){recordBattle(observedBattle);observedBattle=null;}
  if(game.battle?.elapsed>1800){stop='battle-stalled';console.log('Battle exceeded 1800 seconds without ending.');break;}
  const input=advanceStory(game,{through});if(input.status==='done'){stop=through+'-complete';break;}
- if(input.objective&&input.objective!==objectiveKey){objectiveKey=input.objective;objectiveTicks=0;}
+ if(input.objective&&input.objective!==objectiveKey){objectiveKey=input.objective;objectiveTicks=0;routeVisits.clear();}
  if(process.env.PLAY_CHECKPOINT&&objectiveKey&&checkpointObjective!==objectiveKey&&!game.busy){
   await writeFile(process.env.PLAY_CHECKPOINT,JSON.stringify(game.snapshot(),null,2));
   checkpointObjective=objectiveKey;
  }
- if(input.objective&&!input.training&&!['busy','wait-event','training-walk'].includes(input.status)&&++objectiveTicks>1200){stop='route-stalled';console.log('stopped input',JSON.stringify(input));break;}
+ if(input.objective&&!input.training&&!['busy','wait-event','training-walk'].includes(input.status)){const cell=JSON.stringify([game.mapId,game.player.x,game.player.y,game.player.layer,input.status,input.target?.id]);objectiveTicks=(routeVisits.get(cell)||0)+1;routeVisits.set(cell,objectiveTicks);if(objectiveTicks>1200){stop='route-stalled';console.log('stopped input',JSON.stringify(input));break;}}
  if(input.target){const key=`${game.mapId}:${input.target.id}`;if(key!==targetKey){console.log('walk',input.objective||'M1',game.mapId,input.target.script||input.target.destination,input.target.x,input.target.y);targetKey=key;}}
  if(['no-route','no-input','interact','game-over','inactive-target','needs-input','plan-end','no-navigation'].includes(input.status)){if(++idle>20){stop=input.status;console.log('stopped input',JSON.stringify(input));break;}}else idle=0;
 

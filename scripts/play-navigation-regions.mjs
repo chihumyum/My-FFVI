@@ -1,5 +1,6 @@
 // A compact connectivity index over existing extracted collision grids. It does
 // not regenerate maps or assets. Door cells terminate a walk inside each map.
+import { worldCollisionByFoot } from '../src/play/encounters.js';
 export function navigationRegions(map, entries, isWarp) {
   const { width, height } = map,
     size = width * height;
@@ -13,8 +14,10 @@ export function navigationRegions(map, entries, isWarp) {
     parents = [0];
   const portals = entries.filter((e) => e.kind === 3 || isWarp(e));
   const key = (x, y) => Math.round(y) * width + Math.round(x);
+  const terrainGrid = map.worldTerrain?.transportRules?.[1] ?
+    map.worldTerrain.cells.map(foot => worldCollisionByFoot(map,foot) ?? 0) : null;
   for (const layer of layers) {
-    const grid = map.collisions?.[layer] || map.collisions?.[0],
+    const grid = terrainGrid || map.collisions?.[layer] || map.collisions?.[0],
       cells = new Int32Array(size);
     const blocked = new Set(
       portals.filter((e) => e.layer === layer).map((e) => key(e.x, e.y)),
@@ -31,10 +34,10 @@ export function navigationRegions(map, entries, isWarp) {
         const cell = queue[head],
           x = cell % width;
         for (const next of [
-          cell - width,
-          cell + width,
-          ...(x ? [cell - 1] : []),
-          ...(x < width - 1 ? [cell + 1] : []),
+          cell >= width ? cell - width : map.worldTerrain?.loopType & 2 ? cell + size - width : -1,
+          cell < size-width ? cell + width : map.worldTerrain?.loopType & 2 ? cell % width : -1,
+          ...(x ? [cell - 1] : map.worldTerrain?.loopType & 1 ? [cell + width-1] : []),
+          ...(x < width - 1 ? [cell + 1] : map.worldTerrain?.loopType & 1 ? [cell-width+1] : []),
         ])
           if (open(next) && !cells[next]) {
             cells[next] = id;

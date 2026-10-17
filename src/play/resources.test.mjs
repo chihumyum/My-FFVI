@@ -113,6 +113,40 @@ test('PR formation get_value supplies real learning points for Kirin Cure instea
   assert.equal(cyan.mp, mp);
 });
 
+test('field Imp follows PR forbidden spell conditions and self-negation while Float spends ordinary MP', () => {
+  const game = sourceGame();
+  const terra = game.party[0];
+  terra.abilities = [...terra.abilities, 74, 75];
+  terra.conditions = [13]; terra.hp = 1;
+  const startMp = terra.mp;
+  assert.equal(game.useAbility(31, terra.id), false);
+  assert.equal(terra.mp, startMp);
+  assert.equal(terra.hp, 1);
+  assert.equal(game.useAbility(75, terra.id), true);
+  assert.deepEqual(terra.conditions, []);
+  assert.equal(terra.mp, startMp - battleData.abilities[75].mp);
+  assert.equal(game.useAbility(74, terra.id), true);
+  assert.deepEqual(terra.conditions, [17]);
+  assert.equal(terra.mp, startMp - battleData.abilities[75].mp - battleData.abilities[74].mp);
+  assert.equal(game.useAbility(75, terra.id), true);
+  assert.deepEqual(terra.conditions, [17, 13]);
+  assert.equal(game.useAbility(31, terra.id), false);
+  assert.equal(terra.hp, 1);
+});
+
+test('a zero-HP zombie needs actual Holy Water and cannot waste an ordinary Phoenix Down', () => {
+  const game = sourceGame();
+  const terra = game.party[0];
+  terra.hp = 0; terra.conditions = [15];
+  game.inventory[10] = 1; game.inventory[11] = 1;
+  assert.equal(game.useItem(10, terra.id), false);
+  assert.equal(game.inventory[10], 1);
+  assert.equal(game.useItem(11, terra.id), true);
+  assert.equal(game.inventory[11], 0);
+  assert.equal(terra.hp, Math.max(1, Math.floor(terra.maxHp / 8)));
+  assert.deepEqual(terra.conditions, []);
+});
+
 test('the PR South Figaro equipment chest grants its declared sword once through ordinary facing input and persists its treasure flag', () => {
   const game = sourceGame(53);
   const chest = game.entities.find(entity => entity.kind === 7 && entity.treasure?.contentId === 105);

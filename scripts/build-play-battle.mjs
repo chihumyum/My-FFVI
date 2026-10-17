@@ -335,6 +335,10 @@ export async function buildPlayBattle({
         exp: row.exp,
         gil: row.gill,
         boss: Boolean(row.boss),
+        initialConditions: rows('condition_group').filter(condition =>
+          condition.group_id === row.initial_condition).map(condition => condition.condition_id),
+        conditionImmunities: rows('condition_group').filter(condition =>
+          condition.group_id === row.resistance_condition).map(condition => condition.condition_id),
         elementResistances: attrs(row.resistance_attribute),
         role,
         aiName,
@@ -408,6 +412,7 @@ export async function buildPlayBattle({
       cleanName(catalog.gameState?.items?.[content.id]?.name || catalog.gameState?.equipmentSystem?.catalog?.definitions?.[content.id]?.name ||
         dictionaries[content.id]?.name || localizedAbilities[content.type_id === 4 ? content.type_value : 0]?.name) || `物品 ${content.id}`])),
     weapons,
+    weaponAdditionalAbilities: catalog.gameState?.equipmentSystem?.catalog?.ordinaryWeaponEffects?.additionalAbilities || [],
     armors,
     jobGroups: byId('job_group'),
     partsGroups: byId('parts_group'),

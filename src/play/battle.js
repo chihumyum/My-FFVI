@@ -3,7 +3,7 @@ import { MonsterAI } from "./monster-ai.js";
 import { BattleEvents } from "./battle-events.js";
 import { autoBattleInput } from "./battle-input.js";
 import { requestEscape as requestBattleEscape, tickEscape, canEscape } from './escape.js';
-import { FUNCTION_EFFECTS, PROCESS_EFFECTS, abilityFromItem, isRevival, executeAbilityEffects, setCondition, hasConditionType, actionBlocked, conditionSpeed, tickConditions, forcedConditionAction, throwableCommands } from "./ability-effects.js";
+import { FUNCTION_EFFECTS, PROCESS_EFFECTS, abilityFromItem, isRevival, executeAbilityEffects, setCondition, hasConditionType, actionBlocked, conditionSpeed, tickConditions, forcedConditionAction, throwableCommands, applyWeaponEffects } from "./ability-effects.js";
 const clamp = (n, low, high) => Math.max(low, Math.min(high, n));
 const value = (n, fallback) =>
   Number.isFinite(Number(n)) ? Number(n) : fallback;
@@ -15,6 +15,7 @@ export function calculateDamage(
   ability,
   random = Math.random,
   targetCount = 1,
+  data = {},
 ) {
   const physical = ability.kind === "physical";
   const power = value(ability.power, 0);
@@ -85,13 +86,28 @@ export function calculateDamage(
   }
   const critical = physical && random() * 100 < value(actor.criticalRate, 0);
   if (critical) amount *= 2;
+  const resistances = {...target.affinities ?? target.elementResistances ?? {}};
+  for (const id of target.conditions || []) {
+    const group = data.conditions?.[id]?.attribute_group_id;
+    if (group) for (const row of data.attributeGroups || []) if (row.group_id === group)
+      resistances[row.attribute_id] = Math.max(resistances[row.attribute_id] || 0, row.type_id);
+  }
   const affinities = (ability.id === 1 ? actor.weaponElements ?? ability.elements ?? [] : ability.elements ?? []).map(
-    (id) => (target.affinities ?? target.elementResistances)?.[id],
+    (id) => resistances[id],
   );
-  if (affinities.includes(4)) amount = -amount;
-  else if (affinities.includes(2)) amount = 0;
-  else if (affinities.includes(3)) amount = Math.floor(amount / 2);
-  else if (affinities.includes(1)) amount *= 2;
+  // PR PhysicalExecution uses strongest affinity; MagicExecution applies
+  // authored elements in order and stops when an immunity is encountered.
+  if (physical) {
+    if (affinities.includes(4)) amount = -amount;
+    else if (affinities.includes(3)) amount = 0;
+    else if (affinities.includes(2)) amount = Math.floor(amount / 2);
+    else if (affinities.includes(1)) amount *= 2;
+  } else for (const affinity of affinities) {
+    if (affinity === 3) { amount = 0; break; }
+    if (affinity === 4) amount = -amount;
+    if (affinity === 2) amount = Math.trunc(amount / 2);
+    if (affinity === 1) amount *= 2;
+  }
   if (targetCount > 1 && !ability.flags?.includes(2))
     amount = Math.trunc(amount / 2);
   return {
@@ -236,6 +252,7 @@ export class Battle {
     unit.ready = false;
     unit.hidden = false;
     unit.runic = false;
+    unit.magiciteUsed = false;
     unit.conditions = (unit.conditions || []).filter(id => this.data.conditions?.[id]?.condition_type !== 612);
     unit.chargedAbility = null;
     unit.chargedTarget = null;
@@ -246,6 +263,7 @@ export class Battle {
         (id) => id !== unit.stopConditionId,
       );
     unit.stopConditionId = null;
+    if (side === 'enemy') for (const id of unit.initialConditions || []) setCondition(this, unit, id, true, { force:true });
     for (const id of unit.permanentConditions || []) setCondition(this, unit, id, true, { force:true });
     unit.berserk = hasConditionType(this.data,unit,410);
     unit.protect = hasConditionType(this.data,unit,19);
@@ -386,6 +404,10 @@ export class Battle {
           this.warning(`AI ${action.script}:${action.index}: ability ${action.abilityId} has insufficient MP; action fails.`);
           continue;
         }
+        if ((ability.forbiddenConditions || []).some(id => (action.actor.conditions || []).includes(id))) {
+          this.warning(`AI ${action.script}:${action.index}: ability ${action.abilityId} is blocked by a PR condition; action fails.`);
+          continue;
+        }
         for (const key of action.messages || [])
           if (key)
             this.addLog(
@@ -440,6 +462,7 @@ export class Battle {
   commandsFor(actorIndex) {
     const unit = this.players[actorIndex];
     if (!unit) return [];
+    const summonId = !unit.magiciteUsed && this.data.magicStones?.[unit.magicite]?.summonAbilityId;
     const commandAbilities = (unit.commands || []).flatMap(id => {
       const row = this.data.commands?.[id], ability = this.data.abilities?.[row?.ability_id];
       if (!ability || !(ability.functions?.length || ability.process && ability.process !== 'None')) return [];
@@ -461,6 +484,7 @@ export class Battle {
           ...new Set([
             1,
             ...commandAbilities,
+            ...(summonId ? [summonId] : []),
             ...(unit.abilities ?? []).concat(unit.equipmentAbilities ?? []).map((a) =>
               typeof a === "object" ? a.id : a,
             ),
@@ -478,7 +502,7 @@ export class Battle {
             target: "enemy",
           },
       )
-      .map((a) => ({ ...a, revive:isRevival(this.data,a), mp: abilityMpCost(unit,a),
+      .map((a) => ({ ...a, magiciteSummon:a.id===summonId, revive:isRevival(this.data,a), mp: abilityMpCost(unit,a),
         disabled: abilityMpCost(unit,a) > unit.mp || (a.forbiddenConditions || []).some(id => (unit.conditions || []).includes(id)) }))
       .flatMap(command => command.functions?.some(fn => fn.id === 51)
         ? throwableCommands(this.data, this.inventory, unit).map(choice => ({ ...command, ...choice,
@@ -580,7 +604,7 @@ export class Battle {
   }
 
   autoTurn(unit) {
-    return autoBattleInput(this, unit, calculateDamage);
+    return autoBattleInput(this, unit, (...args)=>calculateDamage(...args,this.data));
   }
 
   forcedTurn(unit) {
@@ -649,6 +673,7 @@ export class Battle {
       targets.forEach((unit,index)=>this.perform(actor,unit,ability,targets.length,{updateVariables:index===0,sequence,
         throwContentId:command.throwContentId}));
     }
+    if (command.magiciteSummon) actor.magiciteUsed = true;
     this.consumeTurn(actor);
     this.checkEnd();
     return true;
@@ -704,12 +729,14 @@ export class Battle {
       const pool=(target.side==='player'?this.enemies:this.players).filter(u=>this.targetable(u));
       if(pool.length)return this.perform(actor,pool[Math.floor(this.random()*pool.length)],ability,targetCount,{...options,reflected:true});
     }
-    const result = executeAbilityEffects(this,actor,target,ability,targetCount,options,calculateDamage);
+    const result = executeAbilityEffects(this,actor,target,ability,targetCount,options,
+      (...args)=>calculateDamage(...args,this.data));
     if(target.hp<=0){target.ready=false;target.atb=0;}
     const action={actor,target,ability,...result,depth:this.actionDepth||0,selectedAbilityId:ability.id,time:this.elapsed,...(options.item?{item:options.item}:{})};
     if(actor.side==='player' && !options.item && ability.id!==17)this.lastMimicAction=action;
     this.addLog(`${actor.name} → ${target.name}：${ability.name || "战斗"}${result.hit ? (result.amount ? " " + (result.amount < 0 ? "回复 " : "") + Math.abs(result.amount) : result.mp ? " MP " + result.mp : "") : " 未命中"}`);
     this.notifyAction(action);
+    applyWeaponEffects(this,actor,target,ability,result,options);
   }
 
   checkEnd() {
