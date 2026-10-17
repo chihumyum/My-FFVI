@@ -63,6 +63,18 @@ export function createBattleMenu({
         ]),
       ),
     );
+  const cancelTarget = () => {
+    selection = null;
+    targets.replaceChildren();
+    battle?.setInput(menu ? "list" : null);
+    invalidate();
+  };
+  const canSelectTarget = (side, n) => {
+    if (!selection || battle?.phase !== "active") return false;
+    const sides = selection.targetSides ?? [selection.target === "ally" ? "player" : "enemy"];
+    const unit = (side === "player" ? battle.players : battle.enemies)[n];
+    return sides.includes(side) && !!unit && battle.eligibleTarget(unit, selection);
+  };
   const chooseTarget = (action) => {
     selectionMarker = targetState(action);
     selection = action;
@@ -72,6 +84,9 @@ export function createBattleMenu({
       send(action, { side: "player", index });
       return;
     }
+    const hint = createElement("strong");
+    hint.textContent = `${action.name}：点选目标`;
+    targets.append(hint);
     for (const side of action.targetSides ?? [action.target === "ally" ? "player" : "enemy"]) {
       const pool = side === "player" ? battle.players : battle.enemies;
       if (action.all || action.selectableAll) {
@@ -98,14 +113,9 @@ export function createBattleMenu({
           ),
         );
     }
-    targets.append(
-      button("返回", () => {
-        selection = null;
-        targets.replaceChildren();
-        battle.setInput(menu ? "list" : null);
-        invalidate();
-      }),
-    );
+    const cancel = button("取消", cancelTarget);
+    cancel.dataset.targetCancel = "1";
+    targets.append(cancel);
   };
   function open(command) {
     menu = command;
@@ -289,7 +299,18 @@ export function createBattleMenu({
   }
   return {
     update,
+    canSelectTarget,
+    selectTarget(side, n) {
+      if (!canSelectTarget(side, n)) return false;
+      send(selection, { side, index: n, all: !!selection.all && !selection.selectableAll });
+      return true;
+    },
     handleKey(event) {
+      if (selection && event.key === "Escape") {
+        cancelTarget();
+        return true;
+      }
+      if (selection) return false;
       if (menu?.input !== "blitz") return false;
       const key =
         {

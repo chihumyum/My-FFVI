@@ -3,12 +3,13 @@ import { fieldEntityVisible } from "./field-collision.js";
 
 const decoded = new WeakMap();
 const indexed = new WeakMap();
-const bodyKinds = new Set([5, 6, 7, 8, 10, 17]);
+const bodyKinds = new Set([5, 6, 7, 8, 10, 17, 19]);
 
 export function fieldGeometryKey(game) {
   return JSON.stringify([
     game.partySlots?.[game.partyIndex || 0]?.[0],
     game.rts?.active,
+    game.player?.vehicle,
     (game.entities || []).map((entity) => [entity.id, entity.visible, entity.collision]),
     [...(game.actors || [])].map(([id, actor]) => [
       id,

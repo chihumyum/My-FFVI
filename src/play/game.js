@@ -936,7 +936,10 @@ export class PlayGame {
     }
   }
   motion(t, a, x, y, duration, animation) {
-    if (a === this.camera) a.manual = true;
+    if (a === this.camera) {
+      if (!a.manual) Object.assign(a, { x: this.player.x, y: this.player.y });
+      a.manual = true;
+    }
     const dx = x - a.x,
       dy = y - a.y;
     if (dx || dy)

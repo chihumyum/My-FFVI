@@ -291,7 +291,14 @@ addEventListener("keydown", (e) => {
     e.preventDefault();
     return;
   }
-  if (e.target?.tagName === "BUTTON" && ["Enter", " "].includes(e.key)) return;
+  // Debug controls keep DOM focus after a click. Their native Space/Enter
+  // activation must not consume the game's confirm input on the next press.
+  if (
+    e.target?.tagName === "BUTTON" &&
+    !e.target.closest("footer") &&
+    ["Enter", " "].includes(e.key)
+  )
+    return;
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Enter"].includes(e.key))
     e.preventDefault();
   if (game?.battle && !battleDialogue && battleMenu.handleKey(e)) {
@@ -481,6 +488,9 @@ const battleMenu = createBattleMenu({
   status: $("battle-status"),
   createElement: createWidget,
 });
+renderer.canSelectBattleTarget = (side, index) =>
+  !paused && !battleDialogue && !auto && battleMenu.canSelectTarget(side, index);
+renderer.onBattleTarget = (side, index) => battleMenu.selectTarget(side, index);
 $("escape").onclick = () => game?.battle?.requestEscape();
 $("shop-close").onclick = () => {
   closeShop(game);

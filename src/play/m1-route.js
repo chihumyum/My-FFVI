@@ -90,6 +90,10 @@ export function targetForM1(game) {
       return game.entities
         .filter((e) => e.script === "sc_e_0001_0")
         .sort((a, b) => Math.abs(a.x - game.player.x) - Math.abs(b.x - game.player.x))[0];
+    // The opening armor corridor reaches the centre cave entrance. Its
+    // right-hand entrance (the first source row) is behind a PR collider.
+    if (game.player.vehicle === 6 && !played("sc_e_0013"))
+      return game.entities.find((e) => e.kind === 3 && e.x === 38 && e.y === 0);
     return exitTo(played("sc_e_0013") ? 317 : 18);
   }
   if (game.mapId === 18) return exitTo(323);

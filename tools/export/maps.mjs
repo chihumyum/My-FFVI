@@ -244,6 +244,15 @@ export function compileMap(row, binding, tables, media, messages) {
             actionId: Number(p.action_id || 0),
             visible: object.visible !== false,
           };
+        if (kind === 19)
+          entity.collider = {
+            type: Number(p.collision_type || 0),
+            throughCondition: Number(p.through_condition_type || 0),
+            transportationIds: String(p.target_transportation_ids || "")
+              .split(",")
+              .map(Number)
+              .filter((id) => id > 0),
+          };
         if (kind === 21 || (kind === 2 && p.target_transportation_ids))
           entity.transportationIds = String(p.target_transportation_ids || "")
             .split(",")

@@ -33,6 +33,15 @@ export async function compileBattlePresentation(out) {
       },
     ]),
   );
+  const miscBundle = index.files.find(
+    (file) => file.file.includes("/misc_assets_all_") && file.bundleOutput,
+  );
+  const misc = (await read(path.join(out, miscBundle.bundleOutput))).find((asset) =>
+    Array.isArray(asset.data.battle_anim_alias_table),
+  );
+  const animationAliases = Object.fromEntries(
+    misc.data.battle_anim_alias_table.map((row) => [row.key, row]),
+  );
   const scene = index.files.find((f) => f.file.includes("scene_maingame_") && f.objectsOutput);
   const objects = (await read(path.join(out, scene.objectsOutput))).objects;
   const controller = objects.find((o) => o.class === "BattleController");
@@ -68,14 +77,30 @@ export async function compileBattlePresentation(out) {
   const data = {
     camera: { orthographicSize: camera.data["orthographic size"], width: 384, height: 216 },
     enemyOrigin: { x: enemy.x, y: enemy.y },
+    // PR BattleEnemyInstanceData uses a 35-unit unique-slot lattice (ctor
+    // 1584f6d; GetPosUniqueAdjust 1584c90), in addition to the CSV offsets.
+    enemySlots: [
+      { x: 43, y: 35 },
+      { x: 35, y: 0 },
+      { x: 27, y: -35 },
+      { x: 8, y: 35 },
+      { x: 0, y: 0 },
+      { x: -8, y: -35 },
+      { x: -27, y: 35 },
+      { x: -35, y: 0 },
+      { x: -43, y: -35 },
+    ],
     groups,
+    animationAliases,
+    magitek: { asset: "bc_ff6_p022" },
     equipment,
     digits,
     miss: sprite(miss),
     warnings: [
       "Enemy draw priority uses inverse PR formation slot to retain multipart bosses; native runtime depth updates are not exported.",
-      "Player formation offsets and six-frame-per-second pose timing are presentation approximations; PR sprite names, enemy offsets, party origin and camera size are retained.",
+      "Player positions use PR game constants; Magitek vertical spacing expands for the full rider/armor extent. Six-frame-per-second pose timing remains approximate.",
       "Weapon motion_type is retained; web swing angles and hand attachment timing are approximated without altering battle resolution.",
+      "Magitek uses PR rider/armor frames, native texture offsets and mesh positions. Web draws the clipped rider above the armor rather than reproducing native mesh depth.",
       "Simplified Chinese MISS uses PR Miss_9 (visually identified as 失手); digit bounce timing is approximated.",
     ],
   };

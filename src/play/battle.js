@@ -343,14 +343,18 @@ export class Battle {
     unit.shell = hasConditionType(this.data, unit, 412);
     unit.trance = hasConditionType(this.data, unit, 621);
     initRole(this, unit);
-    unit.normalSprite ??= base.sprite ?? unit.sprite;
-    unit.sprite = unit.magitek
-      ? (unit.magitekSprite ?? unit.sprite)
-      : (unit.normalSprite ?? unit.sprite);
+    // Armor is an additional presentation layer, not a replacement character.
+    // Prefer source data so loading an older save cannot keep its former
+    // (incorrectly exported ghost) magitek sprite as the character's body.
+    unit.normalSprite = base.sprite ?? unit.normalSprite ?? unit.sprite;
+    unit.sprite = unit.normalSprite ?? unit.sprite;
   }
 
   initializePattern() {
-    const bits = this.formation.battlePatterns ?? [1, 0, 0, 0, 0, 0];
+    // PR BattlePopPlug.Calculation (674438–6744c8) reads CSV columns in
+    // 1,5,2,6,3,4 order into PreeMptiveState, not in numeric column order.
+    const source = this.formation.battlePatterns ?? [1, 0, 0, 0, 0, 0],
+      bits = [0, 4, 1, 5, 2, 3].map((column) => source[column]);
     const choices = bits.flatMap((enabled, n) => (enabled ? [n] : []));
     this.pattern = choices.includes(this.context.pattern)
       ? this.context.pattern

@@ -590,11 +590,12 @@ export class GameUI {
       const commands = this.get("commands"),
         targets = this.get("targets"),
         key = `${commands.dataset.submenu || ""}:${!!targets.children.length}`;
-      options.hidden = this.get("battle").hidden || key === ":false";
-      options.children = [targets.children.length ? targets : commands];
+      options.hidden = this.get("battle").hidden || !!targets.children.length || key === ":false";
+      options.children = [commands];
       if (options.dataset.selection !== key) {
         options.dataset.selection = key;
         this.scrolls.set(options, 0);
+        this.scrolls.set(this.get("battle"), 0);
         revision++;
       }
     }
@@ -646,7 +647,11 @@ export class GameUI {
         const targets = this.get("targets");
         for (const node of this.get("commands").children)
           if (node.dataset.actorSwitch) node.hidden = true;
-        body = options?.hidden ? [this.get("commands")] : [];
+        if (targets.children.length) {
+          const cancel = targets.children.find((node) => node.dataset.targetCancel);
+          body = targets.children.filter((node) => node !== cancel);
+          pinned = cancel ? [cancel] : [];
+        } else body = options?.hidden ? [this.get("commands")] : [];
         bodyWidth = width === 1728 ? 432 : 600;
         this.battleStatus(v, width, height);
       }

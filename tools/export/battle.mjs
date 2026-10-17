@@ -254,7 +254,9 @@ export function compileBattle(tables, assets, media, play, nativeStones) {
           }))
           .filter((l) => l.abilityId),
         sprite: asset ? sprite(`/${asset}/Default_00.png`) : null,
-        magitekSprite: sprite("/BC_FF6_P019/Default_00.png"),
+        // P019 belongs to the two Phantom Train ghosts. Magitek armor is a
+        // separate P022 mesh; the character's own sprite remains its rider.
+        magitekSprite: sprite("/BC_FF6_P022/Default_00.png"),
         equipment: Array.from({ length: 6 }, (_, index) => row[`content_id${index + 1}`]),
         commands: Array.from({ length: 6 }, (_, index) => row[`command_id${index + 1}`]).filter(
           Boolean,
@@ -360,6 +362,8 @@ export function compileBattle(tables, assets, media, play, nativeStones) {
       backgroundId: row.battle_background_asset_id,
       bgmId: row.battle_bgm_asset_id,
       battlePatterns: Array.from({ length: 6 }, (_, n) => row[`battle_pattern${n + 1}`]),
+      sideAttackOffset:
+        extra.side_attack_offset?.find((offset) => offset.party_id === row.id)?.offset_x ?? 0,
       // FFVI magic learning points use get_value. get_ap is a separate
       // cross-title field and is zero throughout this PR table.
       ap: row.get_value,
@@ -370,6 +374,7 @@ export function compileBattle(tables, assets, media, play, nativeStones) {
         slot: index,
         x: row[`monster${index + 1}_x_position`],
         y: row[`monster${index + 1}_y_position`],
+        group: row[`monster${index + 1}_group`],
       })).filter((m) => m.monsterId > 0),
     })),
   );

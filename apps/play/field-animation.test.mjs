@@ -3,15 +3,36 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   FieldAnimations,
+  fieldActorParts,
   sampleFieldClip,
   fieldTileRegions,
   sampleFieldTile,
 } from "./field-animation.js";
 import { withPresentation } from "./presentation-events.js";
 import { PlayGame } from "../../src/play/game.js";
+import { executeVehicleInstruction } from "../../src/play/vehicle-input.js";
 
 const data = JSON.parse(await readFile(new URL("../../build/web-data/data.json", import.meta.url)));
 const edgar = data.characters.mo_ff6_p003;
+
+test("boarding PR Magitek keeps Terra and the imperial soldiers as separate field riders", () => {
+  for (const id of [1, 31, 32]) {
+    const asset = data.fieldAssets[id].asset_name;
+    const actor = { asset, x: 1, y: 1, direction: "up" };
+    const host = { data, player: actor, actor: () => actor };
+    executeVehicleInstruction(host, {}, "RideVehicleNPC", [6, -id]);
+    const before = structuredClone(actor);
+    const parts = fieldActorParts(actor);
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0].asset, asset, "the original rider remains visible above its mount");
+    assert.equal(parts[1].asset, "mo_ff6_v006_c00");
+    assert(data.characters[parts[0].asset]?.sprites);
+    assert(parts[0].hideFeet > 0 && parts[0].offsetY > 0);
+    assert.deepEqual(actor, before, "rendering does not rewrite a saved actor");
+    executeVehicleInstruction(host, {}, "RideVehicleNPC", [1, -id]);
+    assert.deepEqual(fieldActorParts(actor), [{ asset }]);
+  }
+});
 
 test("right-facing PR walk uses its declared left sprite with horizontal mirroring", () => {
   const right = sampleFieldClip(edgar, "WalkR", 0.2);

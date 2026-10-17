@@ -22,6 +22,7 @@ function geometryEntity(entity, group) {
     "layer",
     "visible",
     "collision",
+    "collider",
     "destinationLayer",
     "door",
     "tileAnimation",

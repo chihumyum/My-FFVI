@@ -30,6 +30,49 @@ const npc = (extra = {}) => ({
   ...extra,
 });
 
+test("source collider groups block ordinary movement and release only when hidden or removed", () => {
+  const barrier = {
+    id: "202",
+    kind: 19,
+    x: 2,
+    y: 1,
+    layer: 1,
+    collider: { type: 1, throughCondition: 0, transportationIds: [] },
+  };
+  const game = fixture([]);
+  game.map.groups.opening = { entities: [barrier] };
+  game.groups.add("opening");
+  game.refreshActors();
+  assert.equal(game.move("right"), false, "a PR road restriction is solid without a sprite");
+  assert.equal(game.canMove(2, 1, 2), true, "the other walking floor is unaffected");
+  game.actor("202").visible = false;
+  assert.equal(game.move("right"), true, "source Hide releases the same cell");
+  game.actor("202").visible = true;
+  game.player.x = 1;
+  assert.equal(game.move("right"), false);
+  game.groups.delete("opening");
+  game.refreshActors();
+  assert.equal(game.move("right"), true, "a removed plot group leaves no invisible wall");
+});
+
+test("source collider transportation filters do not block other vehicles", () => {
+  const game = fixture([
+    {
+      id: "226",
+      kind: 19,
+      x: 2,
+      y: 1,
+      layer: 1,
+      collider: { type: 0, throughCondition: 0, transportationIds: [3] },
+    },
+  ]);
+  assert.equal(game.canMove(2, 1), true);
+  game.player.vehicle = 3;
+  assert.equal(game.canMove(2, 1), false);
+  game.player.vehicle = 5;
+  assert.equal(game.canMove(2, 1), true);
+});
+
 test("ordinary movement respects live PR bodies while adjacent confirmation stays possible", () => {
   const target = npc({ script: "talk" }),
     game = fixture([target]),

@@ -4,6 +4,7 @@
 // accepted as input. SetVehicle/LoseVehicle legitimately change release flags.
 import { worldCollisionByFoot } from "./encounters.js";
 import { checkFlightEncounterContact } from "./flight-encounters.js";
+import { fieldTerrainBlockerAt } from "./field-collision.js";
 const selectors = Object.freeze({
   "乗り物に乗る：船": 2,
   "乗り物に乗る：チョコボ": 3,
@@ -282,6 +283,7 @@ function cell(game, x, y) {
 export function canVehicleMove(game, x, y, id = currentId(game)) {
   const point = cell(game, x, y);
   if (!point) return false;
+  if (fieldTerrainBlockerAt(game, point.x, point.y, game.player.layer, id)) return false;
   const code = worldCollisionByFoot(game.map, point.foot, id);
   if (code !== undefined) return code !== 1;
   if (airship(Number(id)) && world(game)) return true;

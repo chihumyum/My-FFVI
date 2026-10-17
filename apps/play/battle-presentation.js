@@ -1,4 +1,4 @@
-import { Container, Sprite, Texture } from "pixi.js";
+import { Container, Rectangle, Sprite, Texture } from "pixi.js";
 
 // All clocks, poses and queues here belong to the renderer, never the combat engine.
 export class BattlePresentation {
@@ -27,7 +27,10 @@ export class BattlePresentation {
       this.events.push({ ...event, at: performance.now() / 1000 });
   }
   clear() {
-    for (const row of this.units.values()) row.container.destroy({ children: true });
+    for (const row of this.units.values()) {
+      row.riderCrop?.texture.destroy(false);
+      row.container.destroy({ children: true });
+    }
     for (const n of this.numbers) n.container.destroy({ children: true });
     this.units.clear();
     this.numbers = [];
@@ -50,47 +53,163 @@ export class BattlePresentation {
     const width = this.catalog?.camera.width || 384,
       height = this.catalog?.camera.height || 216;
     if (side === "enemy") {
-      // The CSV offsets are Unity coordinates: positive y points upward.
+      // CSV coordinates adjust PR's unique-slot lattice; they are not the
+      // complete position. The source group selects the pincer side.
       const member = (this.formation || battle.formation).members.find(
         (m) => m.slot === unit?.slot,
       );
-      let x = width / 2 + (this.catalog?.enemyOrigin.x ?? -75) + Number(unit?.x ?? member?.x ?? 0);
-      const y = height / 2 - (this.catalog?.enemyOrigin.y || 0) - Number(unit?.y ?? member?.y ?? 0);
+      const slot = this.catalog?.enemySlots?.[unit?.slot ?? member?.slot] ?? { x: 0, y: 0 },
+        localX = slot.x + Number(unit?.x ?? member?.x ?? 0),
+        localY = slot.y + Number(unit?.y ?? member?.y ?? 0),
+        group = unit?.group ?? member?.group ?? 1;
+      let x = width / 2 + (this.catalog?.enemyOrigin.x ?? -75) + localX;
+      const y = height / 2 - (this.catalog?.enemyOrigin.y || 0) - localY;
       if (battle.pattern === 2) x = width - x;
-      if (battle.pattern === 4 && index % 2) x = width - x;
-      if (battle.pattern === 5) x = width / 2 + Number(unit?.x ?? 0);
-      return { x, y, mirror: battle.pattern === 2 || (battle.pattern === 4 && index % 2 === 1) };
+      if (battle.pattern === 4 && group % 2 === 1)
+        // SetEnemySideAttack moves the right group by (0.6-0.5)*camera height.
+        x = width / 2 + height * 0.1 + localX;
+      if (battle.pattern === 5)
+        x = width / 2 + localX + ((this.formation || battle.formation).sideAttackOffset || 0);
+      return {
+        x,
+        y,
+        mirror:
+          battle.pattern === 2 ||
+          (battle.pattern === 4 && group % 2 === 1) ||
+          (battle.pattern === 5 && group % 2 === 0),
+      };
     }
-    let x = width / 2 + 92 + (index % 2) * 8 + (unit?.row === "back" ? 14 : 0);
-    const y = 68 + index * 24;
-    if (battle.pattern === 2 || (battle.pattern === 5 && index % 2 === 1)) x = width - x;
-    if (battle.pattern === 4) x = width / 2 + (index % 2 ? 12 : -12);
-    return { x, y, mirror: battle.pattern === 2 || (battle.pattern === 5 && index % 2 === 1) };
+    const limits = this.data?.limits || {},
+      xStep = limits.X_COORDINATE_INTERVAL ?? 10,
+      yStep = limits.Y_COORDINATE__INTERVAL ?? 19,
+      baseY = limits.AS_BASE_Y_COORDINATE ?? 16,
+      sideY = battle.pattern === 5 ? (limits.AS_BASE_Y_COORDINATE_SIDE_ATTACK_PLUS ?? 28) : 0,
+      leftWing = (n) =>
+        battle.pattern === 5 && (n >= 2 || (battle.players.length === 2 && n === 1)),
+      indices = battle.players.flatMap((_, n) => (leftWing(n) === leftWing(index) ? [n] : []));
+    let x =
+        width / 2 +
+        (unit?.row === "back"
+          ? (limits.REAR_GUARD_X_COORDINATE ?? 93)
+          : (limits.FORWARD_X_COORDINATE ?? 82)) +
+        index * xStep,
+      y = height / 2 - baseY + index * yStep - sideY;
+    if (indices.some((n) => battle.players[n].magitek)) {
+      const source = this.catalog.animationAliases?.default?.magic_armor_table,
+        armor = this.catalog.groups[this.catalog.magitek?.asset]?.WalkL_01,
+        rider = Math.max(
+          ...indices.map((n) => this.data.characters?.[battle.players[n].id]?.sprite?.height || 32),
+        ),
+        extent = Math.max(
+          armor?.height || 40,
+          rider * (1 - (source?.chara_offsets[0]?.y || 0)) + (source?.chara_position[0]?.y || 24),
+        ),
+        bottom = height - 56,
+        top = extent + 4,
+        spacing = indices.length > 1 ? Math.min(extent, (bottom - top) / (indices.length - 1)) : 0,
+        span = (indices.length - 1) * spacing,
+        center =
+          indices.reduce((sum, n) => sum + height / 2 - baseY + n * yStep - sideY, 0) /
+          indices.length;
+      y =
+        Math.max(top, Math.min(center - span / 2, bottom - span)) +
+        indices.indexOf(index) * spacing;
+    }
+    if (battle.pattern === 2 || leftWing(index)) x = width - x;
+    if (battle.pattern === 4) x = width / 2;
+    return {
+      x,
+      y,
+      mirror: battle.pattern === 2 || leftWing(index) || (battle.pattern === 4 && index % 2 === 1),
+    };
   }
   row(side, index) {
     const key = `${side}:${index}`;
     if (!this.units.has(key)) {
       const container = new Container(),
-        sprite = new Sprite(Texture.EMPTY);
+        sprite = new Sprite(Texture.EMPTY),
+        armor = new Sprite(Texture.EMPTY);
       sprite.anchor.set(0.5, 1);
-      container.addChild(sprite);
+      armor.anchor.set(0.5, 1);
+      armor.visible = false;
+      container.addChild(armor, sprite);
       const weapons = [new Sprite(Texture.EMPTY), new Sprite(Texture.EMPTY)];
       for (const w of weapons) {
         w.anchor.set(0.5);
         container.addChild(w);
       }
       this.actors.addChild(container);
-      this.units.set(key, { container, sprite, weapons, action: null, hurtAt: -100 });
+      this.units.set(key, { container, sprite, armor, weapons, action: null, hurtAt: -100 });
     }
     return this.units.get(key);
   }
   group(unit) {
     const canonical = this.data.characters?.[unit.id];
-    const source = unit.magitek ? canonical?.magitekSprite : canonical?.sprite;
+    const source = canonical?.sprite || unit.normalSprite;
     const url = unit.side === "player" ? source?.url || unit.sprite?.url : unit.sprite?.url;
     const asset = url?.match(/\/(bc_ff6_[^/]+?)_assets_all_/i)?.[1]?.toLowerCase();
     const transformed = unit.trance && this.catalog?.groups[asset + "_tr"];
     return transformed || this.catalog?.groups[asset];
+  }
+  mountedPose(group, alias, now, mirror) {
+    const armorGroup = this.catalog.groups[this.catalog.magitek?.asset];
+    if (!armorGroup || !alias?.magic_armor_table) return null;
+    const frame = Math.floor(now * 6),
+      source = alias.magic_armor_table,
+      riderIndex = frame % alias.names.length,
+      riderName = alias.names[riderIndex],
+      armorName = source.anim_names[frame % source.anim_names.length],
+      rightName = (name) =>
+        name.startsWith("WalkL_")
+          ? name.replace("WalkL_", "WalkR_")
+          : name.replace(/(_\d+)$/, "R$1");
+    // Only use an authored right pose when both parts have one. Otherwise
+    // mirror the whole assembly together, including its attachment offset.
+    const explicitRight = mirror && group[rightName(riderName)] && armorGroup[rightName(armorName)],
+      rider = group[explicitRight ? rightName(riderName) : riderName],
+      armor = armorGroup[explicitRight ? rightName(armorName) : armorName];
+    if (!rider || !armor) return null;
+    return {
+      info: rider,
+      explicitRight: Boolean(explicitRight),
+      armor,
+      riderPosition: source.chara_position[riderIndex % source.chara_position.length],
+      riderOffset: source.chara_offsets[riderIndex % source.chara_offsets.length],
+    };
+  }
+  riderTexture(row, texture, offset) {
+    const x = offset?.x || 0,
+      y = offset?.y || 0;
+    if (!x && !y) {
+      row.riderCrop?.texture.destroy(false);
+      row.riderCrop = null;
+      return texture;
+    }
+    if (row.riderCrop?.base !== texture || row.riderCrop.x !== x || row.riderCrop.y !== y) {
+      row.riderCrop?.texture.destroy(false);
+      // PR UpdateCharacterAnimation (158d2cb) passes chara_offsets to
+      // SpriteAnimBattle.ChangeTextureOffset. Its clamped, transparent-edged
+      // 32px texture samples y+.25: the lower 8px disappear and the remaining
+      // pixels move DOWN 8px inside the same mesh. A top-24px frame anchored
+      // at the source chara_position reproduces that sampling in the atlas.
+      const width = texture.frame.width,
+        height = texture.frame.height;
+      row.riderCrop = {
+        base: texture,
+        x,
+        y,
+        texture: new Texture({
+          source: texture.source,
+          frame: new Rectangle(
+            texture.frame.x + Math.max(0, width * x),
+            texture.frame.y + Math.max(0, -height * y),
+            width * (1 - Math.abs(x)),
+            height * (1 - Math.abs(y)),
+          ),
+        }),
+      };
+    }
+    return row.riderCrop.texture;
   }
   pose(unit, row, now, mirror) {
     const group = this.group(unit);
@@ -109,6 +228,28 @@ export class BattlePresentation {
     else if (unit.defending || unit.ready) state = "Ready";
     else if ((unit.conditions || []).some((id) => this.data.conditions[id]?.condition_type === 7))
       state = "CloseEyes";
+    if (unit.magitek) {
+      const aliases = this.catalog.animationAliases,
+        key =
+          state === "SkillReady" &&
+          age >= 0.15 &&
+          age < 0.85 &&
+          this.data.abilities[row.action?.abilityId]?.typeId === 604
+            ? "MagicArmorAttack"
+            : {
+                Default: "default",
+                Down: "down",
+                Damage: "damage",
+                RightAttack: "rightAttack",
+                SkillReady: "skillReady",
+                Win: "win",
+                Dying: "dying",
+                Ready: unit.defending ? "defend" : "ready",
+                CloseEyes: "CloseEyes00",
+              }[state];
+      const mounted = this.mountedPose(group, aliases?.[key], now, mirror);
+      if (mounted) return mounted;
+    }
     const facing = mirror && group[state + "R_00"] ? state + "R" : state;
     const frames = Object.keys(group)
       .filter((n) => n.startsWith(facing + "_"))
@@ -148,7 +289,14 @@ export class BattlePresentation {
     for (const w of row.weapons) w.visible = false;
     const action = row.action;
     const age = now - (action?.at ?? -100);
-    if (unit.side !== "player" || action?.abilityId !== 1 || age < 0.12 || age > 0.65) return;
+    if (
+      unit.side !== "player" ||
+      unit.magitek ||
+      action?.abilityId !== 1 ||
+      age < 0.12 ||
+      age > 0.65
+    )
+      return;
     for (let hand = 0; hand < 2; hand++) {
       const content = this.data.contents[unit.equipment?.[hand]];
       const weapon = content?.type_id === 2 ? this.data.weapons[content.type_value] : null;
@@ -195,9 +343,17 @@ export class BattlePresentation {
         row.container.zIndex = side === "enemy" ? 1000 - (unit.slot ?? index) : 2000 + index;
         row.container.position.set(Math.round(position.x + step + shake), Math.round(position.y));
         row.container.scale.x = position.mirror && !pose?.explicitRight ? -1 : 1;
-        row.sprite.texture = texture;
+        row.sprite.texture = this.riderTexture(row, texture, pose?.riderOffset);
+        row.sprite.position.set(
+          (pose?.riderPosition?.x || 0) - ((pose?.riderOffset?.x || 0) * texture.width) / 2,
+          -(pose?.riderPosition?.y || 0) +
+            Math.min(0, (pose?.riderOffset?.y || 0) * texture.height) || 0,
+        );
         row.sprite.alpha = side === "enemy" && dead ? Math.max(0, 1 - (now - row.hurtAt) / 0.7) : 1;
         row.sprite.tint = unit.trance ? 0xffc5ff : 0xffffff;
+        const armor = pose?.armor && this.getTexture(pose.armor.url);
+        row.armor.visible = Boolean(armor);
+        if (armor) row.armor.texture = armor;
         this.drawWeapons(unit, row, now);
         count++;
       }

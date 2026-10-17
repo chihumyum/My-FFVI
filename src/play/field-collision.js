@@ -1,8 +1,8 @@
 // Field tiles and entity bodies are separate in PR. Authored puppet movement
 // deliberately does not use these ordinary-walking checks.
-const bodyKinds = new Set([5, 6, 7, 8, 10, 17]);
+const bodyKinds = new Set([5, 6, 7, 8, 10, 17, 19]);
 const materializedKinds = new Set([6, 7, 10, 14, 17]);
-const passKinds = new Set([0, 1, 2, 3, 4, 9, 18, 19, 20, 21, 30]);
+const passKinds = new Set([0, 1, 2, 3, 4, 9, 18, 20, 21, 30]);
 const directionBits = { up: 1, right: 2, down: 4, left: 8 };
 const live = (game, entity) => game.actors?.get(String(entity.id));
 const value = (actor, entity, key) => actor?.[key] ?? entity[key];
@@ -84,8 +84,17 @@ function bodyCandidates(game) {
   };
   return bodies;
 }
+function colliderApplies(game, entity, transportationId = game.player?.vehicle || 1) {
+  const collider = entity.collider;
+  if (!collider) return false;
+  const targets = collider.transportationIds || [];
+  if (targets.length && !targets.includes(Number(transportationId))) return false;
+  const condition = Number(collider.throughCondition);
+  return !(condition > 0 && game.party?.[0]?.conditions?.includes(condition));
+}
 function solid(game, entity, actor) {
   if (passKinds.has(entity.kind)) return false;
+  if (entity.kind === 19) return colliderApplies(game, entity);
   if (typeof actor?.collision === "boolean") return actor.collision;
   if (typeof entity.collision === "boolean") return entity.collision;
   if (entity.kind === 8) return entity.door?.actionId === 5 && !isOpenDoor(game, entity, actor);
@@ -95,6 +104,21 @@ function solid(game, entity, actor) {
   // Negative character puppets have no map-entity row; a visible separate
   // character remains a body. Vehicle puppets (-101...) are handled elsewhere.
   return Number(entity.id) < 0 && Number(entity.id) > -100;
+}
+
+// PR FieldColliderEntity.CanEnter blocks types 0/1 independently of visible
+// sprite bodies. These are the only collider types used by the supplied maps.
+export function fieldTerrainBlockerAt(game, x, y, layer, transportationId) {
+  const arrivalLayer = walkingLayerAt(game, x, y, layer);
+  return (game.entities || []).find((entity) => {
+    if (entity.kind !== 19 || !colliderApplies(game, entity, transportationId)) return false;
+    const actor = live(game, entity);
+    return (
+      visible(actor, entity) &&
+      sameLayer(entity, actor, arrivalLayer) &&
+      covers(entity, actor, x, y)
+    );
+  });
 }
 
 export function walkingLayerAt(game, x, y, layer) {

@@ -167,6 +167,16 @@ export function executeInstruction(
   s = [],
   actor = game.actor(task.actor),
 ) {
+  // Follow mode renders at the player's logical position. Its stored camera
+  // coordinates may still be the map entrance, so adopt the visible anchor
+  // before a scripted move computes a relative destination or its duration.
+  // Explicit SetPos remains an authored camera teleport.
+  if (
+    actor === game.camera &&
+    !actor.manual &&
+    ["Move", "MoveBirdView", "MoveTo", "Lerp", "Route"].includes(name)
+  )
+    Object.assign(actor, { x: game.player.x, y: game.player.y });
   const layer = sourceLayer;
   switch (name) {
     case "SetPos": {

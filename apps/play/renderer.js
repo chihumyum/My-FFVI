@@ -2,6 +2,7 @@ import {
   Application,
   Assets,
   Container,
+  Graphics,
   Rectangle,
   Sprite,
   Text,
@@ -14,7 +15,12 @@ import { PRParticles } from "./particles.js";
 import { EffectLibrary } from "./effects.js";
 import { FieldPresentation } from "./field-presentation.js";
 import { PRFilter } from "./pr-filters.js";
-import { FieldAnimations, fieldTileRegions, sampleFieldTile } from "./field-animation.js";
+import {
+  FieldAnimations,
+  fieldActorParts,
+  fieldTileRegions,
+  sampleFieldTile,
+} from "./field-animation.js";
 import {
   fieldTilePlane,
   fieldTileOrder,
@@ -105,6 +111,7 @@ export class GameRenderer {
     );
     this._battleSprites = [];
     this._battleNames = [];
+    this._battleTargets = [];
     this._frameIntervals = [];
     this._renderTimes = [];
     this._warnings = [];
@@ -743,39 +750,45 @@ export class GameRenderer {
     const actors = [...(game.actors?.values() || []), game.player]
       .filter((actor) => actor && actor.visible !== false && actor !== game.camera)
       .sort((a, b) => a.y - b.y);
-    const draw = (actor, asset, x, y) => {
+    const draw = (actor, part, x, y, order) => {
+      const { asset, hideFeet = 0, offsetY = 0 } = part;
       const char = data?.characters?.[asset?.toLowerCase()];
       if (!char?.sprites) return;
       const frame = this.fieldAnimations.sample(actor, char, game.time, asset);
       const info = frame?.info;
-      const texture = this._texture(info?.file);
+      let texture = this._texture(info?.file);
       if (!texture) return;
       const w = info.logicalWidth || info.width || texture.width;
       const h = info.logicalHeight || info.height || texture.height;
+      if (hideFeet)
+        texture = this._crop(info.file, 0, {
+          tilewidth: texture.width,
+          tileheight: Math.max(1, texture.height - Math.round((hideFeet * texture.height) / h)),
+        });
       if (x + w < ox || x - w > ox + viewWidth || y < oy || y - h > oy + viewHeight) return;
       const parent = this._fieldActorLayers[fieldActorPlane(actor)];
       const sprite = pooledSprite(this._fieldSprites, parent, count++);
       if (sprite.parent !== parent) parent.addChild(sprite);
-      sprite.zIndex = actor.y * tile;
+      sprite.zIndex = actor.y * tile + order * 0.01;
       sprite.texture = texture;
       sprite.anchor.set(info.pivot?.[0] ?? 0.5, 1 - (info.pivot?.[1] ?? 0));
       sprite.position.set(
         Math.round(x - ox + (frame.offsetx || 0)),
-        Math.round(y - oy - (frame.offsety || 0)),
+        Math.round(y - oy - offsetY - hideFeet - (frame.offsety || 0)),
       );
-      sprite.scale.set(((frame.flip ? -1 : 1) * w) / texture.width, h / texture.height);
+      sprite.scale.set(
+        ((frame.flip ? -1 : 1) * w) / texture.width,
+        (h - hideFeet) / texture.height,
+      );
       sprite.alpha = frame.alpha ?? 1;
       sprite.tint = frame.tint ?? 0xffffff;
       sprite.visible = true;
     };
     for (const actor of actors) {
       if (this.fieldPresentation.flight && actor === game.player) continue;
-      if (actor.vehicle === 6)
-        draw(actor, "mo_ff6_v006_c00", actor.x * tile, actor.y * tile + tile);
-      if (actor.asset) {
-        const position = fieldActorPosition(actor, tile);
-        draw(actor, actor.asset, position.x, position.y);
-      }
+      const position = fieldActorPosition(actor, tile);
+      for (const [order, part] of fieldActorParts(actor).entries())
+        draw(actor, part, position.x, position.y, order);
     }
     hideUnused(this._fieldSprites, count);
     this._visibleActors = count;
@@ -829,6 +842,39 @@ export class GameRenderer {
       battleData,
       this._previewClock ?? performance.now() / 1000,
     );
+    let count = 0;
+    for (const [key, row] of this.battlePresentation.units) {
+      const [side, rawIndex] = key.split(":"),
+        index = Number(rawIndex),
+        selectable = row.container.visible && this.canSelectBattleTarget?.(side, index);
+      row.container.eventMode = selectable ? "static" : "auto";
+      row.container.interactiveChildren = false;
+      row.container.cursor = selectable ? "pointer" : "default";
+      if (!row.targetTap) {
+        row.targetTap = () => {
+          if (this.canSelectBattleTarget?.(side, index)) this.onBattleTarget?.(side, index);
+        };
+        row.container.on("pointertap", row.targetTap);
+      }
+      if (!selectable) continue;
+      const bounds = row.container.getLocalBounds();
+      row.container.hitArea = new Rectangle(
+        bounds.x - 3,
+        bounds.y - 3,
+        bounds.width + 6,
+        bounds.height + 6,
+      );
+      let pointer = this._battleTargets[count++];
+      if (!pointer) {
+        pointer = new Graphics().poly([0, 0, -3, -5, 3, -5]).fill(0xffdf80);
+        pointer.eventMode = "none";
+        this.layers.effects.addChild(pointer);
+        this._battleTargets.push(pointer);
+      }
+      pointer.position.set(row.container.x, Math.max(6, row.container.y + bounds.y - 3));
+      pointer.visible = true;
+    }
+    hideUnused(this._battleTargets, count);
   }
 
   render(game, data, battleData) {
@@ -861,6 +907,7 @@ export class GameRenderer {
       }
       hideUnused(this._battleSprites, 0);
       hideUnused(this._battleNames, 0);
+      hideUnused(this._battleTargets, 0);
       this._drawMap(game || {}, data);
       this.fieldPresentation.project(this.app.renderer, this.layers, game);
     }

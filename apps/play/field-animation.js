@@ -3,6 +3,16 @@ const walking = /^(?:Default(?:-S)?|Walk(?:B|L|R)?(?:-S)?)$/;
 const facing = { up: "WalkB", right: "WalkR", down: "Default", left: "WalkL" };
 const metadata = new WeakMap();
 
+export function fieldActorParts(actor) {
+  if (actor.vehicle !== 6) return actor.asset ? [{ asset: actor.asset }] : [];
+  // PR Serial.FF6.Map.TransportationEvent's ride structure for vehicle 6:
+  // hideFeetUnitNum=8, floatingUnitNum=14 (constructor RVA40b47a).
+  return [
+    ...(actor.walkAsset ? [{ asset: actor.walkAsset, hideFeet: 8, offsetY: 14 }] : []),
+    { asset: "mo_ff6_v006_c00" },
+  ];
+}
+
 function clipsFor(character) {
   let clips = metadata.get(character);
   if (!clips) {
