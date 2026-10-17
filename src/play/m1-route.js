@@ -55,7 +55,7 @@ export function pathTo(game, target) {
       const terrain = game.map.worldTerrain;
       if (terrain?.loopType & 1) nx = (nx + game.map.width) % game.map.width;
       if (terrain?.loopType & 2) ny = (ny + game.map.height) % game.map.height;
-      if (!game.canMove(nx, ny, layer)) continue;
+      if (!(game.canTraverse?.(nx, ny, layer, d) ?? game.canMove(nx, ny, layer))) continue;
       if (blocked.has(`${nx},${ny},${layer}`)) continue;
       const nl = changes.get(`${nx},${ny},${layer}`) ?? layer,
         key = [nx, ny, nl].join(",");

@@ -26,6 +26,8 @@ const visualInstructions = new Set([
   "Water",
   "ChangeView",
   "BackdropColor",
+  "CueAnim",
+  "PlayAnim",
 ]);
 const visualSelector = /モノクロフィルター|幻獣界フィルター|近景|遠景|背景変更|スクロール/;
 export const observingAudioInstruction = (game) => Boolean(listening.get(game));
@@ -62,6 +64,9 @@ export function withPresentation(Base) {
             index,
             time: this.time,
             mapId: this.mapId,
+            ...(["CueAnim", "PlayAnim"].includes(op[0])
+              ? { animationActor: this.actor(task.actor) }
+              : {}),
           });
         } catch (error) {
           console.warn("Presentation observer failed; game continues", error);

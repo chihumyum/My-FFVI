@@ -14,6 +14,7 @@ import { PRParticles } from "./particles.js";
 import { EffectLibrary } from "./effects.js";
 import { FieldPresentation } from "./field-presentation.js";
 import { PRFilter } from "./pr-filters.js";
+import { FieldAnimations, fieldTileRegions, sampleFieldTile } from "./field-animation.js";
 
 const WIDTH = 320;
 const HEIGHT = 180;
@@ -85,6 +86,9 @@ export class GameRenderer {
     this._mapMetadata = new WeakMap();
     this._tileLayers = [];
     this._fieldSprites = [];
+    this.fieldAnimations = new FieldAnimations((key, message) =>
+      this._warnOnce(`field-animation:${key}`, message),
+    );
     this._battleSprites = [];
     this._battleNames = [];
     this._frameIntervals = [];
@@ -119,6 +123,7 @@ export class GameRenderer {
       layers: this.layers,
       getTexture: (url) => this._texture(url),
       warn: (key, message) => this._warnOnce(key, message),
+      sampleActor: (actor, character, time) => this.fieldAnimations.sample(actor, character, time),
     });
   }
 
@@ -300,6 +305,7 @@ export class GameRenderer {
   }
 
   resetPresentation() {
+    this.fieldAnimations.reset();
     this.battlePresentation.clear();
     this.particles.clear();
     this._previewClock = null;
@@ -343,6 +349,7 @@ export class GameRenderer {
 
   /** Receives source presentation instructions after execution; never calls into the VM. */
   event(event) {
+    this.fieldAnimations.event(event);
     this.fieldPresentation.event(event);
     if (event?.kind === "battle-end" && this.battlePresentation.battle) {
       const battle = this.battlePresentation.battle;
@@ -648,6 +655,7 @@ export class GameRenderer {
           ),
     );
     const metadata = this._metadata(map);
+    const tileRegions = fieldTileRegions(game);
     for (let li = 0; li < (map.layers || []).length; li++) {
       const layer = map.layers[li];
       let state = this._tileLayers[li];
@@ -663,6 +671,8 @@ export class GameRenderer {
       state.container.zIndex = li;
       state.container.visible = true;
       state.container.alpha = layer.opacity ?? 1;
+      const plane =
+        { BottomLayer: 0, GroundLayer: 1, UpperLayer: 2, CeilLayer: 3 }[layer.name] ?? li;
       let count = 0;
       if (layer.data) {
         const bottom = wrapY
@@ -693,13 +703,7 @@ export class GameRenderer {
             let index = gid - set.firstgid;
             const animation = animations.get(index);
             if (animation) {
-              const duration = animation.reduce((sum, frame) => sum + (frame.duration || 200), 0);
-              let at = (((game.time * 1000) % duration) + duration) % duration;
-              for (const frame of animation) {
-                index = frame.tileid;
-                at -= frame.duration || 200;
-                if (at < 0) break;
-              }
+              index = sampleFieldTile(animation, game.time, sx, sy, plane, tileRegions);
             }
             const texture = this._crop(map.textures?.[set.image], index, set, tile);
             if (!texture) continue;
@@ -729,15 +733,11 @@ export class GameRenderer {
     const actors = [...(game.actors?.values() || []), game.player]
       .filter((actor) => actor && actor.visible !== false && actor !== game.camera)
       .sort((a, b) => a.y - b.y);
-    const draw = (asset, animation, x, y) => {
+    const draw = (actor, asset, x, y) => {
       const char = data?.characters?.[asset?.toLowerCase()];
       if (!char?.sprites) return;
-      const names = Object.keys(char.sprites);
-      const frames = names.filter((name) => name.startsWith(`${animation || "Default"}_`));
-      const key = frames.length
-        ? frames[Math.floor(game.time * 5) % frames.length]
-        : names.find((name) => name.startsWith("Default_")) || names[0];
-      const info = char.sprites[key];
+      const frame = this.fieldAnimations.sample(actor, char, game.time, asset);
+      const info = frame?.info;
       const texture = this._texture(info?.file);
       if (!texture) return;
       const w = info.logicalWidth || info.width || texture.width;
@@ -745,17 +745,21 @@ export class GameRenderer {
       if (x + w < ox || x - w > ox + viewWidth || y < oy || y - h > oy + viewHeight) return;
       const sprite = pooledSprite(this._fieldSprites, this.layers.actors, count++);
       sprite.texture = texture;
-      sprite.anchor.set(0, 1);
-      sprite.position.set(Math.round(x - ox - w / 2), Math.round(y - oy));
-      sprite.scale.set(w / texture.width, h / texture.height);
+      sprite.anchor.set(info.pivot?.[0] ?? 0.5, 1 - (info.pivot?.[1] ?? 0));
+      sprite.position.set(
+        Math.round(x - ox + (frame.offsetx || 0)),
+        Math.round(y - oy - (frame.offsety || 0)),
+      );
+      sprite.scale.set(((frame.flip ? -1 : 1) * w) / texture.width, h / texture.height);
+      sprite.alpha = frame.alpha ?? 1;
+      sprite.tint = frame.tint ?? 0xffffff;
       sprite.visible = true;
     };
     for (const actor of actors) {
       if (this.fieldPresentation.flight && actor === game.player) continue;
       if (actor.vehicle === 6)
-        draw("mo_ff6_v006_c00", actor.animation, actor.x * tile, actor.y * tile + tile);
-      if (actor.asset)
-        draw(actor.asset, actor.animation, actor.x * tile + tile / 2, actor.y * tile + tile);
+        draw(actor, "mo_ff6_v006_c00", actor.x * tile, actor.y * tile + tile);
+      if (actor.asset) draw(actor, actor.asset, actor.x * tile + tile / 2, actor.y * tile + tile);
     }
     hideUnused(this._fieldSprites, count);
     this._visibleActors = count;

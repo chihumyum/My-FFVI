@@ -256,7 +256,8 @@ export function executeInstruction(
     case "Erase":
       actor.visible = false;
       actor.motion = null;
-      if (task.actor !== null && task.actor !== undefined) game.actors.delete(String(task.actor));
+      // Keep the removed body's tombstone: the next VM instruction resolves
+      // its actor too, and a deleted entry would be recreated from the map row.
       return true;
     case "BranchByNumOfMember": {
       const count =

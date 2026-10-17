@@ -1,4 +1,13 @@
 import { executeInstruction } from "./instructions.js";
+import {
+  fieldBlockerAt,
+  fieldEntityVisible,
+  walkingLayerAt,
+  openedDoorTerrainAt,
+  applyTileAnimation,
+  openableDoorAt,
+  openFieldDoor,
+} from "./field-collision.js";
 import { executePartyInput, autoPartyInput } from "./party-input.js";
 import { walkEncounter, worldCollisionAt } from "./encounters.js";
 import {
@@ -264,6 +273,7 @@ export class PlayGame {
     for (const e of entities)
       if ([6, 7, 10, 14, 17].includes(e.kind) && !this.actors.has(String(e.id)))
         this.actors.set(String(e.id), { ...e, visible: true, animation: "Default", motion: null });
+    this.actorEntitySource = entities;
   }
   actor(selector) {
     if (selector === null || selector === undefined || selector === -1001) return this.player;
@@ -681,6 +691,7 @@ export class PlayGame {
       case "CueAnim":
       case "PlayAnim":
         a.animation = s[0] || "Default";
+        applyTileAnimation(this, a, i, r, s);
         if (name === "PlayAnim" && i[1] > 1) t.wait = 0.2 * i[1];
         return;
       case "AssignMoveRoute":
@@ -1053,15 +1064,16 @@ export class PlayGame {
     this.npcClock = (this.npcClock || 0) + dt;
     if (this.npcClock < 0.65) return;
     this.npcClock = 0;
+    const goal = [...this.actors.values()].find(
+      (n) =>
+        n.visible !== false &&
+        n.asset?.toLowerCase() === `mo_ff6_p${String(this.rts.protectedId).padStart(3, "0")}` &&
+        n.id > 0,
+    ) || { x: 14, y: 12, layer: this.player.layer };
     for (const e of this.entities) {
       const a = this.actors.get(String(e.id));
       if (e.kind !== 6 || e.npc?.moveType !== 3 || !a || a.visible === false || a.motion) continue;
-      const goal = [...this.actors.values()].find(
-          (n) =>
-            n.asset?.toLowerCase() === `mo_ff6_p${String(this.rts.protectedId).padStart(3, "0")}` &&
-            n.id > 0,
-        ) || { x: 14, y: 12 },
-        dx = goal.x - a.x,
+      const dx = goal.x - a.x,
         dy = goal.y - a.y;
       const choices =
         Math.abs(dx) > Math.abs(dy)
@@ -1074,9 +1086,10 @@ export class PlayGame {
               [Math.sign(dx), 0],
             ];
       for (const [x, y] of choices)
-        if ((x || y) && this.canMove(a.x + x, a.y + y, a.layer)) {
+        if ((x || y) && this.canMove(a.x + x, a.y + y, a.layer, a)) {
           a.x += x;
           a.y += y;
+          a.layer = walkingLayerAt(this, a.x, a.y, a.layer);
           a.direction = x > 0 ? "right" : x < 0 ? "left" : y > 0 ? "down" : "up";
           break;
         }
@@ -1090,8 +1103,8 @@ export class PlayGame {
           e.npc?.moveType === 3 &&
           a?.visible !== false &&
           a &&
-          Math.abs(a.x - 14) < 0.6 &&
-          Math.abs(a.y - 12) < 0.6
+          (a.layer === goal.layer || e.npc?.allLayers) &&
+          Math.abs(a.x - goal.x) + Math.abs(a.y - goal.y) <= 1.01
         );
       })
     ) {
@@ -1134,12 +1147,30 @@ export class PlayGame {
     if (terrain !== undefined) return terrain !== 1;
     const grid = this.map.collisions?.[layer] || this.map.collisions?.[0],
       v = grid?.[Math.floor(y) * this.map.width + Math.floor(x)];
-    return v === undefined || v !== 1;
+    return v === undefined || v !== 1 || openedDoorTerrainAt(this, x, y, layer);
   }
-  canMove(x, y, layer = this.player.layer) {
-    return this.player.vehicle > 1 && this.map?.worldTerrain
+  canMove(x, y, layer = this.player.layer, mover = this.player) {
+    return mover === this.player && this.player.vehicle > 1 && this.map?.worldTerrain
       ? canVehicleMove(this, x, y)
-      : this.canWalk(x, y, layer);
+      : this.canWalk(x, y, layer) && !fieldBlockerAt(this, x, y, layer, mover);
+  }
+  canTraverse(x, y, layer = this.player.layer, direction = null) {
+    if (this.canMove(x, y, layer)) return true;
+    if (x < 0 || y < 0 || x >= this.map.width || y >= this.map.height) return false;
+    const blocker = fieldBlockerAt(this, x, y, layer);
+    // Touch encounters resolve the blocking body through an ordinary bump.
+    // Route queries may plan beyond it; canMove still prevents walking through.
+    if (
+      this.rts?.active &&
+      this.canWalk(x, y, layer) &&
+      blocker?.entity.kind === 6 &&
+      blocker.entity.npc?.moveType === 3 &&
+      blocker.entity.script &&
+      !fieldBlockerAt(this, x, y, layer, this.player, blocker.entity)
+    )
+      return true;
+    const door = openableDoorAt(this, x, y, layer, direction);
+    return Boolean(door && !fieldBlockerAt(this, x, y, layer, this.player, door));
   }
   move(direction) {
     if (this.player.vehicle > 1 && this.map?.worldTerrain) return moveVehicle(this, direction);
@@ -1153,7 +1184,15 @@ export class PlayGame {
       y = this.player.y + d[1];
     if (this.map.worldTerrain?.loopType & 1) x = (x + this.map.width) % this.map.width;
     if (this.map.worldTerrain?.loopType & 2) y = (y + this.map.height) % this.map.height;
-    if (!this.canMove(x, y)) return false;
+    if (!this.canMove(x, y)) {
+      const door = openableDoorAt(this, x, y, this.player.layer, direction);
+      if (door) openFieldDoor(this, door);
+      if (!this.canMove(x, y)) {
+        this.walkCache = null;
+        if (this.rts?.active) this.checkTriggers();
+        return false;
+      }
+    }
     this.player.x = x;
     this.player.y = y;
     this.stepCount++;
@@ -1167,7 +1206,7 @@ export class PlayGame {
     if (this.busy || (this.map?.worldTerrain && this.player.vehicle > 1)) return;
     for (const e of this.entities) {
       const actual = this.actors.get(String(e.id)) || e;
-      if (actual.visible === false && !(e.kind === 2 && actual.triggerEnabled)) continue;
+      if (!fieldEntityVisible(this, e) && !(e.kind === 2 && actual.triggerEnabled)) continue;
       if (
         e.transportationIds?.length &&
         !e.transportationIds.includes(Number(this.player.vehicle || 1))
@@ -1208,7 +1247,7 @@ export class PlayGame {
       [5, 6, 7, 8, 10, 17].includes(target.kind) &&
       dx + dy === 2 &&
       (!dx || !dy) &&
-      !this.canMove((x + target.x) / 2, (y + target.y) / 2, layer)
+      !this.canWalk((x + target.x) / 2, (y + target.y) / 2, layer)
     )
       return 2;
     return 0;
@@ -1236,7 +1275,7 @@ export class PlayGame {
       for (const e of this.entities) {
         if (e.kind === 21 || e.kind === 2) continue;
         const actual = { ...e, ...this.actors.get(String(e.id)) };
-        if (actual.visible === false || !this.interactionDistance(actual)) continue;
+        if (!fieldEntityVisible(this, e) || !this.interactionDistance(actual)) continue;
         if (
           Math.abs(actual.x - this.player.x - d[0] * distance) >= 0.6 ||
           Math.abs(actual.y - this.player.y - d[1] * distance) >= 0.6
@@ -1254,6 +1293,7 @@ export class PlayGame {
           this.startScript(name);
           return true;
         }
+        if (e.kind === 8 && openFieldDoor(this, e)) return true;
         if (e.npc?.interaction?.actionId === 8) {
           return openShop(this, e.npc.interaction.productGroup);
         }

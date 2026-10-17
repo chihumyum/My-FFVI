@@ -177,6 +177,18 @@ export function compileMap(row, binding, tables, media, messages) {
         }
         if (kind === 3)
           entity.destination = { mapId: Number(p.map_id), entrance: Number(p.point_id || 1) };
+        if (kind === 1)
+          entity.tileAnimation = {
+            reverse: Boolean(p.reverse),
+            allLayers: Boolean(p.all_layers),
+          };
+        if (kind === 8)
+          entity.door = {
+            linkObjectId: Number(p.link_object_id || 0),
+            actionId: Number(p.action_id || 0),
+            soundId: Number(p.se_id || 0),
+            direction: Number(p.direction || 0),
+          };
         if ([6, 17].includes(kind))
           entity.npc = {
             ...interaction(p, script),

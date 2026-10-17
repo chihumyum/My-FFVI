@@ -89,9 +89,10 @@ function color(value, fallback) {
 
 /** Scenery clocks and camera projection live here, outside saved game state. */
 export class FieldPresentation {
-  constructor({ layers, getTexture, warn }) {
+  constructor({ layers, getTexture, warn, sampleActor }) {
     this.getTexture = getTexture;
     this.warn = warn;
+    this.sampleActor = sampleActor;
     this.far = plane("pr-far-scenery", layers.far);
     this.backdropPlane = new Sprite(Texture.WHITE);
     this.backdropPlane.width = 320;
@@ -354,18 +355,15 @@ export class FieldPresentation {
       const sky = this.catalog.sky[`bird_view_skybox_${worldName}_normal`];
       if (sky) images.push({ image: sky, alpha: 1 });
       const char = data?.characters?.[game.player.asset?.toLowerCase()];
-      const sprites = char?.sprites || {};
-      const key =
-        Object.keys(sprites).find((key) =>
-          key.startsWith((game.player.animation || "Default") + "_"),
-        ) || Object.keys(sprites).find((key) => key.startsWith("Default_"));
-      const info = sprites[key];
+      const frame = char && this.sampleActor?.(game.player, char, game.time);
+      const info = frame?.info;
       const texture = this.getTexture(info?.file);
       this.flightActor.visible = !!texture;
       if (texture) {
         this.flightActor.texture = texture;
         this.flightActor.width = info.logicalWidth || info.width;
         this.flightActor.height = info.logicalHeight || info.height;
+        this.flightActor.scale.x = Math.abs(this.flightActor.scale.x) * (frame.flip ? -1 : 1);
         this.flightActor.position.set(160, 137 + Math.round(Math.sin(this.clock * 3)));
       }
     }
