@@ -2,6 +2,8 @@
 // field task, emit an event, or write a game flag.
 import { storyCondition } from "./story-plan.js";
 import { canVehicleLand } from "./vehicle-input.js";
+import { fieldEntityVisible } from "./field-collision.js";
+import { physicalNavigation, fieldGeometryKey } from "./navigation-geometry.js";
 
 function landingRegions(game, map) {
   const ids = [4, 5].includes(game.player.vehicle)
@@ -52,6 +54,7 @@ function project(
     position = null,
     sameMapContext = false,
     timedCallbacks = false,
+    initialActors = mapId === game.mapId ? game.actors : new Map(),
   } = {},
 ) {
   const data = game.data,
@@ -69,7 +72,8 @@ function project(
     encounters = new Set(),
     scriptFrames = [],
     bindings = {},
-    actorPositions = new Map();
+    actorPositions = new Map(),
+    actorStates = new Map();
   let player = { ...(position || (mapId === game.mapId ? game.player : {})) },
     moved = false,
     leavesMap = false;
@@ -82,6 +86,7 @@ function project(
     encounters,
     banks,
     actorPositions,
+    actorStates,
     leavesMap,
     landing: moved && !leavesMap ? player : null,
   });
@@ -119,7 +124,7 @@ function project(
       if (resume()) continue;
       break;
     }
-    const [kind, i = [], , s = []] = op;
+    const [kind, i = [], r = [], s = []] = op;
     switch (kind) {
       case "Exit":
         if (resume()) break;
@@ -154,6 +159,20 @@ function project(
         break;
       case "SetEntities":
         groups.add(s[0]);
+        break;
+      case "Hide":
+      case "Erase":
+      case "Show":
+        if (actor > 0)
+          actorStates.set(actor, { ...actorStates.get(actor), visible: kind === "Show" });
+        break;
+      case "CueAnim":
+      case "PlayAnim":
+        if (actor > 0 && !s[0])
+          actorStates.set(actor, {
+            ...actorStates.get(actor),
+            tileNormalized: Math.max(0, Math.min(1, Number(r[0] || i[0]) || 0)),
+          });
         break;
       case "Select":
         bank("MessageSelection")[0] = 0;
@@ -207,9 +226,13 @@ function project(
             const isPlayer = [-1001, -1010].includes(binding.actor);
             const initialPosition = isPlayer
               ? player
-              : actorPositions.get(binding.actor) ||
-                map.entries.find((entry) => String(entry.id) === String(binding.actor)) ||
-                {};
+              : {
+                  ...(map.geometry?.entities.find(
+                    (entry) => String(entry.id) === String(binding.actor),
+                  ) || map.entries.find((entry) => String(entry.id) === String(binding.actor))),
+                  ...initialActors?.get(String(binding.actor)),
+                  ...actorPositions.get(binding.actor),
+                };
             const child = project(game, mapId, data.programs[programId].name, {
               actor: binding.actor,
               startPc: binding.pc,
@@ -220,6 +243,10 @@ function project(
               sameMapContext: true,
               direction,
               timedCallbacks,
+              initialActors: new Map([
+                ...(initialActors || []),
+                ...[...actorStates].map(([id, value]) => [String(id), value]),
+              ]),
             });
             if (child.landing) {
               if (isPlayer) {
@@ -228,6 +255,8 @@ function project(
               } else actorPositions.set(binding.actor, child.landing);
             }
             for (const [id, position] of child.actorPositions) actorPositions.set(id, position);
+            for (const [id, value] of child.actorStates)
+              actorStates.set(id, { ...actorStates.get(id), ...value });
             Object.assign(banks, child.banks);
             destinations.push(...child.destinations);
             for (const name of child.syscalls) syscalls.add(name);
@@ -373,10 +402,12 @@ function navigationState(game) {
       .map((unit) => unit.id),
     Object.fromEntries(Object.entries(game.banks).filter(([name]) => !name.startsWith("Play"))),
     [...game.groups],
+    fieldGeometryKey(game),
   ]);
   if (game.navigationCache?.signature === signature) return game.navigationCache;
   const maps = new Map(),
-    projections = new Map();
+    projections = new Map(),
+    geometry = new Map();
   const script = (mapId, name, initializer = false, position = null) => {
     const key = `${mapId}:${name}:${initializer}:${position?.x},${position?.y},${position?.layer}`;
     if (!projections.has(key)) {
@@ -413,6 +444,15 @@ function navigationState(game) {
     }
     return projections.get(key);
   };
+  const mapFor = (mapId) => {
+    if (!geometry.has(mapId)) {
+      const map = game.data.navigation.maps[mapId];
+      if (!map) return null;
+      const initialized = script(mapId, map.initializer, true);
+      geometry.set(mapId, physicalNavigation(game, map, initialized));
+    }
+    return geometry.get(mapId);
+  };
   // Some ordinary inputs reveal the next input instead of calling its script:
   // touch a tripwire, then talk to the NPC it reveals. Route to that real
   // prerequisite, but only while its group is absent. Never activate it here.
@@ -436,7 +476,7 @@ function navigationState(game) {
   };
   const entries = (mapId) => {
     if (!maps.has(mapId)) {
-      const map = game.data.navigation.maps[mapId];
+      const map = mapFor(mapId);
       if (!map) return [];
       const initialized = script(mapId, map.initializer, true);
       const groups = mapId === game.mapId ? game.groups : initialized.groups;
@@ -447,7 +487,7 @@ function navigationState(game) {
           .map((sourceEntry) => {
             const position = initialized.actorPositions.get(Number(sourceEntry.id));
             const entry =
-              position && mapId !== game.mapId
+              position && mapId !== game.mapId && !map.geometry
                 ? {
                     ...sourceEntry,
                     ...position,
@@ -482,6 +522,7 @@ function navigationState(game) {
   return (game.navigationCache = {
     signature,
     entries,
+    map: mapFor,
     script,
     reachableScripts,
     distances: new Map(),
@@ -576,7 +617,7 @@ export function routeToStory(
     const source = game.entities.find((e) => e.id === entry.id && e.script === entry.script);
     if (!source) return null;
     const actor = game.actors.get(String(source.id));
-    return actor?.visible === false
+    return !fieldEntityVisible(game, source)
       ? null
       : {
           ...source,
@@ -651,7 +692,7 @@ export function routeToStory(
   // Some source scenes update flags but deliberately leave their old entities
   // alive until the next map entry. Walk out and back through normal portals
   // when that initializer would publish the requested input.
-  const currentMap = navigation.maps[game.mapId];
+  const currentMap = state.map(game.mapId);
   if (currentMap) {
     const fresh = project(game, game.mapId, currentMap.initializer, {
       initializer: true,
@@ -685,7 +726,7 @@ export function routeToStory(
       queue = [],
       virtual = new Map();
     const destinationKey = (dest) => {
-      const map = navigation.maps[dest.mapId];
+      const map = state.map(dest.mapId);
       if (dest.position)
         return `${dest.mapId}:p:${dest.position.x},${dest.position.y},${dest.position.layer}`;
       const entrance = map?.entrances[dest.entrance]
@@ -693,16 +734,16 @@ export function routeToStory(
         : Object.keys(map?.entrances || {})[0] || 0;
       return `${dest.mapId}:${entrance}`;
     };
-    for (const map of Object.values(navigation.maps))
+    for (const map of Object.keys(navigation.maps).map((id) => state.map(Number(id))))
       for (const entry of entriesFor(map.id))
         for (const dest of entry.destinations)
           if (dest.position && navigation.maps[dest.mapId]) {
             const key = destinationKey(dest),
-              regions = pointRegions(navigation.maps[dest.mapId], dest.position);
+              regions = pointRegions(state.map(dest.mapId), dest.position);
             if (!regions.length) continue;
             virtual.set(key, { mapId: dest.mapId, point: { ...dest.position, regions } });
           }
-    for (const map of Object.values(navigation.maps)) {
+    for (const map of Object.keys(navigation.maps).map((id) => state.map(Number(id)))) {
       const entries = entriesFor(map.id),
         initial = state.script(map.id, map.initializer, true);
       const autoTarget =
@@ -878,21 +919,27 @@ function stateChangingTravel(game, objective, pathTo, state, avoidBattles) {
         newEntry: true,
       });
       after.groups = initialized.groups;
-      after.entities = map.entries
+      after.entities = (map.geometry?.entities || map.entries)
         .filter((entity) => after.groups.has(entity.group))
         .map((entity) => {
           const position = initialized.actorPositions.get(Number(entity.id));
-          return position
-            ? { ...entity, ...position, regions: entryRegions(map, { ...entity, ...position }) }
-            : entity;
+          const state = initialized.actorStates.get(Number(entity.id));
+          return { ...entity, ...position, ...state };
         });
+      after.actors = new Map(after.entities.map((entity) => [String(entity.id), { ...entity }]));
+      after.actorEntitySource = after.entities;
       const destination = entry.destinations.find((destination) => destination.mapId === map.id);
       const point = destination.position || map.entrances[destination.entrance];
       if (!point) continue;
       after.player = { ...game.player, ...point };
-      const regions = point.regions || pointRegions(map, point);
+      const afterMap = physicalNavigation(after, map, initialized);
+      const regions = destination.position
+        ? pointRegions(afterMap, point)
+        : afterMap.entrances[destination.entrance]?.regions || [];
       const probePath = (_game, target) =>
-        regions.some((region) => (target.regions || entryRegions(map, target)).includes(region))
+        regions.some((region) =>
+          (target.regions || entryRegions(afterMap, target)).includes(region),
+        )
           ? []
           : null;
       const onward = routeToStory(after, objective, probePath, {

@@ -1,4 +1,47 @@
 import { navigationRegions } from "./regions.mjs";
+
+function runs(grid) {
+  const result = [];
+  for (let cell = 0; cell < grid.length; cell++) {
+    const value = grid[cell];
+    if (result.at(-1)?.[1] === value) result.at(-1)[0] = cell + 1;
+    else result.push([cell + 1, value]);
+  }
+  return result;
+}
+
+function geometryEntity(entity, group) {
+  const keys = [
+    "id",
+    "objectId",
+    "kind",
+    "x",
+    "y",
+    "width",
+    "height",
+    "layer",
+    "visible",
+    "collision",
+    "destinationLayer",
+    "door",
+    "tileAnimation",
+    "script",
+  ];
+  const result = { group };
+  for (const key of keys) if (entity[key] !== undefined) result[key] = entity[key];
+  for (const key of ["npc", "mapObject"])
+    if (entity[key])
+      result[key] = {
+        collision: entity[key].collision,
+        allLayers: entity[key].allLayers,
+        acceptDirection: entity[key].acceptDirection,
+        moveType: entity[key].moveType,
+        interaction: entity[key].interaction,
+      };
+  if (entity.treasure)
+    result.treasure = { presentation: { pickUp: entity.treasure.presentation?.pickUp } };
+  return result;
+}
 function canVehicleLand(host, id, x, y) {
   const terrain = host.map.worldTerrain,
     foot = terrain.cells[y * terrain.width + x],
@@ -74,6 +117,20 @@ export function compileNavigation(sourceMaps, data) {
       ...header,
       ...navigationRegions(raw, entries, (entry) => isWarp(entry, raw.id)),
     };
+    if (!header.world) {
+      const entities = new Map();
+      for (const [group, value] of Object.entries(raw.groups || {}))
+        for (const entity of value.entities || [])
+          entities.set(`${group}:${entity.id}`, geometryEntity(entity, group));
+      for (const entity of raw.entities || [])
+        entities.set(`entity_default:${entity.id}`, geometryEntity(entity, "entity_default"));
+      maps[raw.id].geometry = {
+        collisionRuns: Object.fromEntries(
+          Object.entries(raw.collisions || {}).map(([layer, grid]) => [layer, runs(grid)]),
+        ),
+        entities: [...entities.values()],
+      };
+    }
     if (header.world) {
       const indexed = maps[raw.id],
         host = { data, map: raw, mapId: raw.id, player: { layer: 0 } },

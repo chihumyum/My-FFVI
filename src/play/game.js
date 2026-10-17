@@ -8,6 +8,11 @@ import {
   openableDoorAt,
   openFieldDoor,
 } from "./field-collision.js";
+import {
+  acceptsFieldInteraction,
+  sameCellFieldInteraction,
+  dispatchFieldInteraction,
+} from "./field-interaction.js";
 import { executePartyInput, autoPartyInput } from "./party-input.js";
 import { walkEncounter, worldCollisionAt } from "./encounters.js";
 import {
@@ -17,7 +22,7 @@ import {
   moveVehicle,
   canVehicleMove,
 } from "./vehicle-input.js";
-import { autoShopInput, openShop, buyFromShop, sellToShop } from "./event-systems.js";
+import { autoShopInput, buyFromShop, sellToShop } from "./event-systems.js";
 import { createCharacter, applyTestBoost } from "./progression.js";
 import {
   equip,
@@ -1240,8 +1245,10 @@ export class PlayGame {
 
   interactionDistance(target, x = this.player.x, y = this.player.y, layer = this.player.layer) {
     if (target.layer != null && target.layer !== layer && !target.npc?.allLayers) return 0;
+    if (!acceptsFieldInteraction(target, x, y)) return 0;
     const dx = Math.abs(target.x - x),
       dy = Math.abs(target.y - y);
+    if (dx + dy < 0.6 && sameCellFieldInteraction(target)) return 1;
     if (dx + dy === 1) return 1;
     if (
       [5, 6, 7, 8, 10, 17].includes(target.kind) &&
@@ -1271,11 +1278,12 @@ export class PlayGame {
       this.startScript(vehicleAction.script);
       return true;
     }
-    for (const distance of [1, 2])
+    for (const distance of [0, 1, 2])
       for (const e of this.entities) {
         if (e.kind === 21 || e.kind === 2) continue;
         const actual = { ...e, ...this.actors.get(String(e.id)) };
         if (!fieldEntityVisible(this, e) || !this.interactionDistance(actual)) continue;
+        if (distance === 0 && !sameCellFieldInteraction(actual)) continue;
         if (
           Math.abs(actual.x - this.player.x - d[0] * distance) >= 0.6 ||
           Math.abs(actual.y - this.player.y - d[1] * distance) >= 0.6
@@ -1283,35 +1291,8 @@ export class PlayGame {
           continue;
         if (distance === 2 && this.interactionDistance(actual) !== 2) continue;
         if (e.kind === 7 && e.treasure) return openTreasure(this, e);
-        const name = e.script || e.npc?.interaction?.script || e.mapObject?.interaction?.script;
-        if (name) {
-          if (distance === 2)
-            this.warn(
-              null,
-              "Counter interaction treats one blocked cell between player and NPC as a talk-through counter; exact counter tile flags are not exported.",
-            );
-          this.startScript(name);
-          return true;
-        }
+        if (dispatchFieldInteraction(this, e, actual, distance)) return true;
         if (e.kind === 8 && openFieldDoor(this, e)) return true;
-        if (e.npc?.interaction?.actionId === 8) {
-          return openShop(this, e.npc.interaction.productGroup);
-        }
-        if (e.npc?.interaction?.kind === "talk") {
-          const message = e.npc.interaction.message,
-            key = message?.key || "",
-            text = this.text(key, message?.text);
-          if (!text) continue;
-          this.dialogue = {
-            key,
-            text,
-            speaker: this.data.speakers?.[key] || message.speaker || "",
-            task: null,
-            elapsed: 0,
-          };
-          this.event("dialogue", { key, text, entityId: e.id, group: e.group });
-          return true;
-        }
         if (e.destination && e.kind !== 3) {
           this.pending = this.enter(e.destination.mapId, e.destination.entrance);
           return true;
