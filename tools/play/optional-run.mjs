@@ -7,6 +7,7 @@ import { storyCondition, storyChoice } from "../../src/play/story-plan.js";
 import { prepareStoryParty } from "../../src/play/story-actions.js";
 import { pendingEventInput } from "../../src/play/event-systems.js";
 import { cooperativeStoryInput } from "../../src/play/cooperative-input.js";
+import { fixedStoryInput } from "../../src/play/fixed-story-input.js";
 import { pathTo } from "../../src/play/m1-route.js";
 import { partyInputMembers } from "../../src/play/party-input.js";
 import { submitVehicleInput } from "../../src/play/vehicle-input.js";
@@ -389,11 +390,13 @@ for (const test of cases) {
       break;
     }
     game.storyObjective = current;
-    const cooperative = cooperativeStoryInput(game, current, {
-      condition,
-      findTarget: (host, objective) => objectiveTarget(host, objective, fixedRoutes),
-      followTarget,
-    });
+    const cooperative =
+      fixedStoryInput(game, current) ||
+      cooperativeStoryInput(game, current, {
+        condition,
+        findTarget: (host, objective) => objectiveTarget(host, objective, fixedRoutes),
+        followTarget,
+      });
     let input = cooperative;
     if (!input) {
       const target =
