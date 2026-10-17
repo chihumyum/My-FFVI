@@ -19,6 +19,54 @@ const game = () => ({
   },
 });
 
+test("authored flashes let delayed puppet replacements complete before FinishPuppet", () => {
+  // PR source0302_4 spawns the Ramuh/magicite puppets, flashes twice, then
+  // finishes them. Treating Flash as instantaneous cancels both before 0.2s.
+  const g = new PlayGame({
+    data: {
+      byMap: {},
+      global: { replacement: 0 },
+      programs: {
+        0: {
+          name: "replacement",
+          ops: [
+            ["SetPuppet", [0, 21, 7], [], []],
+            ["SetPuppet", [1, 2, 11], [], []],
+            ["ExecPuppet", [1], [], []],
+            ["Flash", [255, 255, 255, 200], [0.175], []],
+            ["Flash", [255, 255, 255, 200], [0.175], []],
+            ["FinishPuppet", [], [], []],
+            ["Exit", [], [], []],
+            ["Wait", [], [0.2], []],
+            ["SetPos", [0, 0, 0, 1, 2], [], ["Default_01"]],
+            ["Show", [], [], []],
+            ["Exit", [], [], []],
+            ["Wait", [], [0.2], []],
+            ["Hide", [], [], []],
+            ["Exit", [], [], []],
+          ],
+        },
+      },
+    },
+  });
+  const ramuh = { id: "2", kind: 6, x: 84, y: 17, layer: 1 },
+    stone = { id: "21", kind: 10, x: 84, y: 4, layer: 1 };
+  Object.assign(g, { mapId: 395, map: { entities: [ramuh, stone], width: 100, height: 50 } });
+  g.refreshActors();
+  g.actor(21).visible = false;
+  g.startScript("replacement");
+  g.tick(0.05);
+  assert.equal(g.busy, true);
+  assert.equal(g.actor(21).y, 4);
+  assert.equal(g.actor(2).visible, true);
+  for (let tick = 0; tick < 12; tick++) g.tick(0.05);
+  assert.equal(g.busy, false);
+  assert.equal(g.actor(21).x, 84);
+  assert.equal(g.actor(21).y, 17);
+  assert.equal(g.actor(21).visible, true);
+  assert.equal(g.actor(2).visible, false);
+});
+
 test("PR random variable draws every integer from one through its sole upper bound", () => {
   for (const upper of [1, 4, 6, 8]) {
     const g = new PlayGame({

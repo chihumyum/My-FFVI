@@ -345,7 +345,16 @@ export function executeInstruction(
     }
   }
   if (effects.has(name)) {
-    if (name === "Orient") {
+    if (name === "Flash") {
+      // Source0302_4 starts delayed puppet replacements, flashes twice, then
+      // calls FinishPuppet. A skipped duration cancels their state changes.
+      task.wait = Math.max(0, r[0] || 0);
+      warning(
+        game,
+        task,
+        "Flash waits for its positive authored duration; native tween callback timing is inferred from the concurrent source puppet sequence.",
+      );
+    } else if (name === "Orient") {
       const target = game.actor(i[0]),
         dx = target.x - actor.x,
         dy = target.y - actor.y;
