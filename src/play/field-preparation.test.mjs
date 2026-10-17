@@ -119,6 +119,29 @@ test('field MP preparation consumes actual 50 MP Ethers, restores the healer fir
   assert.deepEqual([healer.mp, damageCaster.mp, game.inventory[5]], before);
 });
 
+test('an equipped source magicite still needs finite MP supplies before its wearer learns ordinary magic', () => {
+  const game = gameOn(53);
+  game.partySlots = [[9], [], []];
+  const unit = game.party[0]; unit.enabled = true; raiseLevel(battleData, unit, 20);
+  unit.abilities = [1, 2]; unit.hp = unit.maxHp; unit.mp = 0;
+  game.inventory[67] = 1;
+  assert.equal(game.equipMagicite(unit.id, 67), true);
+  game.gil = 12000;
+  const requests = preparationPurchases(game, [{ id: 5, price: 1500 }]);
+  assert.ok(requests.some(request => request.contentId === 5 && request.count >= 2));
+  assert.equal(game.inventory[5] || 0, 0);
+  game.inventory[5] = 2;
+  game.banks.PlaySystems = { timer: { remaining: 60, expired: false, dispatched: false } };
+  const noTravel = () => { throw new Error('A running source sequence cannot be left for supplies'); };
+  assert.equal(prepareFieldInput(game, noTravel).action, 'restore-mp');
+  assert.equal(unit.mp, 50);
+  assert.equal(game.inventory[5], 1);
+  assert.equal(prepareFieldInput(game, noTravel).action, 'restore-mp');
+  assert.equal(unit.mp, 100);
+  assert.equal(game.inventory[5], 0);
+  assert.equal(prepareFieldInput(game, noTravel), null);
+});
+
 test('source escape supplies share a small reserve and buy the cheaper real fn16 item without replacing held stock', () => {
   const game = gameOn(53);
   game.gil = 3000;

@@ -116,10 +116,22 @@ export function calculateDamage(
   }
   if (targetCount > 1 && !ability.flags?.includes(2))
     amount = Math.trunc(amount / 2);
+  const resource=ability.functions?.some(fn=>[3,69,77].includes(fn.id)&&fn.values?.[0]===2)?'mp':'hp';
+  const drain=ability.functions?.find(fn=>fn.id===13),drainHit=ability.functions?.some(fn=>fn.id===69);
+  if(drain&&drainHit){
+    const maximum=resource==='mp'?'maxMp':'maxHp',percent=Math.max(0,drain.values?.[1]??100);
+    const undead=target.undead||hasConditionType(data,target,34);
+    // Drain transfers only the target's supply and the recipient's capacity.
+    // Undead reverse the actual transfer, rather than creating MP/HP.
+    const supply=undead?value(actor[resource],0):value(target[resource],0);
+    const room=undead?value(target[maximum],0)-value(target[resource],0):value(actor[maximum],0)-value(actor[resource],0);
+    amount=(undead?-1:1)*Math.min(Math.abs(amount),supply,percent>0?Math.floor(Math.max(0,room)*100/percent):0);
+  }
   return finalizeWeaponDamage(weaponPlan,{
     amount: clamp(Math.trunc(amount), -9999, 9999),
     missed: false,
     critical,
+    ...(resource==='mp'?{resource}:{}),
   });
 }
 
@@ -511,6 +523,9 @@ export class Battle {
           },
       )
       .map((a) => ({ ...a, magiciteSummon:a.id===summonId, revive:isRevival(this.data,a), mp: abilityMpCost(unit,a),
+        selectableAll:[6,14,20,21].includes(a.range),
+        targetSides:[6,7,8,9,20].includes(a.range)?['player','enemy']:
+          [1,2,5,12].includes(a.range)||a.target==='ally'?['player']:['enemy'],
         disabled: abilityMpCost(unit,a) > unit.mp || (a.forbiddenConditions || []).some(id => (unit.conditions || []).includes(id)) }))
       .flatMap(command => command.functions?.some(fn => fn.id === 51)
         ? throwableCommands(this.data, this.inventory, unit).map(choice => ({ ...command, ...choice,
@@ -648,11 +663,15 @@ export class Battle {
     const command = this.commandsFor(actorIndex).find(
       (command) => command.id === id,
     );
-    if (!command) {
+    if (!command || command.disabled) {
       this.warning(`Unavailable ability ${id}; command rejected.`);
       return false;
     }
     const ability = command.throwContentId ? { ...command, id:10, kind:command.effect.kind } : command;
+    const requested = typeof targetIndex === 'object' && targetIndex !== null ? targetIndex : null;
+    const side = requested ? (requested.side === 2 || requested.side === 'enemy' ? 'enemy' : 'player') :
+      ability.target === 'ally' || [1,2,5,12].includes(ability.range) || isRevival(this.data,ability) ? 'player' : 'enemy';
+    if(!command.targetSides.includes(side) || requested?.all && !command.selectableAll && !ability.all)return false;
     if (ability.mp > actor.mp) {
       this.addLog(`${actor.name}的魔力不足。`);
       return false;
@@ -664,9 +683,6 @@ export class Battle {
       actor.defending = true;
       this.addLog(`${actor.name}防御。`);
     } else {
-      const requested = typeof targetIndex === "object" && targetIndex !== null ? targetIndex : null;
-      const side = requested ? (requested.side === 2 || requested.side === "enemy" ? "enemy" : "player") :
-        ability.target === "ally" || [1,2,5,12].includes(ability.range) || isRevival(this.data, ability) ? "player" : "enemy";
       const pool = ability.range === 5 ? [actor] : side === "player" ? this.players : this.enemies;
       const target = ability.range === 5 ? actor : pool[requested?.index ?? targetIndex];
       const selected = this.eligibleTarget(target, ability) ? target : pool.find(unit=>this.eligibleTarget(unit,ability));
@@ -676,7 +692,8 @@ export class Battle {
         return false;
       }
       const targets = ability.range === 9 ? [...this.players,...this.enemies].filter(unit=>this.eligibleTarget(unit,ability)) :
-        ability.all ? pool.filter(unit=>this.eligibleTarget(unit,ability)) : [selected];
+        (command.selectableAll && typeof requested?.all==='boolean' ? requested.all : ability.all)
+          ? pool.filter(unit=>this.eligibleTarget(unit,ability)) : [selected];
       const sequence = {};
       targets.forEach((unit,index)=>this.perform(actor,unit,ability,targets.length,{updateVariables:index===0,sequence,
         throwContentId:command.throwContentId}));
@@ -744,6 +761,9 @@ export class Battle {
     }
     const result = executeAbilityEffects(this,actor,target,ability,targetCount,options,
       (...args)=>calculateDamage(...args,this.data));
+    // PR monster flag4 is the EnemyCharacterParameter zero-MP death rule.
+    // It applies to MP damage/drain too; ordinary enemies can remain at 0 MP.
+    if(target.diesAtZeroMp&&target.mp===0&&target.hp>0&&result.mp>0)target.hp=0;
     if(target.hp<=0){target.ready=false;target.atb=0;}
     const action={actor,target,ability,...result,depth:this.actionDepth||0,selectedAbilityId:ability.id,time:this.elapsed,...(options.item?{item:options.item}:{})};
     if(actor.side==='player' && !options.item && ability.id!==17)this.lastMimicAction=action;
@@ -754,6 +774,11 @@ export class Battle {
 
   checkEnd() {
     if (this.phase !== "active") return;
+    for(const enemy of this.enemies)if(enemy.diesAtZeroMp&&enemy.mp===0&&enemy.hp>0&&!enemy.removed&&!enemy.escaped){
+      enemy.hp=0;enemy.ready=false;enemy.atb=0;
+      enemy.aiState?.wake('final',this.lastAction);
+    }
+    this.drainAI();
     const terminalOutcome = () =>
       this.events?.forcedOutcome?.outcome ||
       (this.escapeState?.complete ? 'escape' : !this.players.some((unit) => this.alive(unit))

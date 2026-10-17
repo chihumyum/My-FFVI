@@ -25,15 +25,18 @@ function magicNeeds(game, preparation = null) {
   const battles = Math.min(6, Math.max(1, preparation?.encounterCount || 1));
   return game.party.map(unit => {
     const spells = spellsFor(game, unit);
-    if (!spells.length || !(unit.maxMp > 0)) return null;
+    const summon = game.battleData.abilities?.[game.battleData.magicStones?.[unit.magicite]?.summonAbilityId];
+    const summonCost = summon ? abilityMpCost(unit, summon) : 0;
+    if ((!spells.length && !summonCost) || !(unit.maxMp > 0)) return null;
     const costs = spells.filter(ability => ability.power > 0 || ability.kind === 'heal')
       .map(ability => abilityMpCost(unit, ability)).sort((a, b) => a - b);
-    const cost = costs.length ? costs[Math.floor(costs.length / 2)] : Math.min(...spells.map(ability => abilityMpCost(unit, ability)));
+    const cost = costs.length ? costs[Math.floor(costs.length / 2)] : spells.length ? Math.min(...spells.map(ability => abilityMpCost(unit, ability))) : 0;
     // These are bounded player reserves, not game balance changes. Expensive
     // learned spells and source battle chains need more than one 50 MP Ether.
     const floor = Math.min(unit.maxMp, Math.ceil(Math.max(unit.maxMp * (preparation ? Math.min(.9, .65 + battles * .1) : .35),
-      cost * (preparation ? 6 + battles * 2 : 4))));
-    const reserve = Math.max(unit.maxMp * (preparation ? Math.min(.8, .25 + battles * .15) : .25), cost * (4 + battles * 2));
+      cost * (preparation ? 6 + battles * 2 : 4) + summonCost * (preparation ? battles : 1))));
+    const reserve = Math.max(unit.maxMp * (preparation ? Math.min(.8, .25 + battles * .15) : .25),
+      cost * (4 + battles * 2) + summonCost * (preparation ? battles : 2));
     return { unit, floor, reserve, healer: spells.some(ability => ability.kind === 'heal' && ability.power > 0) };
   }).filter(Boolean);
 }

@@ -279,6 +279,24 @@ test('an ordinary MP-draining sword transfers actual MP without damaging HP', ()
   assert.equal(battle.enemies[0].hp,500);assert.equal(battle.enemies[0].mp,10);
 });
 
+test('PR zero-MP death affects flagged monsters after MP damage or their own cost and retains final actions', () => {
+  const data={parties:{1:{members:[{monsterId:1},{monsterId:2}]}},
+    monsters:{1:{id:1,hp:1000,maxHp:1000,mp:5,maxMp:5,diesAtZeroMp:true,aiName:'final'},
+      2:{id:2,hp:1000,maxHp:1000,mp:5,maxMp:5}},
+    abilities:{71:{id:71,name:'Rasp',kind:'magic',power:10,flags:[1],functions:[{id:3,values:[2]}]},
+      10:{id:10,name:'Final',range:3,functions:[{id:69,values:[1,1]}]}},
+    aiPrograms:{final:{name:'final',ops:[['SyncAI'],['FinalAttackAct',[10],[100]],['JumpBattleAI',[0]]]}}};
+  const party=[{id:1,hp:100,maxHp:100}],battle=new Battle({data,party,encounterId:1,random:()=>.5});
+  battle.perform(party[0],battle.enemies[0],data.abilities[71]);
+  assert.equal(battle.enemies[0].mp,0);assert.equal(battle.enemies[0].hp,0);
+  assert(battle.enemies[0].aiState.finalDone);assert.equal(party[0].hp,99);
+  battle.perform(party[0],battle.enemies[1],data.abilities[71]);
+  assert.equal(battle.enemies[1].mp,0);assert.equal(battle.enemies[1].hp,1000);
+  const own=new Battle({data,party:[{id:1,hp:100,maxHp:100}],encounterId:1,random:()=>.5});
+  own.enemies[0].mp=0;own.checkEnd();own.checkEnd();
+  assert.equal(own.enemies[0].hp,0);assert.equal(own.players[0].hp,99);
+});
+
 test('a failed Hawk Eye proc is not rolled again inside the damage calculator', () => {
   const data={parties:{1:{members:[{monsterId:1}]}},monsters:{1:{id:1,hp:1000,maxHp:1000}},
     contents:{100:{type_id:2,type_value:75}},weapons:{75:{id:75,type_id:1,process_prog:'HAWK_EYE'}},
@@ -288,6 +306,36 @@ test('a failed Hawk Eye proc is not rolled again inside the damage calculator', 
   let draws=0;battle.random=()=>{draws++;return .75;};
   battle.perform(party[0],battle.enemies[0],data.abilities[1]);
   assert.equal(draws,3); // one proc, variance, ordinary critical check
+});
+
+test('spell drain is limited by actual supply and capacity, with undead reversing the transfer', () => {
+  const data={parties:{1:{members:[{monsterId:1}]}},monsters:{1:{id:1,hp:500,maxHp:500,mp:100,maxMp:100}},
+    abilities:{81:{id:81,name:'Osmose',kind:'magic',power:26,flags:[1],
+      functions:[{id:69,values:[2]},{id:13,values:[2,100]}]}}};
+  const party=[{id:1,hp:100,maxHp:100,mp:45,maxMp:50,magic:30,level:20}],
+    battle=new Battle({data,party,encounterId:1,random:()=>.5});
+  const target=battle.enemies[0];battle.perform(party[0],target,data.abilities[81]);
+  assert.equal(target.hp,500);assert.equal(target.mp,95);assert.equal(party[0].mp,50);
+  battle.perform(party[0],target,data.abilities[81]);assert.equal(target.mp,95);
+  target.undead=true;target.mp=98;
+  battle.perform(party[0],target,data.abilities[81]);
+  assert.equal(target.mp,100);assert.equal(party[0].mp,48);
+  assert.equal(calculateDamage(party[0],target,data.abilities[81],()=>.5).resource,'mp');
+});
+
+test('source switchable spells offer an ordinary side cast, charge MP once and retain spread scaling', () => {
+  const data={parties:{1:{members:[{monsterId:1}]}},monsters:{1:{id:1,hp:5000,maxHp:5000}},abilities:{
+    31:{id:31,name:'Cure',range:6,kind:'heal',power:10,mp:5,flags:[1],target:'ally',functions:[{id:1,values:[2,2]}]},
+    68:{id:68,name:'Protect',range:7,kind:'magic',mp:12,functions:[{id:9,values:[23]}]},
+  },conditions:{23:{condition_type:19}}};
+  const party=[1,2,3].map(id=>({id,hp:10,maxHp:1000,mp:50,maxMp:50,level:20,magic:30,abilities:[31,68]}));
+  const battle=new Battle({data,party,encounterId:1,random:()=>.5});
+  const half=calculateDamage(party[0],party[1],data.abilities[31],()=>.5,3).amount;
+  party[0].ready=true;assert(battle.choose(0,31,{side:'player',index:0,all:true}));
+  assert(party.every(unit=>unit.hp===10+half));assert.equal(party[0].mp,45);
+  party[0].ready=true;assert.equal(battle.choose(0,68,{side:'player',index:0,all:true}),false);
+  assert.equal(party[0].mp,45);assert(party.every(unit=>!unit.protect));
+  assert(battle.choose(0,68,{side:'player',index:0}));assert(party[0].protect);
 });
 
 test('final reserve order reaches the source replacement handler and cannot recycle departed members', () => {

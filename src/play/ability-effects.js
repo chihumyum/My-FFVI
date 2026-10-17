@@ -417,7 +417,7 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
           if(definition.condition_type>=500 && ![625,673,667,665,666,621,612].includes(definition.condition_type))approximate(host,ability,`condition ${id}/${definition.condition_type} is retained as a source marker; specialized animation/command behavior may be simplified.`);
         }break;}
       case 11:case 12:{const fallen=target.hp<=0;for(const id of fn.id===11?[a]:conditionIdsForGroup(data,a))setCondition(host,target,id,false);if(fallen&&isRevival(data,ability))target.hp=0;break;}
-      case 13:{const resource=a===2?'mp':'hp',max=resource==='mp'?actor.maxMp:actor.maxHp;const drain=Math.max(0,lastDamage)*b/100;actor[resource]=clamp(actor[resource]+Math.trunc(drain),0,max);break;}
+      case 13:{const resource=a===2?'mp':'hp',max=resource==='mp'?actor.maxMp:actor.maxHp;const drain=lastDamage*b/100;actor[resource]=clamp(actor[resource]+Math.trunc(drain),0,max);break;}
       case 15:target.defending=true;break;
       case 16:
         if(actor.side==='player'&&target.side==='player'&&host.canEscape===false){

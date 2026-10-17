@@ -74,10 +74,19 @@ if($('commands').dataset.state!==marker){
    if(cmd.kind==='defend'||cmd.range===5){b.choose(ready,cmd.id,{side:'player',index:ready});$('commands').dataset.state='';return;}
    const sides=cmd.targetSides||[cmd.target==='ally'?'player':'enemy'];
    $('targets').replaceChildren();
-   for(const side of sides)for(const [n,unit]of(side==='player'?b.players:b.enemies).entries()){
+   for(const side of sides){
+    const pool=side==='player'?b.players:b.enemies;
+    if(cmd.all||cmd.selectableAll){
+     const target=document.createElement('button');target.textContent=cmd.range===9?'战场全体':side==='player'?'我方全体':'敌方全体';
+     target.disabled=!pool.some(unit=>b.eligibleTarget(unit,cmd));
+     target.onclick=()=>{b.choose(ready,cmd.id,{side,index:pool.findIndex(unit=>b.eligibleTarget(unit,cmd)),all:true});$('commands').dataset.state='';};$('targets').append(target);
+    }
+    if(cmd.all&&!cmd.selectableAll)continue;
+    for(const [n,unit]of pool.entries()){
     const target=document.createElement('button');target.textContent=unit.name+' HP '+unit.hp+'/'+unit.maxHp;
     target.disabled=unit.hidden||unit.removed||unit.escaped||(cmd.revive?unit.hp>0:unit.hp<=0||unit.untargetable);
-    target.onclick=()=>{b.choose(ready,cmd.id,{side,index:n});$('commands').dataset.state='';};$('targets').append(target);
+    target.onclick=()=>{b.choose(ready,cmd.id,{side,index:n,all:false});$('commands').dataset.state='';};$('targets').append(target);
+   }
    }
   };$('commands').append(button);
  }

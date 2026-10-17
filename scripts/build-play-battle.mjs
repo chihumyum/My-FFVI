@@ -152,7 +152,8 @@ export async function buildPlayBattle({
               : physical
                 ? "physical"
                 : "magic",
-        target: healing || [1,2,5,12].includes(row.battle_renge_id) ? "ally" : "enemy",
+        target: healing || [1,2,5,12].includes(row.battle_renge_id) ||
+          [6,7,8,9,20].includes(row.battle_renge_id) && [1,2,4].includes(row.system_id) ? "ally" : "enemy",
         all: [2, 4, 8, 9, 16, 20, 21].includes(row.battle_renge_id),
         flags: flags(row.content_flag_group_id),
         elements: [...new Set([...(row.attribute_id ? [row.attribute_id] : []), ...rows("attribute_group").filter(g => g.group_id === row.attribute_group_id).map(g => g.attribute_id)])],
@@ -336,6 +337,8 @@ export async function buildPlayBattle({
         exp: row.exp,
         gil: row.gill,
         boss: Boolean(row.boss),
+        diesAtZeroMp: rows('monster_flag_group').some(flag =>
+          flag.group_id === row.monster_flag_group_id && flag.monster_flag_id === 4),
         initialConditions: rows('condition_group').filter(condition =>
           condition.group_id === row.initial_condition).map(condition => condition.condition_id),
         conditionImmunities: rows('condition_group').filter(condition =>
