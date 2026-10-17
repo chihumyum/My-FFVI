@@ -405,6 +405,7 @@ for (const test of cases) {
           : target,
       );
     }
+    if (game.loading) await game.pending;
     lastInput = input;
     inputs[input.status] = (inputs[input.status] || 0) + 1;
     const cell = JSON.stringify([
