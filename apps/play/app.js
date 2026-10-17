@@ -4,6 +4,7 @@ import { SaveLibrary, renderSaveSlots } from "./saves.js";
 import { GameRenderer } from "./renderer.js";
 import { GameUI, createWidget } from "./ui.js";
 import { WebAudioPlayer } from "./audio.js";
+import { createExtras } from "./extras.js";
 import { OperaHost } from "./opera-host.js";
 import {
   withPresentation,
@@ -60,6 +61,26 @@ renderer.onBattleSound = (id) =>
     ?.catch?.((error) => audio.warn(error.message));
 const saveLibrary = new SaveLibrary();
 const menuState = { page: "队伍" };
+let extrasReturn;
+const extras = createExtras({
+  ui,
+  renderer,
+  audio,
+  game: () => game,
+  onOpen: () => {
+    extrasReturn = { paused, menu: $("menu").hidden, title: $("title").hidden };
+    paused = true;
+    $("menu").hidden = true;
+    $("title").hidden = true;
+  },
+  onClose: () => {
+    paused = extrasReturn.paused;
+    $("menu").hidden = extrasReturn.menu;
+    $("title").hidden = extrasReturn.title;
+  },
+});
+$("extras-open").onclick = () => extras.open();
+$("extras-close").onclick = () => extras.close();
 const PresentationGame = withPresentation(PlayGame);
 addEventListener("pointerdown", () => audio.unlock().catch((error) => audio.warn(error.message)));
 addEventListener("keydown", () => audio.unlock().catch((error) => audio.warn(error.message)));
@@ -105,6 +126,7 @@ function event(e) {
   }
 }
 async function start(saved = null, testBoost = false) {
+  if (extras.active) extras.close();
   opera.reset();
   renderer.resetPresentation();
   battleDialogue = null;
@@ -249,6 +271,13 @@ $("close").onclick = () => {
 };
 const keys = new Set();
 addEventListener("keydown", (e) => {
+  if (extras.active) {
+    if (e.key === "Escape") {
+      extras.close();
+      e.preventDefault();
+    } else if (ui.handleKey(e)) e.preventDefault();
+    return;
+  }
   if (opera.handleKey(e)) return;
   if (ui.handleKey(e)) return;
   if (game?.nameInput) {
@@ -308,6 +337,10 @@ function renderMenu() {
       location: ui.presentation.mapNames?.[game.mapId],
     },
   );
+  const bonus = createWidget("button");
+  bonus.textContent = "额外内容";
+  bonus.onclick = () => extras.open();
+  $("menu-nav").append(bonus);
 }
 let shopView = null;
 let namingView = null;

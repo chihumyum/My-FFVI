@@ -295,7 +295,7 @@ export class GameUI {
     let height = Math.max(42, Math.ceil(v.text.height / 6) * 6);
     if (interactive) height += 18;
     if (node.tag === "progress") height = 30;
-    if (node.tag === "img") height = 156;
+    if (node.tag === "img") height = Number(node.dataset.height) || 156;
     const c = v.container;
     if (c.parent !== parent) parent.addChild(c);
     c.position.set(x, y);
@@ -371,8 +371,10 @@ export class GameUI {
       v.image.visible = !!texture;
       if (texture) {
         v.image.texture = texture;
-        const scale = Math.max(1, Math.floor(156 / Math.max(texture.width, texture.height)));
+        const fit = Math.min((width - 24) / texture.width, height / texture.height),
+          scale = node.dataset.actorId ? Math.max(1, Math.floor(fit)) : fit;
         v.image.scale.set(scale);
+        v.image.position.set(Math.round((width - texture.width * scale) / 2), 0);
       }
     }
     if (node.tag === "progress") {
@@ -396,10 +398,14 @@ export class GameUI {
       if (node.hidden || node.tag === "option") continue;
       const inline = ["button", "select", "input", "img"].includes(node.tag) && !node.dataset.block;
       if (!inline) newline();
-      if (node._text || inline || ["progress", "button", "select", "input"].includes(node.tag)) {
+      if (
+        node._text ||
+        inline ||
+        ["progress", "button", "select", "input", "img"].includes(node.tag)
+      ) {
         const w = inline
           ? node.tag === "img"
-            ? 180
+            ? Number(node.dataset.width) || 180
             : Math.min(width, Math.max(132, Math.ceil((this.label(node).length * 30 + 36) / 6) * 6))
           : width;
         if (left + w > width) newline();

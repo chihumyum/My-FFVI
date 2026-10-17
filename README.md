@@ -28,6 +28,8 @@ npm run dev
 
 打开 `http://127.0.0.1:4173/`。开发服务器为固定 Vite 8.3.4，只提供源码和已导出的文件，不在请求时编译地图。
 
+标题与队伍菜单里的「额外内容」包含怪物图鉴、158 张原版画廊图、332 张资料库缩略图和 61 首 PR 曲目。内容目录与图片按需读取，播放器沿用原曲循环点；离开时恢复先前的地图音乐。新战斗记录实际出现的怪物；旧存档图鉴按已胜利阵型只读恢复，条件隐藏的成员可能多算，不改写原存档。
+
 打包为纯静态网站：
 
 ```sh
@@ -36,7 +38,7 @@ npm run bundle
 
 输出 `dist/web/`，运行时不依赖 Node 或专用 API。可用任意通用静态服务器私下打开，例如 `python3 -m http.server 4174 --bind 127.0.0.1 --directory dist/web`；在内置浏览器访问 `http://127.0.0.1:4174/`。只支持 HTTP(S)，不支持 `file://`。普通/强化模式各有 12 个 IndexedDB 存档槽，同时保留 localStorage 自动存档与旧版快速继续。存档按网站地址和普通/强化模式隔离；更换端口不会自动搬运存档。不要将此目录公开部署或提交 Git。
 
-网站按 649 张地图和 41 组剧情分片加载，地图边界提前加载当前地图的脚本依赖；遗漏依赖会明确报错，不会静默跳过。开场只需 4 个剧情分片。地基阶段的 7055 张 PNG 引用合并为 1190 页无缩放图集（含透明像素的 RGBA 逐项相同），图片由 227.05 MB 变为 216.19 MB；PR 界面继续沿用同一图集导出。纹理页按需加载，缓存按解码 RGBA 估算限于 192 MiB，当帧仍在使用的页保留。文件名使用内容哈希；数据索引是入口。加入 PR 界面、战斗与场景/歌剧演出后的静态包约 609.90 MB，标题可操作前的保守加载上界约 11.87 MB。打包后在 `build/play/foundation-static-sizes.json` 报告总大小、标题加载上界和最大的 10 个文件。标题上界保守计入全部 JS/CSS、入口与界面索引、中文字体和所有界面图集页（包括标题未用的菜单图集）；地图、剧情和战斗数据在点击新游戏后加载。
+网站按 649 张地图和 41 组剧情分片加载，地图边界提前加载当前地图的脚本依赖；遗漏依赖会明确报错，不会静默跳过。开场只需 4 个剧情分片。地基阶段的 7055 张 PNG 引用合并为 1190 页无缩放图集（含透明像素的 RGBA 逐项相同），图片由 227.05 MB 变为 216.19 MB；PR 界面继续沿用同一图集导出。纹理页按需加载，缓存按解码 RGBA 估算限于 192 MiB，当帧仍在使用的页保留。文件名使用内容哈希；数据索引是入口。当前含额外内容的静态包约 614.47 MB，标题可操作前的保守加载上界约 11.93 MB。打包后在 `build/play/foundation-static-sizes.json` 报告总大小、标题加载上界和最大的 10 个文件。标题上界保守计入全部 JS/CSS、入口与界面索引、中文字体和所有界面图集页（包括标题未用的菜单图集）；地图、剧情和战斗数据在点击新游戏后加载。
 
 画面使用固定 PixiJS 8.22.0 的 WebGL：PR CameraFieldMain/CameraTileMap 的 orthographic size 90 对应 320×180 世界视口，战斗相机 CameraBattle 的 orthographic size 108 对应独立 384×216 视口；切换视口仍按整数倍显示。UI 保留 CanvasScaler 的 1920×1080 参考坐标。像素图最近邻、整数倍显示；各地图层/角色/近景/特效/UI 分层，`GameRenderer.setFilters` 预留着色器入口。音频从原始 MAB/SAB 的 HCA 用 vgmstream 解码，再由 FFmpeg 转为 48 kHz Opus：BGM 为 96 kbps 立体声 constrained VBR，音效为 64 kbps VBR。循环清单同时保留原采样位置、48 kHz 位置和秒；播放器使用 Web Audio 的循环区间，内存只缓存当前/下一首 BGM，支持淡入淡出、暂停/恢复和环境音循环。
 
@@ -76,7 +78,7 @@ PLAY_TEST_BOOST=1 npm run play:through
 
 加 `--map-checkpoints build/play/optional-map-checkpoints` 会在真实游玩返回空闲输入时，按地图、活动组和剧情旗标状态保存原样快照及每项支线的清单，跳过过场、战斗和加载过程；无需为每个 NPC 单独搭起点。
 
-`npm run play:optional-npcs -- --limit 573 --same-map` 从真实检查点和已通过支线存档，批量走到纯消息 NPC 身前交谈，输出 `build/play/optional-npc-report.json` 与地区 CSV；去掉 `--same-map` 可尝试普通跨图移动。按实际地图、活动组和实体分别记录确认，付费、菜单、剧情状态写入及不可达路线另列，不能用同名脚本覆盖替代。固定验收路线只在 `tools/play` 描述现有门口、停放载具和原版选择，不改变自动跑法策略。
+NPC 逐项自动验证已暂停，剩余对话由用户实玩。保留的 `npm run play:optional-npcs -- --limit 573 --same-map` 从真实检查点和已通过支线存档，批量走到纯消息 NPC 身前交谈，输出 `build/play/optional-npc-report.json` 与地区 CSV；去掉 `--same-map` 可尝试普通跨图移动。按实际地图、活动组和实体分别记录确认，付费、菜单、剧情状态写入及不可达路线另列，不能用同名脚本覆盖替代。固定验收路线只在 `tools/play` 描述现有门口、停放载具和原版选择，不改变自动跑法策略。
 
 NPC 批次可加 `--extra-checkpoints build/play/optional-map-checkpoints` 读取已通过支线清单中的真实空闲存档。`npm run play:optional-npc-summary` 重建汇总、逐实体 CSV 和地区剩余清单；新增批次用 `-- --report <批次.json>` 指定，可重复传入，历史尝试会保留并去重。
 

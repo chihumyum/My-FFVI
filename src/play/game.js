@@ -1044,6 +1044,9 @@ export class PlayGame {
       warn: (msg) => this.warn(t, String(msg)),
       onEnd: (result) => {
         this.battle?.events?.releaseFieldTimer?.(result.outcome);
+        const book = this.banks.PlaySystems;
+        if (book?.monsterRecords && book.monsterRecordsLegacyCount == null)
+          book.monsterRecordsLegacyCount = this.battles.length;
         this.battles.push({ encounterId: id, ...result });
         this.gil = Math.min(
           this.battleData.limits?.MAX_GIL ?? 9999999,

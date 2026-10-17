@@ -58,7 +58,7 @@ def scan_references(root: Path) -> dict[str, set[str]]:
                 walk(child, purpose)
 
     inputs = [root / "data.json", root / "battle.json", *sorted((root / "maps").glob("*.json"))]
-    for name in ["presentation.json", "battle-presentation.json", "particles.json", "field-presentation.json", "shaders.json", "opera.json"]:
+    for name in ["presentation.json", "battle-presentation.json", "particles.json", "field-presentation.json", "shaders.json", "opera.json", "extras.json"]:
         if (root / name).is_file():
             inputs.append(root / name)
     if not (root / "maps").is_dir():

@@ -18,6 +18,7 @@ import { abilityMpCost, applyBattleRewards } from "./progression.js";
 import { MonsterAI } from "./monster-ai.js";
 import { BattleEvents } from "./battle-events.js";
 import { autoBattleInput } from "./battle-input.js";
+import { observeBattleMonsters, recordBattleMonsters } from "./bestiary.js";
 import { colosseumTurn } from "./colosseum.js";
 import { weaponDamagePlan, finalizeWeaponDamage } from "./weapon-damage.js";
 import { requestEscape as requestBattleEscape, tickEscape, canEscape } from "./escape.js";
@@ -926,6 +927,7 @@ export class Battle {
   tick(seconds, auto = false) {
     let remaining = Math.max(0, value(seconds, 0));
     while (remaining > 0 && this.phase === "active") {
+      observeBattleMonsters(this);
       const step = Math.min(remaining, 1 / 30);
       remaining -= step;
       if (
@@ -1339,6 +1341,7 @@ export class Battle {
 
   checkEnd() {
     if (this.phase !== "active") return;
+    observeBattleMonsters(this);
     for (const enemy of this.enemies)
       if (
         enemy.diesAtZeroMp &&
@@ -1394,6 +1397,7 @@ export class Battle {
       );
     this.phase = outcome;
     this.outcome = outcome;
+    recordBattleMonsters(this);
     this.result = {
       outcome,
       code:

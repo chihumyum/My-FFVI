@@ -12,6 +12,7 @@
         <h1>FINAL FANTASY VI</h1>
         <p>Web 移植</p>
         <button id="new">新游戏</button><button id="load">继续游戏</button>
+        <button id="extras-open">额外内容</button>
       </section>
       <section id="dialogue" hidden>
         <strong id="speaker"></strong>
@@ -80,6 +81,13 @@
         <input id="name-value" aria-label="角色名字" />
         <div id="name-keys"></div>
         <button id="name-confirm">确定</button><button id="name-default">默认名字</button>
+      </aside>
+      <aside id="extras" hidden>
+        <h2>额外内容</h2>
+        <div id="extras-nav"></div>
+        <p id="extras-status" role="status"></p>
+        <div id="extras-body"></div>
+        <button id="extras-close">返回</button>
       </aside>
     </main>
     <script type="module" src="./app.js"></script>
