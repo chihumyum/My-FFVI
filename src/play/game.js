@@ -213,6 +213,13 @@ export class PlayGame {
       this.visited.push(+mapId);
       this.groups = new Set(["entity_default"]);
       this.actors = new Map();
+      if (this.banks.PlaySystems?.vehicleActive === false) {
+        this.banks.PlaySystems.vehicleActive = true;
+        this.warn(
+          null,
+          "SwitchVehicleActive hides this scene's vehicle bodies; a new map restores their default visibility. PR scene lifetime is inferred.",
+        );
+      }
       this.banks.MapLocalVariable = {};
       const point = this.map.entities.find((e) => e.kind === 0 && e.objectId === entrance) ||
         this.map.entities.find((e) => e.kind === 0) || { x: 1, y: 1, layer: 0, direction: "down" };
@@ -968,6 +975,22 @@ export class PlayGame {
         for (const drop of result.drops || []) changeInventory(this, drop.id, drop.count || 1);
         this.battle = null;
         t.waitFor = null;
+        if (result.fieldReturn === "engulf" && this.map?.worldTerrain) {
+          // The serialized PR callback sc_e_0832 (script860) alone owns the
+          // telepo cache, area variable and ChangeMap500/entrance1. SNES world
+          // return flag $1dd1.7 confirms that a full Engulf starts a world
+          // callback, not a defeat. Its numeric PR callback selector is not
+          // serialized, so this association is an explicit host inference.
+          const source = this.data.scriptIds?.[860] || "sc_e_0832";
+          this.warn(
+            t,
+            `PR all-party condition71/type657: world Engulf return uses source callback ${source} (script860); native PR callback association is inferred.`,
+          );
+          t.done = true;
+          this.startScript(source);
+          this.event("battle-end", { encounterId: id, ...result });
+          return;
+        }
         if (
           result.outcome === "defeat" &&
           (context.randomEncounter || !this.handlesBattleDefeat(continuation))

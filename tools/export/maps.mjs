@@ -330,6 +330,24 @@ export function compileMap(row, binding, tables, media, messages) {
       footRows,
       transportRules,
     };
+    if (declaration.encount) {
+      const source = assetAt(declaration.encount)?.data;
+      if (
+        source?.width > 0 &&
+        source?.height > 0 &&
+        Array.isArray(source.cells) &&
+        source.cells.length === source.width * source.height
+      )
+        map.worldTerrain.encounterGrid = {
+          width: Number(source.width),
+          height: Number(source.height),
+          cells: source.cells.map(Number),
+        };
+      else
+        warn(
+          "PR world encounter grid is unavailable; regular table-grid lookup remains an approximation.",
+        );
+    }
   }
   if (guesses.length) map.guesses = guesses;
   return map;

@@ -108,6 +108,44 @@ function host() {
 const place = (game, id = 4, x = 1, y = 0) =>
   executeVehicleInstruction(game, null, "SetVehicle", [id, 1, x, y, 1, 3]);
 
+test("cinematic vehicle hiding expires on map replacement without changing parking or release flags", async () => {
+  const fixture = host();
+  const game = new PlayGame({
+    data: {
+      ...fixture.data,
+      byMap: {},
+      global: { init: "init" },
+      programs: {
+        ...fixture.data.programs,
+        init: { name: "init", locals: [], ops: [["Exit", [], [], []]] },
+      },
+    },
+    loadMap: async () => ({
+      ...fixture.map,
+      areaId: 1,
+      initializer: "init",
+      entities: [{ id: "entrance", kind: 0, objectId: 0, x: 1, y: 0, layer: 1 }],
+      groups: {},
+    }),
+  });
+  game.warn = (_task, message) => game.warnings.push({ message });
+  place(game);
+  const parking = structuredClone(game.banks.PlaySystems.vehicles[4]),
+    releases = structuredClone(game.banks.TreasureFlag4);
+  executeVehicleInstruction(game, null, "SwitchVehicleActive", [1]);
+  assert.equal(game.banks.PlaySystems.vehicleActive, false);
+  await game.enter(1, 0);
+  game.tick(0.1);
+  assert.equal(game.banks.PlaySystems.vehicleActive, true);
+  assert.equal(game.actor(-103).visible, true);
+  assert(vehicleInputState(game).actions.some((action) => action.action === "takeoff"));
+  assert.deepEqual(game.banks.PlaySystems.vehicles[4], parking);
+  assert.deepEqual(game.banks.TreasureFlag4, releases);
+  executeVehicleInstruction(game, null, "SwitchVehicleActive", [1]);
+  game.tick(0.1);
+  assert.equal(game.actor(-103).visible, false, "same-map cinematic hiding still applies");
+});
+
 test("a PR transportation action uses same-cell confirmation with its declared vehicle instead of terrain landing", () => {
   const game = new PlayGame({
     data: { programs: { 0: { name: "entry", ops: [["Exit"]] } }, global: { entry: 0 }, byMap: {} },

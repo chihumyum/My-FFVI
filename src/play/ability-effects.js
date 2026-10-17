@@ -318,7 +318,22 @@ export function setCondition(host, unit, id, add = true, { force = false } = {})
     unit.hidden = present;
     unit.ready = false;
   }
-  if ([420, 625, 673].includes(type)) unit.hidden = has(420) || has(625) || has(673);
+  if (
+    [id, ...previous.filter((active) => !unit.conditions.includes(active))].some(
+      (active) => host.data.conditions?.[active]?.condition_type === 657,
+    )
+  ) {
+    // PR 71/type657 is Engulf: absent from combat, without death or an
+    // ordinary escape. Keep its own marker for the all-participants check.
+    unit.engulfed = has(657);
+    unit.hidden = unit.engulfed || unit.escaped || has(420) || has(625) || has(673);
+    if (unit.engulfed) {
+      unit.ready = false;
+      unit.atb = 0;
+    }
+  }
+  if ([420, 625, 673].includes(type))
+    unit.hidden = unit.escaped || has(420) || has(625) || has(673) || has(657);
   if (type === 667) unit.untargetable = has(667);
   if (type === 665 || type === 666) unit.disguise = has(665) ? 2 : has(666) ? 1 : 0;
   if (type === 628 && present) {
@@ -353,7 +368,7 @@ export function setCondition(host, unit, id, add = true, { force = false } = {})
   return present === add;
 }
 export function actionBlocked(data, unit) {
-  return [5, 7, 11, 34, 17, 627].some((type) => hasConditionType(data, unit, type));
+  return [5, 7, 11, 34, 17, 627, 657].some((type) => hasConditionType(data, unit, type));
 }
 export function conditionSpeed(data, unit) {
   // The provider-bearing versions (e.g. 95) are aliases of a condition type,
@@ -1092,7 +1107,7 @@ export function executeAbilityEffects(
           } else if (rows.length === 1) hit = false;
           if (
             definition.condition_type >= 500 &&
-            ![625, 673, 667, 665, 666, 621, 612, 627, 682].includes(definition.condition_type)
+            ![625, 673, 667, 665, 666, 621, 612, 627, 682, 657].includes(definition.condition_type)
           )
             approximate(
               host,

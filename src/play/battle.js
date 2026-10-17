@@ -236,6 +236,9 @@ export class Battle {
     this.players.forEach((unit, index) =>
       this.completeUnit(unit, data.characters?.[unit.id] ?? {}, "player", index),
     );
+    // SNES InitChars records every occupied entry, including fallen members.
+    // A surviving subset being swallowed must not fabricate a cave return.
+    this.engulfParticipants = [...this.players];
     for (const [index, member] of (this.formation.members ?? []).entries()) {
       const base = data.monsters?.[member.monsterId];
       if (!base) {
@@ -287,6 +290,7 @@ export class Battle {
     unit.side = side;
     unit.index = index;
     unit.escaped = false;
+    unit.engulfed = false;
     unit.removed = false;
     unit.untargetable = false;
     if (Array.isArray(unit.abilities)) unit.abilities = [...unit.abilities];
@@ -305,7 +309,7 @@ export class Battle {
     unit.runic = false;
     unit.magiciteUsed = false;
     unit.conditions = (unit.conditions || []).filter(
-      (id) => this.data.conditions?.[id]?.condition_type !== 612,
+      (id) => ![612, 657].includes(this.data.conditions?.[id]?.condition_type),
     );
     unit.chargedAbility = null;
     unit.chargedTarget = null;
@@ -426,7 +430,13 @@ export class Battle {
     else this.warning(`AI ${action.script}:${action.index}: action queue limit reached.`);
   }
   alive(unit) {
-    return unit.hp > 0 && !unit.removed && !unit.escaped && !hasConditionType(this.data, unit, 11);
+    return (
+      unit.hp > 0 &&
+      !unit.removed &&
+      !unit.escaped &&
+      !unit.engulfed &&
+      !hasConditionType(this.data, unit, 11)
+    );
   }
   targetable(unit) {
     return this.alive(unit) && !unit.hidden && !unit.untargetable;
@@ -468,6 +478,7 @@ export class Battle {
           (u) =>
             !u.removed &&
             !u.escaped &&
+            !u.engulfed &&
             (isRevival(this.data, ability) ? u.hp <= 0 : control ? u.hp > 0 : this.targetable(u)),
         );
     if (forced) {
@@ -1326,9 +1337,12 @@ export class Battle {
         enemy.aiState?.wake("final", this.lastAction);
       }
     this.drainAI();
+    const allEngulfed = () =>
+      this.engulfParticipants.length > 0 &&
+      this.engulfParticipants.every((unit) => hasConditionType(this.data, unit, 657));
     const terminalOutcome = () =>
       this.events?.forcedOutcome?.outcome ||
-      (this.escapeState?.complete
+      (this.escapeState?.complete || allEngulfed()
         ? "escape"
         : !this.players.some((unit) => this.alive(unit))
           ? this.players.some((unit) => unit.escaped && unit.hp > 0)
@@ -1371,6 +1385,7 @@ export class Battle {
       gil: 0,
       ap: 0,
       drops: [],
+      ...(outcome === "escape" && allEngulfed() ? { fieldReturn: "engulf" } : {}),
     };
     if (outcome === "victory") {
       const rewardEnemies = [...(this.events?.state.veldtDefeated ?? []), ...this.enemies];
@@ -1389,6 +1404,8 @@ export class Battle {
     }
     finishRoles(this, outcome);
     for (const unit of this.players) {
+      if (unit.engulfed) unit.hidden = false;
+      unit.engulfed = false;
       unit.conditions = (unit.conditions || []).filter(
         (id) => !this.data.conditions?.[id] || this.data.conditions[id].until_type === 3,
       );
@@ -1404,7 +1421,9 @@ export class Battle {
       outcome === "victory"
         ? `胜利！经验 ${this.result.exp}，金币 ${this.result.gil}。`
         : outcome === "escape"
-          ? "队伍成功逃离。"
+          ? this.result.fieldReturn === "engulf"
+            ? "队伍被全部吸入了。"
+            : "队伍成功逃离。"
           : "队伍倒下了。",
     );
     if (!this.yielded) {

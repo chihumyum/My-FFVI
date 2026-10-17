@@ -61,7 +61,16 @@ export function encounterPool(game) {
       .map((id) => ({ id, weight: 1 }));
   }
   let set = map.set;
-  if (map.grid) {
+  const cellGrid = game.map.worldTerrain?.encounterGrid;
+  if (cellGrid) {
+    // The authored world grid contains ordinary table-grid numbers plus
+    // irregular per-cell overrides for islands, forests, deserts, etc.
+    // Do not reconstruct these overrides from a uniform 8x8 rectangle.
+    const x = Math.floor(game.player.x),
+      y = Math.floor(game.player.y),
+      area = source.areas[cellGrid.cells[y * cellGrid.width + x]];
+    set = area?.[currentFoot(game).type - 1] ?? set;
+  } else if (map.grid) {
     const grid = source.grids[map.grid];
     if (grid) {
       const col = Math.floor(
@@ -72,6 +81,11 @@ export function encounterPool(game) {
         ),
         area = source.areas[grid.base_number + row * grid.grid_width + col];
       set = area?.[currentFoot(game).type - 1] ?? set;
+      if (game.map.worldTerrain)
+        game.warn(
+          null,
+          "PR per-cell world encounter grid is unavailable; using the approximate regular table grid.",
+        );
     }
   }
   const choices = source.sets[set]?.choices || [];

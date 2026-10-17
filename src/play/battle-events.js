@@ -148,7 +148,7 @@ export class BattleEvents {
     return unit?.aiState?.mode ?? unit?.mode ?? 0;
   }
   alive(unit) {
-    return unit.hp > 0 && !unit.escaped && !unit.removed;
+    return unit.hp > 0 && !unit.escaped && !unit.removed && !unit.engulfed;
   }
   aiEnded() {
     return !this.battle.enemies.some((unit) => this.alive(unit));
