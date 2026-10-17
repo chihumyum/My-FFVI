@@ -39,11 +39,12 @@ function sameLayer(entity, actor, layer) {
 }
 function regionsFor(game, door) {
   const objectId = Number(door.door?.linkObjectId);
+  if (!(objectId > 0)) return [];
+  // link_object_id refers to the visual object, not the walking floor. PR
+  // splits some door art across tile layers (for example map52's upper door).
+  // allLayers controls where a region samples tiles; it does not scope links.
   return (game.entities || []).filter(
-    (entity) =>
-      entity.kind === 1 &&
-      Number(entity.objectId) === objectId &&
-      (entity.layer === door.layer || entity.tileAnimation?.allLayers),
+    (entity) => entity.kind === 1 && Number(entity.objectId) === objectId,
   );
 }
 function isOpenDoor(game, entity, actor) {

@@ -175,6 +175,45 @@ test("source action5 doors open only their linked terrain and preserve reversed 
   assert.equal(olderSave.canMove(2, 1), false, "an explicit source closed frame wins over Hide");
 });
 
+test("door links cross visual layers and a source closed frame restores the body", () => {
+  const door = {
+      id: "1",
+      kind: 8,
+      x: 2,
+      y: 1,
+      layer: 2,
+      door: { actionId: 5, linkObjectId: 9, direction: 15 },
+    },
+    region = {
+      id: "2",
+      kind: 1,
+      objectId: 9,
+      x: 2,
+      y: 0,
+      width: 1,
+      height: 2,
+      layer: 1,
+      tileAnimation: { allLayers: false },
+    },
+    otherLayer = { ...region, id: "3", layer: 0 },
+    unrelated = { ...region, id: "4", objectId: 10 },
+    game = fixture([door, region, otherLayer, unrelated]);
+  game.player.layer = 2;
+  game.map.collisions[2] = Array(36).fill(0);
+  game.map.collisions[2][8] = 1;
+  assert.equal(game.canMove(2, 1), false);
+  assert.equal(game.move("right"), true);
+  assert.equal(game.actors.get("1").opened, true);
+  assert.equal(game.actors.get("2").tileFrame, 1);
+  assert.equal(game.actors.get("3").tileFrame, 1, "all linked visual layers open together");
+  assert.equal(game.actors.get("4")?.tileFrame, undefined, "other object IDs stay untouched");
+  game.data.programs.close = { name: "close", ops: [["CueAnim", [0], [0], []]] };
+  game.step({ program: "close", pc: 0, actor: "2", locals: [] });
+  game.step({ program: "close", pc: 0, actor: "3", locals: [] });
+  assert.equal(game.actors.get("1").opened, false);
+  assert.equal(game.canMove(2, 1), false);
+});
+
 test("a touch encounter is a route boundary but still physically blocks ordinary movement", () => {
   const enemy = npc({ script: "contact-battle", npc: { collision: true, moveType: 3 } }),
     grid = Array(36).fill(1);
