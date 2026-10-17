@@ -1074,11 +1074,12 @@ export class PlayGame {
     this.npcClock = (this.npcClock || 0) + dt;
     if (this.npcClock < 0.65) return;
     this.npcClock = 0;
+    const definition = this.data.fieldAssets?.[this.rts.protectedId],
+      asset =
+        (typeof definition === "string" ? definition : definition?.asset_name) ||
+        `mo_ff6_p${String(this.rts.protectedId).padStart(3, "0")}`;
     const goal = [...this.actors.values()].find(
-      (n) =>
-        n.visible !== false &&
-        n.asset?.toLowerCase() === `mo_ff6_p${String(this.rts.protectedId).padStart(3, "0")}` &&
-        n.id > 0,
+      (n) => n.visible !== false && n.asset?.toLowerCase() === asset.toLowerCase() && n.id > 0,
     ) || { x: 14, y: 12, layer: this.player.layer };
     for (const e of this.entities) {
       const a = this.actors.get(String(e.id));

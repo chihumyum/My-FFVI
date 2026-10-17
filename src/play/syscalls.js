@@ -78,6 +78,7 @@ const deployments = {
       [22, 9],
     ],
     protectedId: 15,
+    preparationGroups: ["ev_e_0250"],
   },
   瓦礫の塔: {
     mapId: 542,
@@ -326,6 +327,19 @@ export function executeSyscall(game, task, name, i = [], r = []) {
   }
   if (/^パーティ配置[：:]/.test(name) && deployments[subject]) {
     const preset = deployments[subject];
+    for (const group of preset.preparationGroups || []) {
+      for (const entity of game.map.groups?.[group]?.entities || []) {
+        const actor = game.actors.get(String(entity.id));
+        if (actor) actor.visible = false;
+      }
+      game.groups.delete(group);
+      game.refreshActors();
+      warnOnce(
+        game,
+        task,
+        "Esper defense deployment retires its source preparation group, including selection bodies and preview characters. This native deployment cleanup is inferred from the PR preparation/battle phases.",
+      );
+    }
     game.partyPositions = [
       { ...pose(game.player), mapId: preset.mapId },
       ...preset.points.map(([x, y]) => ({
