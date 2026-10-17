@@ -37,9 +37,21 @@ let through = process.env.PLAY_THROUGH;
 if (process.env.PLAY_CHECKPOINT_DIR)
   await mkdir(process.env.PLAY_CHECKPOINT_DIR, { recursive: true });
 const presentationCounts = {};
+const coverage = process.env.PLAY_COVERAGE_REPORT
+  ? {
+      programs: new Set(),
+      operations: new Set(),
+      maps: new Set(),
+    }
+  : null;
 const ObservedGame = withPresentation(PlayGame);
 class RegressionGame extends ObservedGame {
   step(task) {
+    if (coverage) {
+      coverage.programs.add(String(task.program));
+      coverage.operations.add(`${task.program}:${task.pc}`);
+      coverage.maps.add(this.mapId);
+    }
     if (
       packed &&
       packed.index.programFiles[task.program] &&
@@ -340,4 +352,24 @@ if (process.env.PLAY_PRESENTATION_REPORT)
   await writeFile(
     process.env.PLAY_PRESENTATION_REPORT,
     JSON.stringify(presentationCounts, null, 2) + "\n",
+  );
+
+if (coverage)
+  await writeFile(
+    process.env.PLAY_COVERAGE_REPORT,
+    JSON.stringify(
+      {
+        mode: result.mode,
+        start: result.start,
+        stop,
+        source: "actual VM step observer",
+        programs: [...coverage.programs].map((id) => ({ id, name: data.programs[id]?.name })),
+        operations: [...coverage.operations],
+        maps: [...coverage.maps],
+        battleCount: game.battles.length,
+        titleScreen: game.titleScreen,
+      },
+      null,
+      2,
+    ) + "\n",
   );

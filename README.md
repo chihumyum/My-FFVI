@@ -36,7 +36,7 @@ npm run bundle
 
 输出 `dist/web/`，运行时不依赖 Node 或专用 API。可用任意通用静态服务器私下打开，例如 `python3 -m http.server 4174 --bind 127.0.0.1 --directory dist/web`；在内置浏览器访问 `http://127.0.0.1:4174/`。只支持 HTTP(S)，不支持 `file://`。普通/强化模式各有 12 个 IndexedDB 存档槽，同时保留 localStorage 自动存档与旧版快速继续。存档按网站地址和普通/强化模式隔离；更换端口不会自动搬运存档。不要将此目录公开部署或提交 Git。
 
-网站按 649 张地图和 41 组剧情分片加载，地图边界提前加载当前地图的脚本依赖；遗漏依赖会明确报错，不会静默跳过。开场只需 4 个剧情分片。地基阶段的 7055 张 PNG 引用合并为 1190 页无缩放图集（含透明像素的 RGBA 逐项相同），图片由 227.05 MB 变为 216.19 MB；PR 界面继续沿用同一图集导出。纹理页按需加载，缓存按解码 RGBA 估算限于 192 MiB，当帧仍在使用的页保留。文件名使用内容哈希；数据索引是入口。加入 PR 界面、战斗与场景/歌剧演出后的静态包约 609.38 MB，标题可操作前的保守加载上界约 11.87 MB。打包后在 `build/play/foundation-static-sizes.json` 报告总大小、标题加载上界和最大的 10 个文件。标题上界保守计入全部 JS/CSS、入口与界面索引、中文字体和所有界面图集页（包括标题未用的菜单图集）；地图、剧情和战斗数据在点击新游戏后加载。
+网站按 649 张地图和 41 组剧情分片加载，地图边界提前加载当前地图的脚本依赖；遗漏依赖会明确报错，不会静默跳过。开场只需 4 个剧情分片。地基阶段的 7055 张 PNG 引用合并为 1190 页无缩放图集（含透明像素的 RGBA 逐项相同），图片由 227.05 MB 变为 216.19 MB；PR 界面继续沿用同一图集导出。纹理页按需加载，缓存按解码 RGBA 估算限于 192 MiB，当帧仍在使用的页保留。文件名使用内容哈希；数据索引是入口。加入 PR 界面、战斗与场景/歌剧演出后的静态包约 609.90 MB，标题可操作前的保守加载上界约 11.87 MB。打包后在 `build/play/foundation-static-sizes.json` 报告总大小、标题加载上界和最大的 10 个文件。标题上界保守计入全部 JS/CSS、入口与界面索引、中文字体和所有界面图集页（包括标题未用的菜单图集）；地图、剧情和战斗数据在点击新游戏后加载。
 
 画面使用固定 PixiJS 8.22.0 的 WebGL：PR CameraFieldMain/CameraTileMap 的 orthographic size 90 对应 320×180 世界视口，战斗相机 CameraBattle 的 orthographic size 108 对应独立 384×216 视口；切换视口仍按整数倍显示。UI 保留 CanvasScaler 的 1920×1080 参考坐标。像素图最近邻、整数倍显示；各地图层/角色/近景/特效/UI 分层，`GameRenderer.setFilters` 预留着色器入口。音频从原始 MAB/SAB 的 HCA 用 vgmstream 解码，再由 FFmpeg 转为 48 kHz Opus：BGM 为 96 kbps 立体声 constrained VBR，音效为 64 kbps VBR。循环清单同时保留原采样位置、48 kHz 位置和秒；播放器使用 Web Audio 的循环区间，内存只缓存当前/下一首 BGM，支持淡入淡出、暂停/恢复和环境音循环。
 
@@ -69,6 +69,10 @@ PLAY_TEST_BOOST=1 npm run play:through
 ```
 
 默认读取 `build/web-data/`；`PLAY_DATA_DIR` 可指向另一个独立导出目录，`PLAY_STATIC_DIR=dist/web` 可验证静态包。普通模式默认到三分线结束附近，也可用 `PLAY_THROUGH=M1` 验证开场。`PLAY_REPORT` 指定报告，`PLAY_SEED` 指定随机种子。`PLAY_CHECKPOINT_DIR` 记录真实游玩产生的目标存档；`PLAY_RESUME` 继续存档，不计作新游戏全程验收。强化会复制普通存档，不写回原槽，不修改剧情旗标。自动跑法为检查远处路线会显式预载全部剧情；回归会逐步审计实际执行的脚本是否已由正常地图边界取得，避免预载掩盖缺失依赖。手动游玩不全量预载。怪物 AI 直接解释 PR 的 430 个程序和 69 种指令。
+
+可选内容清单用 `npm run play:optional-inventory` 生成 `build/play/optional-inventory.json` 和 CSV，按 PR 地区列出源脚本、NPC、入口及旗标守卫。`--report`、`--checkpoints`、`--coverage` 可选择实际回归证据；`PLAY_COVERAGE_REPORT=build/play/main-script-coverage.json` 会观察真正执行的 VM 指令，区分同名的不同作用域脚本。静态入口、脚本覆盖和支线完成分别记录，不能互相代替。
+
+`npm run play:optional -- --cases all` 从真实 Falcon 检查点独立跑各项强化支线；`--start` 可指定另一个真实存档，`--cases mog,cyan,gogo` 可筛选。结果表在 `build/play/optional/results.csv`，每项只保存最新报告和存档；验收目标变动后，旧结果不会自动算通过。测试只使用普通移动、对话、组队和固定剧情交互，不写剧情旗标或直接调用剧情脚本，不增加购物、练级或补给策略。吞空巨虫用实际 PR 遇敌格触发，固定防御等待源 AI 吸入；全员被吞后由原版 `sc_e_0832` 进入虫体，随后通过原剧情招募格格。世界地图遇敌按原版逐格 `encount_grid`，不再用规则矩形近似岛屿等特殊区域。开发服务器可用 `?checkpoint=gogo-save&checkpointSet=optional` 查看真实支线结果存档；这个界面入口不计剧情覆盖。
 
 ```sh
 npm test

@@ -602,9 +602,10 @@ if (import.meta.env.DEV) {
   // write plot flags or count as story coverage, and are removed from production.
   const params = new URLSearchParams(location.search),
     checkpoint = params.get("checkpoint"),
+    checkpointSet = params.get("checkpointSet") === "optional" ? "optional" : "stage1-checkpoints",
     panel = params.get("panel");
   if (checkpoint && /^[a-z0-9-]+$/.test(checkpoint)) {
-    const response = await fetch(`/evidence/stage1-checkpoints/${checkpoint}.json`);
+    const response = await fetch(`/evidence/${checkpointSet}/${checkpoint}.json`);
     if (!response.ok) throw Error(`Missing real UI checkpoint ${checkpoint}`);
     await start(await response.json());
     if (
