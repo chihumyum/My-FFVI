@@ -20,6 +20,14 @@ const sealedCaveRoutes = [
   [406, [50, 43, 1], "D3 R3 D12"],
   [407, [6, 3, 1], "R2 D1 R8 D6 R3 D3 L1 D2"],
 ];
+const burningHouseRoutes = [
+  [412, [7, 14, 1], "U8"],
+  [413, [9, 18, 1], "U6 L2 U6"],
+  [414, [14, 21, 1], "U2 L7 U1 L1 U9 R7 U1 R1 U2"],
+  [415, [7, 12, 1], "U3 R1 U1 R1 U2"],
+  [417, [10, 12, 1], "U3 L2 U1 L1 U2"],
+  [419, [7, 11, 1], "U5"],
+];
 const expand = (steps) =>
   steps
     .split(" ")
@@ -45,6 +53,10 @@ function recordedWalk(game, x, y, layer, directions, route) {
 }
 
 export function fixedStoryInput(game, objective) {
+  if (objective.id === "flame-eater") {
+    const route = burningHouseRoutes.find(([map]) => map === game.mapId);
+    if (route) return recordedWalk(game, ...route[1], expand(route[2]), "thamasa-burning-house");
+  }
   if (objective.id === "sealed-gate" && game.mapId === 408) {
     if (game.banks.MapLocalVariable?.[1] === 1)
       return recordedWalk(
