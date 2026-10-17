@@ -69,10 +69,13 @@ export class PlayGame {
     battleData = {},
     Battle = null,
     testBoost = false,
+    interactiveNames = false,
     onEvent = () => {},
     random = Math.random,
   }) {
     Object.assign(this, { data, loadMap, battleData, Battle, testBoost, onEvent, random });
+    this.interactiveNames = interactiveNames;
+    this.nameInput = null;
     this.regressionOnly = true;
     this.settings = { atbMode: "wait", battleSpeed: 3, textSpeed: 3, volume: 0.7 };
     this.time = 0;
@@ -126,6 +129,7 @@ export class PlayGame {
       this.loading ||
       this.battle ||
       this.dialogue ||
+      this.nameInput ||
       this.partySelection ||
       this.shop ||
       this.vehicleMenu ||
@@ -196,6 +200,7 @@ export class PlayGame {
     this.assignedRouteTasks = new Map();
     this.dialogue = null;
     this.partySelection = null;
+    this.nameInput = null;
     this.shop = null;
     this.vehicleMenu = null;
     try {
@@ -384,6 +389,11 @@ export class PlayGame {
   }
   tick(dt = 1 / 60, { auto = false } = {}) {
     if (this.loading || this.over) return;
+    this.autoInput = auto;
+    if (this.nameInput) {
+      if (!auto) return;
+      this.submitName(this.nameInput.original);
+    }
     updateVehicleInput(this);
     if (auto && this.partySelection)
       autoPartyInput(this, this.preparationTraining?.partyPreference || this.storyObjective?.party);
@@ -870,6 +880,7 @@ export class PlayGame {
     }
     if (/名前.*(入力|変更)|ネーム|NameChange/i.test(name)) {
       this.event("name", { id: i[0] || this.party[0]?.id });
+      this.requestName(t, i[0] || this.party[0]?.id);
       return;
     }
     if (/パーティ|コープス|Corps|Party/i.test(name)) {
@@ -890,6 +901,22 @@ export class PlayGame {
       return;
     }
     this.warn(t, `SysCall ${name}: skipped`);
+  }
+  requestName(task, id) {
+    // Headless/frozen regression keeps the source default without adding policy.
+    if (!this.interactiveNames || this.autoInput || !id) return;
+    this.nameInput = { id, original: this.unit(id).name, task };
+    if (task) task.waitFor = "name";
+  }
+  submitName(value, maxLength = 6) {
+    const input = this.nameInput;
+    if (!input) return false;
+    const name = Array.from(String(value).normalize("NFC").trim()).slice(0, maxLength).join("");
+    if (!name) return false;
+    this.unit(input.id).name = name;
+    if (input.task?.waitFor === "name") input.task.waitFor = null;
+    this.nameInput = null;
+    return true;
   }
   handlesBattleDefeat(name, seen = new Set()) {
     if (!name || seen.has(name)) return false;

@@ -14,6 +14,7 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
   const data = await read(path.join(dataRoot, "data.json"));
   const battle = await read(path.join(dataRoot, "battle.json"));
   const navigation = await read(path.join(dataRoot, "navigation.json"));
+  const presentation = await read(path.join(dataRoot, "presentation.json"));
   const files = new Set();
   async function payload(value, label) {
     const bytes = Buffer.from(JSON.stringify(value));
@@ -104,10 +105,11 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
     core: await payload(core, "core"),
     battle: await payload(battle, "battle"),
     navigation: await payload(navigation, "navigation"),
+    presentation: await payload(presentation, "presentation"),
     maps,
     mapPrograms,
     programFiles,
-    assets: { images: {}, audio: {} },
+    assets: { images: {}, audio: {}, fonts: {} },
   };
   const atlasRoot = path.resolve(project, "build/web-assets");
   const python = process.env.PYTHON || path.resolve(project, ".venv/bin/python");
@@ -132,6 +134,14 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
   }
   for (const file of new Set(Object.values(index.assets.images).map((i) => i.file)))
     await copy(path.join(atlasRoot, file), file);
+  for (const font of presentation.fonts) {
+    for (const url of [font.url, font.licenseFile].filter(Boolean)) {
+      const source = path.join(dataRoot, url.replace(/^\/web-data\//, ""));
+      const file = `fonts/${hash(await readFile(source))}${path.extname(url)}`;
+      await copy(source, file);
+      index.assets.fonts[url] = file;
+    }
+  }
   const visitAudio = async (value) => {
     if (!value || typeof value !== "object") return;
     if (typeof value.file === "string" && /\.(opus|m4a)$/.test(value.file)) {
@@ -156,6 +166,10 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
     files: files.size,
     startPrograms: mapPrograms[data.entry.mapId]?.length,
     startScriptChunks: new Set(mapPrograms[data.entry.mapId].map((id) => programFiles[id])).size,
+    presentation: {
+      fonts: presentation.fonts.length,
+      fontBytes: presentation.fonts.reduce((sum, font) => sum + font.bytes, 0),
+    },
   };
   await writeFile(path.join(out, "data/summary.json"), JSON.stringify(summary, null, 2));
   files.add("data/summary.json");

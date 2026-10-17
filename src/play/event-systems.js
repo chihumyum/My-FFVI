@@ -318,6 +318,7 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
   }
   if (name === "リネームカード") {
     game.event("name", { id: game.party[0]?.id, name: game.party[0]?.name });
+    game.requestName?.(task, game.party[0]?.id);
     return true;
   }
   if (name === "コロシアム回復" || name === "商人・兵士回復") {

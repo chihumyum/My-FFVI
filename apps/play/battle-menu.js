@@ -137,6 +137,15 @@ export function createBattleMenu({
     }
     const actor = battle.players[index],
       ready = battle.players.map((u, i) => (eligible(u) ? i : -1)).filter((i) => i >= 0);
+    status.battleModel = battle;
+    commands.dataset.submenu = menu ? String(menu.commandId) : "";
+    status.activeActor = index;
+    status.selectActor = (i) => {
+      if (eligible(battle.players[i] ?? {})) {
+        index = i;
+        close();
+      }
+    };
     status.textContent =
       battle.players
         .map(
@@ -177,17 +186,18 @@ export function createBattleMenu({
     if (key === marker) return;
     marker = key;
     commands.replaceChildren();
-    for (const i of ready)
-      commands.append(
-        button(
-          `操作 ${battle.players[i].name}`,
-          () => {
-            index = i;
-            close();
-          },
-          i === index,
-        ),
+    for (const i of ready) {
+      const choice = button(
+        `操作 ${battle.players[i].name}`,
+        () => {
+          index = i;
+          close();
+        },
+        i === index,
       );
+      choice.dataset.actorSwitch = "1";
+      commands.append(choice);
+    }
     if (!actor) return;
     if (menu) {
       commands.append(button("← 指令", close));

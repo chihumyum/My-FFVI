@@ -1,4 +1,6 @@
 import { WebData, webIndexURL } from "./data.js";
+import { loadPresentation, presentText } from "./presentation.js";
+import { SaveLibrary, renderSaveSlots } from "./saves.js";
 import { GameRenderer } from "./renderer.js";
 import { GameUI, createWidget } from "./ui.js";
 import { WebAudioPlayer } from "./audio.js";
@@ -8,7 +10,7 @@ import {
   isAudioInstruction,
 } from "./presentation-events.js";
 import { createBattleMenu } from "./battle-menu.js";
-import { buyFromShop, closeShop } from "../../src/play/event-systems.js";
+import { buyFromShop, closeShop, openShop } from "../../src/play/event-systems.js";
 import { submitPartyInput, cancelPartyInput } from "../../src/play/party-input.js";
 import {
   openVehicleInput,
@@ -24,7 +26,7 @@ import { Battle } from "../../src/play/battle.js";
 const canvas = document.getElementById("screen");
 const renderer = new GameRenderer(canvas);
 await renderer.init();
-const ui = new GameUI(renderer.layers.ui);
+const ui = new GameUI(renderer.layers.ui, (url) => renderer.getTexture(url));
 const $ = (id) => ui.get(id) || document.getElementById(id);
 let game,
   auto = false,
@@ -40,6 +42,8 @@ let data,
   autosavePending = false,
   titlePending = false;
 const audio = new WebAudioPlayer();
+const saveLibrary = new SaveLibrary();
+const menuState = { page: "队伍" };
 const PresentationGame = withPresentation(PlayGame);
 addEventListener("pointerdown", () => audio.unlock().catch((error) => audio.warn(error.message)));
 addEventListener("keydown", () => audio.unlock().catch((error) => audio.warn(error.message)));
@@ -82,6 +86,7 @@ async function start(saved = null, testBoost = false) {
     renderer.setAssets(repository.index.assets.images, repository.baseURL);
     audio.setAssets(repository.index.assets.audio, repository.baseURL);
     audio.setCatalog(data.audio);
+    ui.setCharacters(battleData.characters);
     game = new PresentationGame({
       onPresentation: presentation,
       data,
@@ -90,6 +95,7 @@ async function start(saved = null, testBoost = false) {
       testBoost: testBoost || !!saved?.testBoost,
       loadMap: (id) => repository.loadMap(id),
       onEvent: event,
+      interactiveNames: true,
     });
     game.autoChoice = (g) => (walking ? storyChoice(g) : 0);
     window.ffvi = game;
@@ -104,6 +110,10 @@ async function start(saved = null, testBoost = false) {
         game.history.at(-1)?.script === "sc_e_1032_18" &&
         game.battles.some((b) => b.encounterId === 472 && b.outcome === "victory"));
     paused = false;
+    audio.setVolume(game.settings.volume);
+    menuState.page = "队伍";
+    $("save").hidden = true;
+    $("naming").hidden = true;
     $("over").hidden = true;
     $("menu").hidden = true;
     $("title").hidden = true;
@@ -116,14 +126,56 @@ async function start(saved = null, testBoost = false) {
   }
 }
 function save() {
-  if (game && !game.busy) {
-    localStorage.setItem(
-      game.testBoost ? "ffvi-play-test" : "ffvi-play",
-      JSON.stringify(game.snapshot()),
-    );
-    $("location").textContent = "已保存 · " + game.map.name;
-  } else $("location").textContent = "剧情或战斗进行中，请稍后保存";
+  openSaveMenu(true, game?.testBoost);
 }
+async function openSaveMenu(write, boost = false) {
+  if (write && (!game || game.busy)) {
+    $("location").textContent = "剧情或战斗进行中，请稍后保存";
+    return;
+  }
+  paused = !!started;
+  $("menu").hidden = true;
+  $("title").hidden = true;
+  $("save").hidden = false;
+  $("save-heading").textContent = `${boost ? "剧情测试 · " : ""}${write ? "存档" : "读档"}`;
+  $("save-status").textContent = "正在读取存档列表…";
+  $("save-slots").replaceChildren();
+  const quick = localStorage.getItem(boost ? "ffvi-play-test" : "ffvi-play");
+  const refresh = async () => {
+    const records = await saveLibrary.list(boost);
+    $("save-slots").replaceChildren(
+      ...renderSaveSlots(records, { write, boost, quick }, createWidget, async (slot) => {
+        try {
+          if (write) {
+            await saveLibrary.save(game, slot, ui.presentation.mapNames?.[game.mapId]);
+            $("save-status").textContent =
+              `已保存 · 存档 ${slot} · ${ui.presentation.mapNames?.[game.mapId] || "当前地点"}`;
+            await refresh();
+          } else {
+            const saved =
+              slot === "quick" ? JSON.parse(quick) : await saveLibrary.load(boost, slot);
+            if (saved) await start(saved, boost);
+          }
+        } catch (error) {
+          $("save-status").textContent = error.message;
+          console.error(error);
+        }
+      }),
+    );
+  };
+  try {
+    await refresh();
+    $("save-status").textContent = "普通与剧情测试存档分别保存，共 12 槽。";
+  } catch (error) {
+    $("save-status").textContent = error.message;
+  }
+}
+$("save-close").onclick = () => {
+  $("save").hidden = true;
+  $("menu").hidden = !started;
+  $("title").hidden = !!started;
+  paused = !!started;
+};
 $("walk").onclick = async () => {
   if (!started || !game) return;
   if (!walking && repository) await repository.preloadRegression();
@@ -144,15 +196,15 @@ $("retrytest").onclick = () => {
 $("test").onclick = () => start(null, true);
 $("new").onclick = () => start();
 $("loadtest").onclick = () => {
-  const bytes = localStorage.getItem("ffvi-play-test");
-  if (bytes) start(JSON.parse(bytes));
+  openSaveMenu(false, true);
 };
 $("load").onclick = () => {
-  const bytes = localStorage.getItem("ffvi-play");
-  if (bytes) start(JSON.parse(bytes));
+  openSaveMenu(false, false);
 };
 $("menu-save").onclick = save;
-$("confirm").onclick = () => game?.confirm();
+$("confirm").onclick = () => {
+  if (!ui.revealDialogue()) game?.confirm();
+};
 $("auto").onclick = () => {
   auto = !auto;
   $("auto").textContent = `自动推进：${auto ? "开" : "关"}`;
@@ -164,6 +216,17 @@ $("close").onclick = () => {
 const keys = new Set();
 addEventListener("keydown", (e) => {
   if (ui.handleKey(e)) return;
+  if (game?.nameInput) {
+    if (e.key === "Enter") $("name-confirm").click();
+    else if (e.key === "Backspace")
+      $("name-value").value = Array.from($("name-value").value).slice(0, -1).join("");
+    else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey)
+      $("name-value").value = Array.from($("name-value").value + e.key)
+        .slice(0, 6)
+        .join("");
+    e.preventDefault();
+    return;
+  }
   if (e.target?.tagName === "BUTTON" && ["Enter", " "].includes(e.key)) return;
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Enter"].includes(e.key))
     e.preventDefault();
@@ -179,10 +242,16 @@ addEventListener("keydown", (e) => {
   }
   if (!game) return;
   if (e.key === "Enter" || e.key === " ") {
+    if (ui.revealDialogue()) return;
     game.confirm();
   }
   if (e.key === "q" || e.key === "Q") game.switchParty();
   if (e.key === "Escape") {
+    if (!$("save").hidden) {
+      $("save-close").click();
+      return;
+    }
+    if (game.busy && !paused) return;
     paused = !paused;
     $("menu").hidden = !paused;
     renderMenu();
@@ -190,9 +259,65 @@ addEventListener("keydown", (e) => {
 });
 addEventListener("keyup", (e) => keys.delete(e.key));
 function renderMenu() {
-  renderPartyMenu(game, { party: $("party"), items: $("items") }, renderMenu, createWidget);
+  ui.scroll($("menu"), -Infinity);
+  renderPartyMenu(
+    game,
+    { navigation: $("menu-nav"), party: $("party"), items: $("items") },
+    renderMenu,
+    createWidget,
+    menuState,
+    {
+      save,
+      settings: (settings) => audio.setVolume(settings.volume),
+      location: ui.presentation.mapNames?.[game.mapId],
+    },
+  );
 }
 let shopView = null;
+let namingView = null;
+function renderNaming() {
+  const input = game.nameInput;
+  $("naming").hidden = !input;
+  if (!input) {
+    namingView = null;
+    return;
+  }
+  if (namingView === input) return;
+  namingView = input;
+  $("name-value").value = input.original;
+  $("name-value").onchange = () => {
+    $("name-value").value = Array.from($("name-value").value).slice(0, 6).join("");
+  };
+  const portrait = createWidget("img");
+  portrait.dataset.actorId = String(input.id);
+  $("name-portrait").replaceChildren(portrait);
+  $("name-keys").replaceChildren();
+  for (const key of ["清空", "退格", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"]) {
+    const b = createWidget("button");
+    b.textContent = key;
+    b.onclick = () => {
+      $("name-value").value =
+        key === "清空"
+          ? ""
+          : key === "退格"
+            ? Array.from($("name-value").value).slice(0, -1).join("")
+            : Array.from($("name-value").value + key)
+                .slice(0, 6)
+                .join("");
+    };
+    $("name-keys").append(b);
+  }
+}
+$("name-confirm").onclick = () => {
+  if (game?.submitName($("name-value").value)) {
+    ui.setCharacters(game.roster);
+    $("naming").hidden = true;
+  }
+};
+$("name-default").onclick = () => {
+  $("name-value").value =
+    battleData.characters[game?.nameInput?.id]?.name || game?.nameInput?.original || "";
+};
 function renderShop() {
   const shop = game.shop;
   $("shop").hidden = !shop;
@@ -407,14 +532,18 @@ function loop(now) {
       battleMenu.update(game.battle);
     }
     renderFormation();
+    renderNaming();
     renderShop();
     renderVehicle();
     $("battle").hidden = !game.battle;
     $("switch").hidden = !game.rts?.active;
     $("dialogue").hidden = !game.dialogue;
     if (game.dialogue) {
-      $("speaker").textContent = game.dialogue.speaker;
-      $("message").textContent = game.dialogue.text;
+      const speaker = presentText(game, game.dialogue.speaker),
+        message = presentText(game, game.dialogue.text);
+      ui.setDialogue(game.dialogue, game.settings.textSpeed, auto, speaker, message);
+      $("speaker").textContent = speaker;
+      $("message").textContent = message;
       const choiceKey = game.dialogue.choices?.join("|") || "";
       if ($("choices").dataset.key !== choiceKey) {
         $("choices").dataset.key = choiceKey;
@@ -427,10 +556,51 @@ function loop(now) {
         }
       }
       $("confirm").hidden = !!game.dialogue.choices;
-    }
+    } else ui.setDialogue(null);
   }
   ui.render();
   renderer.render(started ? game : null, data, battleData);
   requestAnimationFrame(loop);
+}
+await loadPresentation(new WebData(webIndexURL()), renderer, ui);
+if (import.meta.env.DEV) {
+  // These isolated UI fixtures restore real regression checkpoints. They do not
+  // write plot flags or count as story coverage, and are removed from production.
+  const params = new URLSearchParams(location.search),
+    checkpoint = params.get("checkpoint"),
+    panel = params.get("panel");
+  if (checkpoint && /^[a-z0-9-]+$/.test(checkpoint)) {
+    const response = await fetch(`/evidence/stage1-checkpoints/${checkpoint}.json`);
+    if (!response.ok) throw Error(`Missing real UI checkpoint ${checkpoint}`);
+    await start(await response.json());
+    if (
+      ["队伍", "道具", "魔法", "魔石", "技能", "装备", "饰品", "状态", "队列", "设置"].includes(
+        panel,
+      )
+    ) {
+      menuState.page = panel;
+      paused = true;
+      $("menu").hidden = false;
+      renderMenu();
+    } else if (panel === "save") await openSaveMenu(true, game.testBoost);
+    else if (panel === "name") game.requestName({ waitFor: null }, game.party[0].id);
+    else if (panel === "dialogue") {
+      const speaker = game.party[0].name,
+        key = Object.keys(data.speakers).find(
+          (key) => presentText(game, data.speakers[key]) === speaker && data.messages[key],
+        );
+      game.dialogue = { text: game.text(key), speaker: data.speakers[key] || speaker, elapsed: 0 };
+    } else if (panel === "shop") openShop(game, Number(params.get("shop")) || 1);
+    else if (panel === "battle")
+      game.battle = new Battle({
+        data: battleData,
+        party: game.party,
+        inventory: game.inventory,
+        encounterId: Number(params.get("formation")) || 1,
+        context: { settings: game.settings },
+        random: () => 0.5,
+      });
+    $("location").textContent = `界面用例 · ${checkpoint} · ${panel || "地图"}（不计剧情覆盖）`;
+  }
 }
 requestAnimationFrame(loop);

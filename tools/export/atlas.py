@@ -58,12 +58,15 @@ def scan_references(root: Path) -> dict[str, set[str]]:
                 walk(child, purpose)
 
     inputs = [root / "data.json", root / "battle.json", *sorted((root / "maps").glob("*.json"))]
+    if (root / "presentation.json").is_file():
+        inputs.append(root / "presentation.json")
     if not (root / "maps").is_dir():
         raise ValueError(f"Map directory is missing: {root / 'maps'}")
     for path in inputs:
         if not path.is_file():
             raise ValueError(f"Runtime JSON is missing: {path}")
-        walk(read_json(path), "data" if path.name == "data.json" else "battle" if path.name == "battle.json" else "map")
+        purpose = {"data.json": "data", "battle.json": "battle", "presentation.json": "presentation"}.get(path.name, "map")
+        walk(read_json(path), purpose)
     return references
 
 

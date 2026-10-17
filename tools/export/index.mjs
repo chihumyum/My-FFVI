@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { readFile, readdir, stat, writeFile, access } from "node:fs/promises";
 import path from "node:path";
 import { compileRuntime } from "./runtime.mjs";
+import { compilePresentation } from "./presentation.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
 const args = process.argv.slice(2),
   option = (name) => {
@@ -45,6 +46,7 @@ await run("unity.py", ["--game", source, "--out", out]);
 await run("native.py", ["--game", source, "--out", path.join(out, "raw/magic-stones.json")]);
 await run("audio.py", ["--out", out, ...(args.includes("--aac") ? ["--aac"] : [])]);
 const counts = await compileRuntime(out);
+await compilePresentation(out, { game: source });
 await prepareWeb({ dataRoot: out });
 const categories = {};
 async function scan(directory, prefix = "") {

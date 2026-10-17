@@ -239,7 +239,9 @@ export function executeSyscall(game, task, name, i = [], r = []) {
         ? (names[id] ?? unit.name)
         : unit.name;
     game.event("name", { id, name: unit.name });
-    warnOnce(game, task, "Name input currently keeps the default or existing character name.");
+    game.requestName?.(task, id);
+    if (!game.nameInput)
+      warnOnce(game, task, "Name input currently keeps the default or existing character name.");
     return true;
   }
   if (name === "アドバタイズデモフラグを設定") {

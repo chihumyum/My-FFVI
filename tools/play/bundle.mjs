@@ -27,7 +27,27 @@ function moduleAssets(key) {
 moduleAssets("index.html");
 // Pixi initializes the renderer using dynamic imports. Count all emitted client
 // code (including unused renderer/lab chunks) as a conservative title upper bound.
-const initialFiles = files.filter((f) => f.file === "index.html" || /\.(js|css)$/.test(f.file));
+const initialAssets = new Set(
+  files.filter((f) => f.file === "index.html" || /\.(js|css)$/.test(f.file)).map((f) => f.file),
+);
+const index = JSON.parse(await readFile(path.join(root, "dist/web/data/index.json")));
+if (index.presentation) {
+  initialAssets.add("data/index.json");
+  initialAssets.add(index.presentation);
+  const ui = JSON.parse(await readFile(path.join(root, "dist/web", index.presentation)));
+  const font = ui.fonts.find((f) => f.primary) || ui.fonts[0];
+  if (font) initialAssets.add(index.assets.fonts[font.url]);
+  // All UI image pages form a conservative upper bound, even though only the
+  // title logo/window/cursor are requested before starting a game.
+  const visit = (value) => {
+    if (typeof value === "string" && index.assets.images[value])
+      initialAssets.add(index.assets.images[value].file);
+    else if (value && typeof value === "object")
+      for (const child of Object.values(value)) visit(child);
+  };
+  visit(ui);
+}
+const initialFiles = files.filter((f) => initialAssets.has(f.file));
 const report = {
   totalBytes: files.reduce((s, f) => s + f.bytes, 0),
   initialBytes: initialFiles.reduce((s, f) => s + f.bytes, 0),
@@ -35,7 +55,7 @@ const report = {
   initialFiles,
   fileCount: files.length,
   largestFiles: [...files].sort((a, b) => b.bytes - a.bytes).slice(0, 10),
-  note: "Initial bytes conservatively include index.html and every emitted JS/CSS file, including dynamic Pixi renderer and unused lab chunks. Game data is fetched after New Game; automatic regression explicitly preloads remote scripts. No raw Unity files or evidence are shipped.",
+  note: "Initial bytes conservatively include all emitted JS/CSS, the bootstrap/presentation indexes, primary CJK font and every UI image page (including menus not open at the title). Maps, story and battle data are fetched after New Game. Automatic regression explicitly preloads remote scripts. No raw Unity files or evidence are shipped.",
 };
 await writeFile(
   path.join(root, "build/play/foundation-static-sizes.json"),

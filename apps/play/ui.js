@@ -1,4 +1,4 @@
-import { Container, Graphics, Rectangle, Text } from "pixi.js";
+import { Container, Graphics, Rectangle, Text, Sprite, NineSliceSprite } from "pixi.js";
 
 // Retained game controls. These nodes hold labels and input callbacks; Pixi draws
 // every visible window. DOM is used only for initial markup and accessibility.
@@ -89,16 +89,26 @@ class Widget {
 export const createWidget = (tag) => new Widget(tag);
 
 export class GameUI {
-  constructor(layer) {
+  constructor(layer, texture = () => null) {
     this.layer = layer;
     this.ids = new Map();
     this.views = new Map();
     this.scrolls = new Map();
     this.windows = [];
+    this.texture = texture;
+    this.visibleImages = new Map();
+    this.presentation = {};
     for (const element of document.querySelectorAll("main > section, main > aside")) {
       const root = this.read(element);
       this.windows.push(root);
       element.remove();
+    }
+    if (this.get("battle")) {
+      const options = createWidget("aside");
+      options.id = "battle-options";
+      options.hidden = true;
+      this.ids.set(options.id, options);
+      this.windows.push(options);
     }
     this.pages = new Map();
     for (const root of this.windows) {
@@ -134,10 +144,93 @@ export class GameUI {
       if (child.nodeType === 3) node._text += child.textContent.trim() ? child.textContent : "";
       else if (child.nodeType === 1) node.children.push(this.read(child));
     }
+    if (element.hasAttribute("aria-label"))
+      node.setAttribute("aria-label", element.getAttribute("aria-label"));
     return node;
   }
   get(id) {
     return this.ids.get(id);
+  }
+  setPresentation(presentation = {}) {
+    this.presentation = presentation;
+    for (const view of this.views.values())
+      view.text.style.fontFamily = presentation.fontFamily || "system-ui";
+    revision++;
+  }
+  setCharacters(characters) {
+    this.speakerIds ||= {};
+    for (const u of Object.values(characters || {})) this.speakerIds[u.name] = u.id;
+    this.characterNames = Object.fromEntries(
+      Object.values(characters || {}).map((u) => [u.id, u.name]),
+    );
+    revision++;
+  }
+  image(url) {
+    if (!url) return null;
+    const texture = this.texture(url);
+    this.visibleImages.set(url, texture);
+    return texture;
+  }
+  portrait(id) {
+    const key = this.presentation.characterFaces?.[id];
+    return this.presentation.portraits?.[key]?.url;
+  }
+  skin(view, width, height) {
+    view.box.clear().rect(0, 0, width, height).fill({ color: 0x0b2460, alpha: 0.97 });
+    const source = this.presentation.sprites?.window,
+      texture = this.image(source?.url);
+    const background = this.image(this.presentation.sprites?.windowBackground?.url);
+    if (background) {
+      if (!view.background) {
+        view.background = new Sprite();
+        view.container.addChildAt(view.background, 1);
+      }
+      view.background.texture = background;
+      view.background.width = width;
+      view.background.height = height;
+      view.background.visible = true;
+    } else if (view.background) view.background.visible = false;
+    if (texture) {
+      if (!view.skin) {
+        const border = source.border || [];
+        view.skin = new NineSliceSprite({
+          texture,
+          leftWidth: border.left ?? border[0] ?? border.x ?? 8,
+          rightWidth: border.right ?? border[2] ?? border.z ?? 8,
+          topHeight: border.top ?? border[3] ?? border.w ?? 8,
+          bottomHeight: border.bottom ?? border[1] ?? border.y ?? 8,
+        });
+        view.container.addChildAt(view.skin, view.background ? 2 : 1);
+      }
+      view.skin.texture = texture;
+      view.skin.width = width;
+      view.skin.height = height;
+      view.skin.visible = true;
+    } else {
+      if (view.skin) view.skin.visible = false;
+      view.box.stroke({ color: 0xcbd2e2, width: 6 });
+    }
+  }
+  setDialogue(
+    dialogue,
+    speed = 3,
+    instant = false,
+    speaker = dialogue?.speaker,
+    text = dialogue?.text,
+  ) {
+    if (this.dialogue?.source !== dialogue)
+      this.dialogue = { source: dialogue, started: performance.now(), shown: 0 };
+    this.dialogue.speed = speed;
+    this.dialogue.instant = instant;
+    this.dialogue.speaker = speaker;
+    this.dialogue.text = text || "";
+  }
+  revealDialogue() {
+    const d = this.dialogue;
+    if (!d?.source || d.shown >= Array.from(d.text).length) return false;
+    d.revealed = true;
+    revision++;
+    return true;
   }
   page(root, direction) {
     const height = this.bounds(root)[3];
@@ -157,7 +250,7 @@ export class GameUI {
         text = new Text({
           text: "",
           style: {
-            fontFamily: "system-ui",
+            fontFamily: this.presentation.fontFamily || "system-ui",
             fontSize: 30,
             fill: 0xf4f1e8,
             lineHeight: 42,
@@ -168,20 +261,32 @@ export class GameUI {
       container.on("pointertap", () => {
         if (node.disabled) return;
         if (node.tag === "select") this.openSelect(node);
+        else if (node.tag === "input") this.openTextInput(node);
         else node.click();
+      });
+      container.on("pointerover", () => {
+        this.view(node).hover = true;
+        revision++;
+      });
+      container.on("pointerout", () => {
+        this.view(node).hover = false;
+        revision++;
       });
       this.views.set(node, { container, box, text });
     }
     return this.views.get(node);
   }
   label(node) {
+    if (node.id === "message" && this.dialogue?.source)
+      return Array.from(node._text).slice(0, this.dialogue.shown).join("");
+    if (node.tag === "input") return `${node.attributes["aria-label"] || "名称"}：${node.value}`;
     if (node.tag === "select")
       return `${node.attributes["aria-label"] || ""}：${node.children.find((o) => String(o.value) === String(node.value))?.textContent || "未选择"} ▾`;
     return node._text;
   }
   item(node, parent, x, y, width, clip) {
     const v = this.view(node),
-      interactive = ["button", "select"].includes(node.tag);
+      interactive = ["button", "select", "input"].includes(node.tag);
     const label = this.label(node);
     if (v.text.text !== label) v.text.text = label;
     v.text.style.wordWrapWidth = Math.max(60, width - 30);
@@ -190,6 +295,7 @@ export class GameUI {
     let height = Math.max(42, Math.ceil(v.text.height / 6) * 6);
     if (interactive) height += 18;
     if (node.tag === "progress") height = 30;
+    if (node.tag === "img") height = 156;
     const c = v.container;
     if (c.parent !== parent) parent.addChild(c);
     c.position.set(x, y);
@@ -206,14 +312,69 @@ export class GameUI {
     c.accessibleTitle = label;
     c.accessibleHint = label;
     c.accessibleText = label;
+    // Pixi 8.22 initializes these labels only when creating its overlay. Keep
+    // existing accessibility controls in sync with the visible Pixi text.
+    if (c._accessibleDiv && c._accessibleDiv.title !== label) {
+      c._accessibleDiv.title = label;
+      c._accessibleDiv.setAttribute("aria-label", label);
+      c._accessibleDiv.textContent = label;
+    }
     v.text.position.set(interactive ? 12 : 0, interactive ? 6 : 0);
-    v.text.visible = node.tag !== "progress";
+    v.text.visible = !["progress", "img"].includes(node.tag);
+    const iconKey = this.presentation.contentIcons?.[node.dataset.contentId],
+      icon = this.image(this.presentation.icons?.[iconKey]?.url);
+    if (icon) {
+      if (!v.icon) {
+        v.icon = new Sprite();
+        c.addChild(v.icon);
+      }
+      v.icon.texture = icon;
+      v.icon.width = 48;
+      v.icon.height = 48;
+      v.icon.position.set(0, 0);
+      v.icon.visible = true;
+      v.text.x = 60;
+      v.text.style.wordWrapWidth = Math.max(60, width - 90);
+    } else if (v.icon) v.icon.visible = false;
     v.box.clear();
     if (interactive)
-      v.box
-        .rect(0, 0, width, height)
-        .fill({ color: 0x14284c, alpha: 0.95 })
-        .stroke({ width: 3, color: node.disabled ? 0x53617c : 0xb6c7e6 });
+      v.box.rect(0, 0, width, height).fill({
+        color: 0x426495,
+        alpha: node.dataset.titleButton
+          ? 1
+          : v.hover || node.dataset.selected
+            ? 0.65
+            : node.tag === "input"
+              ? 0.4
+              : 0.12,
+      });
+    const pointer = this.image(this.presentation.sprites?.cursor?.url);
+    if (pointer && interactive) {
+      if (!v.pointer) {
+        v.pointer = new Sprite();
+        c.addChild(v.pointer);
+      }
+      v.pointer.texture = pointer;
+      v.pointer.position.set(-30, Math.floor((height - 42) / 2));
+      v.pointer.width = 42;
+      v.pointer.height = 42;
+      v.pointer.visible = !!v.hover && !node.disabled;
+    } else if (v.pointer) v.pointer.visible = false;
+    if (node.tag === "img") {
+      const texture = this.image(
+        node.dataset.actorId ? this.portrait(node.dataset.actorId) : node.attributes.src,
+      );
+      if (!v.image) {
+        v.image = new Sprite();
+        c.addChild(v.image);
+      }
+      v.image.visible = !!texture;
+      if (texture) {
+        v.image.texture = texture;
+        const scale = Math.max(1, Math.floor(156 / Math.max(texture.width, texture.height)));
+        v.image.scale.set(scale);
+      }
+    }
     if (node.tag === "progress") {
       v.box.rect(0, 0, width, height).fill(0x1a263c);
       v.box
@@ -233,11 +394,13 @@ export class GameUI {
     };
     for (const node of nodes) {
       if (node.hidden || node.tag === "option") continue;
-      const inline = ["button", "select"].includes(node.tag);
+      const inline = ["button", "select", "input", "img"].includes(node.tag) && !node.dataset.block;
       if (!inline) newline();
-      if (node._text || inline || node.tag === "progress") {
+      if (node._text || inline || ["progress", "button", "select", "input"].includes(node.tag)) {
         const w = inline
-          ? Math.min(width, Math.max(132, Math.ceil((this.label(node).length * 30 + 36) / 6) * 6))
+          ? node.tag === "img"
+            ? 180
+            : Math.min(width, Math.max(132, Math.ceil((this.label(node).length * 30 + 36) / 6) * 6))
           : width;
         if (left + w > width) newline();
         const height = this.item(node, parent, x + left, y, w, clip);
@@ -248,6 +411,15 @@ export class GameUI {
       }
       if (node.children.length && node.tag !== "select") {
         newline();
+        if (node.tag === "fieldset" && node.children[0]?.tag === "img") {
+          this.item(node.children[0], parent, x + 18, y, 180, clip);
+          y =
+            Math.max(
+              y + 180,
+              this.flow(node.children.slice(1), parent, x + 210, y, width - 228, clip),
+            ) + 24;
+          continue;
+        }
         y = this.flow(
           node.children,
           parent,
@@ -263,15 +435,182 @@ export class GameUI {
     return y;
   }
   bounds(root) {
+    // The serialized message root is positioned by a runtime animation. Retain
+    // its PR size and bottom margin; compose the PR touch battle window widths.
+    if (root.id === "dialogue" && this.presentation.layouts?.message?.bounds) {
+      const [x, , w, h] = this.presentation.layouts.message.bounds;
+      return [
+        Math.round(x / 6) * 6,
+        Math.round((1080 - 54 - h) / 6) * 6,
+        Math.round(w / 6) * 6,
+        Math.round(h / 6) * 6,
+      ];
+    }
+    if (root.id === "battle" && this.presentation.layouts?.battle) return [96, 810, 1728, 270];
+    if (root.id === "battle-options") return [96, 450, 1728, 360];
+    const key = {
+      dialogue: "message",
+      menu: "menu",
+      battle: "battle",
+      shop: "shop",
+      title: "title",
+      save: "save",
+      naming: "name",
+    }[root.id];
+    const bounds = this.presentation.layouts?.[key]?.bounds;
+    if (bounds?.length === 4) return bounds;
     if (root.id === "title") return [300, 210, 1320, 648];
     if (root.id === "dialogue") return [60, 672, 1800, 360];
     if (root.id === "battle") return [36, 666, 1848, 378];
     if (root.id === "vehicle") return [300, 300, 1320, 480];
     return [90, 42, 1740, 990];
   }
+  battleStatus(view, width, height) {
+    const model = this.get("battle-status"),
+      battle = model?.battleModel;
+    if (!battle) return;
+    if (!view.hud) {
+      view.hud = new Container();
+      view.hudRows = [];
+      view.container.addChild(view.hud);
+    }
+    const commandWidth = width === 1728 ? 432 : 600,
+      hudX = commandWidth + 60,
+      hudWidth = width - hudX - 24;
+    view.hud.position.set(hudX, 12);
+    const drawText = (holder, key, value, x, y, size = 30) => {
+      if (!holder[key]) {
+        holder[key] = new Text({
+          text: "",
+          style: {
+            fontFamily: this.presentation.fontFamily || "system-ui",
+            fontSize: size,
+            fill: 0xf4f1e8,
+          },
+        });
+        view.hud.addChild(holder[key]);
+      }
+      holder[key].text = value;
+      holder[key].position.set(x, y);
+      holder[key].visible = true;
+      return holder[key];
+    };
+    const heads = { name: "", hp: "HP", mp: "MP", atb: "ATB" };
+    const columns = {
+      name: 0,
+      hp: Math.round((hudWidth * 0.22) / 6) * 6,
+      mp: Math.round((hudWidth * 0.57) / 6) * 6,
+      atb: Math.round((hudWidth * 0.78) / 6) * 6,
+    };
+    for (const [key, x] of [
+      ["name", 0],
+      ["hp", columns.hp],
+      ["mp", columns.mp],
+      ["atb", columns.atb],
+    ])
+      drawText(view, `hud-${key}`, heads[key], x, 0, 24);
+    for (let i = 0; i < 4; i++) {
+      const row = (view.hudRows[i] ||= {});
+      const u = battle.players[i];
+      if (!u) {
+        for (const v of Object.values(row)) if (v && typeof v === "object") v.visible = false;
+        continue;
+      }
+      const y = 36 + i * Math.floor(Math.min(66, (height - 78) / 4) / 6) * 6;
+      drawText(row, "name", `${i === model.activeActor ? "▶ " : ""}${u.name}`, 0, y);
+      row.name.eventMode = "static";
+      row.name.cursor = "pointer";
+      row.name.accessible = !!u.ready;
+      row.name.accessibleTitle = `操作 ${u.name}`;
+      row.name.accessibleText = `操作 ${u.name}`;
+      if (!row.inputBound) {
+        row.name.on("pointertap", () => model.selectActor?.(i));
+        row.inputBound = true;
+      }
+      const hp = drawText(row, "hp", `${u.hp}/${u.maxHp}`, columns.hp, y);
+      hp.style.fill = u.hp <= 0 ? 0xd3b2b2 : u.hp / u.maxHp < 0.25 ? 0xffd46b : 0xffffff;
+      drawText(row, "mp", `${u.mp}/${u.maxMp}`, columns.mp, y);
+      if (!row.gauge) {
+        row.gauge = new Graphics();
+        view.hud.addChild(row.gauge);
+      }
+      row.gauge.visible = true;
+      row.gauge
+        .clear()
+        .rect(columns.atb, y + 12, hudWidth - columns.atb, 18)
+        .fill(0x081631)
+        .stroke({ color: 0xaebbd4, width: 2 });
+      row.gauge
+        .rect(
+          columns.atb + 2,
+          y + 14,
+          Math.max(0, hudWidth - columns.atb - 4) * Math.max(0, Math.min(1, (u.atb || 0) / 100)),
+          14,
+        )
+        .fill(u.ready ? 0xe3d471 : 0xa6c2f0);
+      const frame = this.image(this.presentation.sprites?.atb?.url),
+        fill = this.image(this.presentation.sprites?.atbFill?.url);
+      if (frame && fill) {
+        if (!row.gaugeFrame) {
+          row.gaugeFrame = new NineSliceSprite({
+            texture: frame,
+            leftWidth: 48,
+            rightWidth: 48,
+            topHeight: 16,
+            bottomHeight: 16,
+          });
+          row.gaugeFill = new Sprite();
+          view.hud.addChild(row.gaugeFrame, row.gaugeFill);
+        }
+        row.gauge.visible = false;
+        row.gaugeFrame.visible = row.gaugeFill.visible = true;
+        row.gaugeFrame.texture = frame;
+        row.gaugeFrame.position.set(columns.atb, y + 3);
+        row.gaugeFrame.width = hudWidth - columns.atb;
+        row.gaugeFrame.height = 36;
+        row.gaugeFill.texture = fill;
+        row.gaugeFill.position.set(columns.atb + 10, y + 13);
+        row.gaugeFill.width =
+          Math.max(0, hudWidth - columns.atb - 20) * Math.max(0, Math.min(1, (u.atb || 0) / 100));
+        row.gaugeFill.height = 16;
+        row.gaugeFill.tint = u.ready ? 0xffdf80 : 0xffffff;
+      }
+    }
+    drawText(view, "hud-log", battle.log.slice(-1).join(" ").slice(0, 58), 0, height - 60, 24);
+  }
   render() {
+    const options = this.get("battle-options");
+    if (options) {
+      const commands = this.get("commands"),
+        targets = this.get("targets"),
+        key = `${commands.dataset.submenu || ""}:${!!targets.children.length}`;
+      options.hidden = this.get("battle").hidden || key === ":false";
+      options.children = [targets.children.length ? targets : commands];
+      if (options.dataset.selection !== key) {
+        options.dataset.selection = key;
+        this.scrolls.set(options, 0);
+        revision++;
+      }
+    }
+    for (const [url, old] of this.visibleImages) if (this.texture(url) !== old) revision++;
+    if (this.dialogue?.source) {
+      const d = this.dialogue,
+        count = Array.from(d.text).length,
+        shown =
+          d.instant || d.revealed
+            ? count
+            : Math.min(
+                count,
+                Math.floor(((performance.now() - d.started) / 1000) * (16 + Number(d.speed) * 12)),
+              );
+      if (shown !== d.shown) {
+        d.shown = shown;
+        revision++;
+      }
+    }
     if (this.popup || this.lastRevision === revision) return;
     this.lastRevision = revision;
+    this.visibleImages.clear();
     this.used = new Set();
     this.ranges = new Map();
     for (const root of this.windows) {
@@ -281,11 +620,7 @@ export class GameUI {
       v.container.visible = !root.hidden;
       v.container.position.set(x, y);
       v.text.visible = false;
-      v.box
-        .clear()
-        .rect(0, 0, width, height)
-        .fill({ color: 0x101b38, alpha: 0.96 })
-        .stroke({ color: 0xb7c7df, width: 6 });
+      this.skin(v, width, height);
       this.used.add(root);
       if (root.hidden) continue;
       if (!v.content) {
@@ -295,27 +630,82 @@ export class GameUI {
         v.content.mask = v.mask;
       }
       const scroll = this.scrolls.get(root) || 0;
+      let bodyX = 24,
+        bodyWidth = width - 48,
+        bodyY = 24;
       let body = root.children;
       let pinned = root.id === "title" ? [] : root.children.filter((node) => node.tag === "button");
       if (root.id !== "title") body = body.filter((node) => !pinned.includes(node));
       if (root.id === "battle") {
         const targets = this.get("targets");
-        body = [
-          this.get("battle-status"),
-          targets.children.length ? targets : this.get("commands"),
-        ];
+        for (const node of this.get("commands").children)
+          if (node.dataset.actorSwitch) node.hidden = true;
+        body = options?.hidden ? [this.get("commands")] : [];
+        bodyWidth = width === 1728 ? 432 : 600;
+        this.battleStatus(v, width, height);
+      }
+      if (root.id === "title") {
+        const logo = this.image(this.presentation.sprites?.titleLogo?.url);
+        if (logo) {
+          if (!v.logo) {
+            v.logo = new Sprite();
+            v.container.addChild(v.logo);
+          }
+          v.logo.texture = logo;
+          v.logo.position.set(Math.round((width - logo.width) / 12) * 6, 54);
+          v.logo.scale.set(1);
+          v.box.clear().rect(0, 0, width, height).fill(0xffffff);
+          if (v.background) v.background.visible = false;
+          if (v.skin) v.skin.visible = false;
+          body = body.filter((n) => n.tag === "button");
+          bodyX = Math.round((width - 600) / 12) * 6;
+          bodyWidth = 600;
+          bodyY = 648;
+          for (const n of body) {
+            n.dataset.block = "1";
+            n.dataset.titleButton = "1";
+          }
+        }
       }
       if (root.id === "dialogue") {
         const choices = this.get("choices");
         body = [this.get("speaker"), this.get("message")];
         pinned = choices.children.length ? choices.children : [this.get("confirm")];
+        const actor = this.dialogue?.speaker;
+        const id = this.presentation.speakerFaces?.[actor] || this.speakerIds?.[actor];
+        const portrait = this.image(this.portrait(id));
+        if (!v.portrait) {
+          v.portrait = new Sprite();
+          v.container.addChild(v.portrait);
+        }
+        v.portrait.visible = !!portrait;
+        if (portrait) {
+          v.portrait.texture = portrait;
+          v.portrait.position.set(30, 42);
+          v.portrait.width = 180;
+          v.portrait.height = 180;
+          bodyX = 234;
+          bodyWidth -= 210;
+        }
+      }
+      if (root.id === "menu" && this.get("menu-nav")) {
+        const navigation = this.get("menu-nav");
+        if (!v.navigation) {
+          v.navigation = new Container();
+          v.container.addChild(v.navigation);
+        }
+        for (const n of navigation.children) n.dataset.block = "1";
+        this.flow(navigation.children, v.navigation, 24, 24, 270, [24, height - 90]);
+        body = body.filter((n) => n !== navigation && n.tag !== "h2");
+        bodyX = 342;
+        bodyWidth = width - 366;
       }
       const pinY = height - (root.id === "dialogue" && pinned.length > 2 ? 132 : 66);
       v.mask
         .clear()
-        .rect(24, 24, width - 48, pinY - 36)
+        .rect(bodyX, bodyY, bodyWidth, pinY - bodyY - 12)
         .fill(0xffffff);
-      const end = this.flow(body, v.content, 24, 24 - scroll, width - 48, [24, pinY - 12]);
+      const end = this.flow(body, v.content, bodyX, bodyY - scroll, bodyWidth, [bodyY, pinY - 12]);
       this.flow(pinned, v.container, 24, pinY, width - (root.id === "dialogue" ? 48 : 480));
       const range = Math.max(0, end + scroll - pinY + 24);
       this.ranges.set(root, range);
@@ -382,6 +772,42 @@ export class GameUI {
     this.flow(rows, this.popupLayer, 210, 120, 1500);
     this.flow([previous, next, close], this.popupLayer, 210, 900, 1500);
     this.popup = true;
+  }
+  openTextInput(node) {
+    if (this.editor) {
+      const old = this.editor;
+      old.blur();
+      old.remove();
+    }
+    const input = document.createElement("input");
+    input.value = node.value;
+    input.maxLength = 12;
+    input.setAttribute("aria-label", node.attributes["aria-label"] || "名称");
+    input.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;";
+    const commit = () => {
+      node.value = input.value;
+      node.onchange?.();
+      if (input.value !== node.value) input.value = node.value;
+    };
+    input.oninput = commit;
+    input.onchange = commit;
+    input.onkeydown = (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" || e.key === "Escape") {
+        input.blur();
+        input.remove();
+        this.editor = null;
+      }
+    };
+    input.onblur = () => {
+      commit();
+      input.remove();
+      if (this.editor === input) this.editor = null;
+    };
+    document.body.append(input);
+    this.editor = input;
+    input.focus();
+    input.select();
   }
   closeSelect() {
     for (const root of this.windows) this.view(root).container.accessibleChildren = true;

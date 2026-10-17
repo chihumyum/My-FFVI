@@ -58,6 +58,7 @@ const game = new RegressionGame({
   data,
   battleData,
   Battle,
+  interactiveNames: true,
   testBoost: process.env.PLAY_TEST_BOOST === "1",
   random,
   loadMap: async (id) =>

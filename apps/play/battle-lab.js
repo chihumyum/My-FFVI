@@ -1,4 +1,5 @@
 import { WebData, webIndexURL } from "./data.js";
+import { loadPresentation } from "./presentation.js";
 import { GameRenderer } from "./renderer.js";
 import { GameUI, createWidget } from "./ui.js";
 import { configureGogo } from "../../src/play/battle-commands.js";
@@ -7,12 +8,14 @@ import { createCharacter, learnNaturalAbilities } from "../../src/play/progressi
 import { createBattleMenu } from "./battle-menu.js";
 const renderer = new GameRenderer(document.getElementById("screen"));
 await renderer.init();
-const ui = new GameUI(renderer.layers.ui);
+const ui = new GameUI(renderer.layers.ui, (url) => renderer.getTexture(url));
 const $ = (id) => ui.get(id) || document.getElementById(id);
 const repository = new WebData(webIndexURL());
 const index = await repository.json(webIndexURL().href);
 const data = await repository.json(index.battle);
 renderer.setAssets(index.assets.images, repository.baseURL);
+await loadPresentation(repository, renderer, ui);
+ui.setCharacters(data.characters);
 const menu = createBattleMenu({
   commands: $("commands"),
   targets: $("targets"),

@@ -11,8 +11,7 @@
       <section id="title">
         <h1>FINAL FANTASY VI</h1>
         <p>Web 移植</p>
-        <button id="new">新游戏</button><button id="test">剧情测试（强化队伍）</button
-        ><button id="load">继续游戏</button><button id="loadtest">继续剧情测试</button>
+        <button id="new">新游戏</button><button id="load">继续游戏</button>
       </section>
       <section id="dialogue" hidden>
         <strong id="speaker"></strong>
@@ -31,6 +30,7 @@
         ><span id="location">方向键 / WASD 移动 · Enter / 空格确认 · Esc 菜单 · Q 换队</span
         ><button id="walk">自动行走：关</button><button id="switch" hidden>切换队伍（Q）</button
         ><button id="auto">自动推进：关</button><button id="vehicle-open" hidden>载具操作</button>
+        <button id="test">剧情测试（强化队伍）</button><button id="loadtest">继续剧情测试</button>
       </footer>
       <aside id="over" hidden>
         <h2>任务失败</h2>
@@ -57,9 +57,23 @@
       </aside>
       <aside id="menu" hidden>
         <h2>队伍</h2>
+        <div id="menu-nav"></div>
         <div id="party"></div>
         <div id="items"></div>
-        <button id="menu-save">存档</button><button id="close">返回游戏</button>
+        <button id="menu-save" hidden>存档</button><button id="close">返回游戏</button>
+      </aside>
+      <aside id="save" hidden>
+        <h2 id="save-heading">存档</h2>
+        <p id="save-status"></p>
+        <div id="save-slots"></div>
+        <button id="save-close">返回</button>
+      </aside>
+      <aside id="naming" hidden>
+        <h2>请输入名字</h2>
+        <div id="name-portrait"></div>
+        <input id="name-value" aria-label="角色名字" />
+        <div id="name-keys"></div>
+        <button id="name-confirm">确定</button><button id="name-default">默认名字</button>
       </aside>
     </main>
     <script type="module" src="./app.js"></script>

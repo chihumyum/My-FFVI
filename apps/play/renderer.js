@@ -190,6 +190,10 @@ export class GameRenderer {
     return this;
   }
 
+  getTexture(url) {
+    return this._texture(url);
+  }
+
   _warnOnce(key, message) {
     if (this._warned.has(key)) return;
     this._warned.add(key);
@@ -605,7 +609,13 @@ export class GameRenderer {
           this.layers.actors.addChild(name);
           this._battleNames[count] = name;
         }
-        const texture = this._texture(unit.sprite?.url);
+        const info =
+          side === "player" && this._assetBaseURL && !this._assetImages[unit.sprite?.url]
+            ? (unit.magitek
+                ? battleData?.characters?.[unit.id]?.magitekSprite
+                : battleData?.characters?.[unit.id]?.sprite) || unit.sprite
+            : unit.sprite;
+        const texture = this._texture(info?.url);
         // Keep source sprite pixels 1:1. This replaces the previous stretched
         // 960x640 composition with source-size art in the PR 320x180 camera.
         const baseX = side === "enemy" ? 60 + (n % 3) * 40 : 247 + (n % 2) * 25;
