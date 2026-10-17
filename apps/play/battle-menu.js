@@ -1,4 +1,4 @@
-import { validBlitz } from "/play-runtime/battle-commands.js";
+import { validBlitz } from "../../src/play/battle-commands.js";
 // Manual controls submit ordinary Battle inputs; no regression policy lives here.
 export function createBattleMenu({
   commands,

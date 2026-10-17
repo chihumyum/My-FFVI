@@ -1,25 +1,26 @@
-import { GameRenderer } from "/game/renderer.js";
-import { GameUI, createWidget } from "/game/ui.js";
-import { WebAudioPlayer } from "/game/audio.js";
+import { WebData, webIndexURL } from "./data.js";
+import { GameRenderer } from "./renderer.js";
+import { GameUI, createWidget } from "./ui.js";
+import { WebAudioPlayer } from "./audio.js";
 import {
   withPresentation,
   observingAudioInstruction,
   isAudioInstruction,
-} from "/game/presentation-events.js";
-import { createBattleMenu } from "/game/battle-menu.js";
-import { buyFromShop, closeShop } from "/play-runtime/event-systems.js";
-import { submitPartyInput, cancelPartyInput } from "/play-runtime/party-input.js";
+} from "./presentation-events.js";
+import { createBattleMenu } from "./battle-menu.js";
+import { buyFromShop, closeShop } from "../../src/play/event-systems.js";
+import { submitPartyInput, cancelPartyInput } from "../../src/play/party-input.js";
 import {
   openVehicleInput,
   vehicleInputState,
   submitVehicleInput,
   closeVehicleInput,
-} from "/play-runtime/vehicle-input.js";
-import { renderPartyMenu } from "/game/party-menu.js";
-import { PlayGame } from "/play-runtime/game.js";
-import { advanceStory } from "/play-runtime/story-route.js";
-import { storyChoice } from "/play-runtime/story-plan.js";
-import { Battle } from "/play-runtime/battle.js";
+} from "../../src/play/vehicle-input.js";
+import { renderPartyMenu } from "./party-menu.js";
+import { PlayGame } from "../../src/play/game.js";
+import { advanceStory } from "../../src/play/story-route.js";
+import { storyChoice } from "../../src/play/story-plan.js";
+import { Battle } from "../../src/play/battle.js";
 const canvas = document.getElementById("screen");
 const renderer = new GameRenderer(canvas);
 await renderer.init();
@@ -31,17 +32,13 @@ let game,
   started = false,
   frame = 0,
   last = performance.now();
+let repository;
 let data,
   battleData,
   walking = false,
   walkClock = 0,
   autosavePending = false,
   titlePending = false;
-const json = async (url) => {
-  const r = await fetch(url);
-  if (!r.ok) throw Error(await r.text());
-  return r.json();
-};
 const audio = new WebAudioPlayer();
 const PresentationGame = withPresentation(PlayGame);
 addEventListener("pointerdown", () => audio.unlock().catch((error) => audio.warn(error.message)));
@@ -80,11 +77,10 @@ async function start(saved = null, testBoost = false) {
   renderer.resetPresentation();
   $("new").disabled = true;
   try {
-    [data, battleData] = await Promise.all([
-      json("/play-data/data.json"),
-      json("/play-data/battle.json"),
-    ]);
-    data.navigation = await json("/play-data/navigation.json");
+    repository = new WebData(webIndexURL());
+    ({ data, battleData } = await repository.open(saved));
+    renderer.setAssets(repository.index.assets.images, repository.baseURL);
+    audio.setAssets(repository.index.assets.audio, repository.baseURL);
     audio.setCatalog(data.audio);
     game = new PresentationGame({
       onPresentation: presentation,
@@ -92,7 +88,7 @@ async function start(saved = null, testBoost = false) {
       battleData,
       Battle,
       testBoost: testBoost || !!saved?.testBoost,
-      loadMap: (id) => json(`/play-data/maps/${id}.json`),
+      loadMap: (id) => repository.loadMap(id),
       onEvent: event,
     });
     game.autoChoice = (g) => (walking ? storyChoice(g) : 0);
@@ -128,7 +124,9 @@ function save() {
     $("location").textContent = "已保存 · " + game.map.name;
   } else $("location").textContent = "剧情或战斗进行中，请稍后保存";
 }
-$("walk").onclick = () => {
+$("walk").onclick = async () => {
+  if (!started || !game) return;
+  if (!walking && repository) await repository.preloadRegression();
   walking = !walking;
   $("walk").textContent = `自动行走：${walking ? "开" : "关"}`;
   if (walking && !auto) $("auto").click();

@@ -9,18 +9,21 @@
   },
   "scripts": {
     "export": "node tools/export/index.mjs",
-    "dev": "node tools/play/serve-play.mjs",
+    "dev": "vite --config vite.config.mjs",
     "test": "node --test src/play/*.test.mjs",
     "play:through": "node tools/play/playthrough.mjs",
     "play:ai-smoke": "node tools/play/smoke-monster-ai.mjs",
     "play:events-smoke": "node tools/play/smoke-battle-events.mjs",
     "play:commands-check": "node tools/play/check-play-commands.mjs",
     "play:ability-audit": "node tools/play/audit-play-abilities.mjs",
-    "format": "prettier --write \"{src/play,apps/play,tools/export,tools/play}/**/*.{js,mjs,json,html,css}\" package.json",
-    "format:check": "prettier --check \"{src/play,apps/play,tools/export,tools/play}/**/*.{js,mjs,json,html,css}\" package.json"
+    "format": "prettier --write \"{src/play,apps/play,tools/export,tools/play}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
+    "format:check": "prettier --check \"{src/play,apps/play,tools/export,tools/play}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
+    "predev": "node tools/export/web.mjs",
+    "bundle": "node tools/play/bundle.mjs"
   },
   "devDependencies": {
-    "prettier": "3.9.10"
+    "prettier": "3.9.10",
+    "vite": "8.3.4"
   },
   "dependencies": {
     "pixi.js": "8.22.0"

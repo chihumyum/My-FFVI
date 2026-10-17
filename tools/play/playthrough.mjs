@@ -1,3 +1,6 @@
+import { WebData } from "../../apps/play/data.js";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { resolve as resolvePath } from "node:path";
 import { withPresentation } from "../../apps/play/presentation-events.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { PlayGame } from "../../src/play/game.js";
@@ -16,16 +19,38 @@ for (const signal of ["SIGINT", "SIGTERM"])
   process.once(signal, () => {
     interrupted = true;
   });
-const data = JSON.parse(await readFile(`${dataRoot}/data.json`)),
+let data, battleData, packed;
+if (process.env.PLAY_STATIC_DIR) {
+  packed = new WebData(pathToFileURL(resolvePath(process.env.PLAY_STATIC_DIR, "data/index.json")), {
+    fetcher: async (url) => new Response(await readFile(fileURLToPath(url))),
+  });
+  ({ data, battleData } = await packed.open());
+  await packed.preloadRegression();
+} else {
+  data = JSON.parse(await readFile(`${dataRoot}/data.json`));
   battleData = JSON.parse(await readFile(`${dataRoot}/battle.json`));
+}
 let last = "";
 const events = [];
-data.navigation = JSON.parse(await readFile(`${dataRoot}/navigation.json`));
+if (!packed) data.navigation = JSON.parse(await readFile(`${dataRoot}/navigation.json`));
 let through = process.env.PLAY_THROUGH;
 if (process.env.PLAY_CHECKPOINT_DIR)
   await mkdir(process.env.PLAY_CHECKPOINT_DIR, { recursive: true });
 const presentationCounts = {};
-const RegressionGame = withPresentation(PlayGame);
+const ObservedGame = withPresentation(PlayGame);
+class RegressionGame extends ObservedGame {
+  step(task) {
+    if (
+      packed &&
+      packed.index.programFiles[task.program] &&
+      !packed.boundaryChunks.has(packed.index.programFiles[task.program])
+    )
+      throw Error(
+        `Executed program ${task.program} missing from map ${this.mapId} preload closure`,
+      );
+    return super.step(task);
+  }
+}
 const game = new RegressionGame({
   onPresentation: (event) => {
     presentationCounts[event.name] = (presentationCounts[event.name] || 0) + 1;
@@ -35,7 +60,8 @@ const game = new RegressionGame({
   Battle,
   testBoost: process.env.PLAY_TEST_BOOST === "1",
   random,
-  loadMap: async (id) => JSON.parse(await readFile(`${dataRoot}/maps/${id}.json`)),
+  loadMap: async (id) =>
+    packed ? packed.loadMap(id) : JSON.parse(await readFile(`${dataRoot}/maps/${id}.json`)),
   onEvent: (e) => {
     if (["script", "map", "battle", "battle-end"].includes(e.kind)) {
       events.push(e);

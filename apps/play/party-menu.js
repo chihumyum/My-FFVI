@@ -195,5 +195,5 @@ export function renderPartyMenu(
     );
   }
 }
-import { configureGogo } from "/play-runtime/battle-commands.js";
-import { canEquip } from "/play-runtime/resources.js";
+import { configureGogo } from "../../src/play/battle-commands.js";
+import { canEquip } from "../../src/play/resources.js";

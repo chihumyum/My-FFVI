@@ -14,6 +14,7 @@ const HEIGHT = 180;
 const HORIZONTAL = 0x80000000;
 const VERTICAL = 0x40000000;
 const DIAGONAL = 0x20000000;
+const TEXTURE_BUDGET = 192 * 1024 * 1024;
 
 function container(label) {
   return new Container({ label });
@@ -63,6 +64,15 @@ export class GameRenderer {
     this.app.stage.addChild(this.world, this.layers.ui);
     this.world.filterArea = new Rectangle(0, 0, WIDTH, HEIGHT);
     this._textures = new Map();
+    this._textureSources = new Map();
+    this._unloadingSources = new Map();
+    this._estimatedTextureBytes = 0;
+    this._evictedPages = 0;
+    this._textureBudgetDirty = false;
+    this._atlasViews = new Set();
+    this._assetImages = Object.create(null);
+    this._assetBaseURL = "";
+    this._assetGeneration = 0;
     this._crops = new Map();
     this._mapMetadata = new WeakMap();
     this._tileLayers = [];
@@ -163,6 +173,23 @@ export class GameRenderer {
     this.world.filters = filters == null ? null : Array.isArray(filters) ? filters : [filters];
   }
 
+  /** Optional build index; original PR URL keys remain untouched in game data. */
+  setAssets(images, baseURL = "") {
+    this._assetGeneration++;
+    this._assetImages = images || Object.create(null);
+    this._assetBaseURL = String(baseURL);
+    for (const texture of this._crops.values()) texture.destroy(false);
+    for (const texture of this._atlasViews) texture.destroy(false);
+    this._crops.clear();
+    this._atlasViews.clear();
+    this._textures.clear();
+    // Keep ownership of decoded pages across new games so the LRU can release
+    // them; abandoning the records would leave them in Pixi's global Assets cache.
+    for (const page of this._textureSources.values()) page.lastUsed = -1;
+    this._textureBudgetDirty = true;
+    return this;
+  }
+
   _warnOnce(key, message) {
     if (this._warned.has(key)) return;
     this._warned.add(key);
@@ -248,23 +275,135 @@ export class GameRenderer {
     if (!url) return null;
     let record = this._textures.get(url);
     if (!record) {
-      record = { texture: null, loading: true, failed: false };
+      const entry = this._assetImages[url];
+      let sourceURL = url;
+      if (entry) {
+        const location = globalThis.location?.href || "http://localhost/";
+        const directory = this._assetBaseURL ? this._assetBaseURL.replace(/\/?$/, "/") : "./";
+        sourceURL = new URL(entry.file, new URL(directory, location)).href;
+      }
+      let source = this._textureSources.get(sourceURL);
+      if (!source) {
+        source = {
+          url: sourceURL,
+          texture: null,
+          pending: true,
+          bytes: 0,
+          lastUsed: this._frameCount,
+        };
+        // An evicted page requested again must wait for unload to finish before
+        // reloading. Otherwise Assets can hand back the texture being destroyed.
+        source.promise = Promise.resolve(this._unloadingSources.get(sourceURL))
+          .then(() => Assets.load(sourceURL))
+          .then(
+            (texture) => {
+              texture.source.style.scaleMode = "nearest";
+              source.texture = texture;
+              source.pending = false;
+              source.bytes = texture.source.pixelWidth * texture.source.pixelHeight * 4;
+              this._estimatedTextureBytes += source.bytes;
+              this._textureBudgetDirty = true;
+              return texture;
+            },
+            (error) => {
+              source.pending = false;
+              throw error;
+            },
+          );
+        this._textureSources.set(sourceURL, source);
+      }
+      const generation = this._assetGeneration;
+      record = { texture: null, loading: true, failed: false, sourceURL };
       this._textures.set(url, record);
-      Assets.load(url)
-        .then((texture) => {
-          texture.source.style.scaleMode = "nearest";
+      source.promise
+        .then((base) => {
+          if (generation !== this._assetGeneration) return;
+          let texture = base;
+          if (entry) {
+            const frame = entry.frame;
+            if (
+              !frame ||
+              ![frame.x, frame.y, frame.w, frame.h].every(Number.isInteger) ||
+              frame.x < 0 ||
+              frame.y < 0 ||
+              frame.w <= 0 ||
+              frame.h <= 0 ||
+              frame.x + frame.w > base.width ||
+              frame.y + frame.h > base.height
+            )
+              throw new Error(`Invalid atlas frame for ${url}`);
+            texture = new Texture({
+              source: base.source,
+              frame: new Rectangle(
+                base.frame.x + frame.x,
+                base.frame.y + frame.y,
+                frame.w,
+                frame.h,
+              ),
+            });
+            this._atlasViews.add(texture);
+          }
           record.texture = texture;
           record.loading = false;
         })
         .catch((error) => {
           record.loading = false;
           record.failed = true;
-          const warning = `Texture unavailable: ${url}: ${error.message}`;
-          this._warnings.push(warning);
-          console.warn(warning);
+          this._warnOnce(`texture:${sourceURL}`, `Texture unavailable: ${url}: ${error.message}`);
         });
     }
+    const source = this._textureSources.get(record.sourceURL);
+    if (source) source.lastUsed = this._frameCount;
     return record.texture;
+  }
+
+  _evictPage(page) {
+    const source = page.texture.source;
+    this._textureSources.delete(page.url);
+    this._estimatedTextureBytes -= page.bytes;
+    for (const [url, record] of this._textures)
+      if (record.sourceURL === page.url) this._textures.delete(url);
+    for (const [key, texture] of this._crops)
+      if (texture.source === source) {
+        texture.destroy(false);
+        this._crops.delete(key);
+      }
+    for (const texture of this._atlasViews)
+      if (texture.source === source) {
+        texture.destroy(false);
+        this._atlasViews.delete(texture);
+      }
+    this._evictedPages++;
+    const unloading = Promise.resolve()
+      .then(() => Assets.unload(page.url))
+      .catch((error) =>
+        this._warnOnce(
+          `unload:${page.url}`,
+          `Texture unload failed: ${page.url}: ${error.message}`,
+        ),
+      )
+      .finally(() => {
+        if (this._unloadingSources.get(page.url) === unloading)
+          this._unloadingSources.delete(page.url);
+      });
+    this._unloadingSources.set(page.url, unloading);
+  }
+
+  _trimTextureCache() {
+    this._textureBudgetDirty = false;
+    if (this._estimatedTextureBytes <= TEXTURE_BUDGET) return;
+    const unused = [...this._textureSources.values()]
+      .filter((page) => !page.pending && page.texture && page.lastUsed !== this._frameCount)
+      .sort((a, b) => a.lastUsed - b.lastUsed || a.url.localeCompare(b.url));
+    for (const page of unused) {
+      this._evictPage(page);
+      if (this._estimatedTextureBytes <= TEXTURE_BUDGET) break;
+    }
+    if (this._estimatedTextureBytes > TEXTURE_BUDGET)
+      this._warnOnce(
+        "texture-budget-scene",
+        "The current scene uses more than the 192 MiB estimated decoded-texture budget; all current-frame pages are retained.",
+      );
   }
 
   _crop(url, index, set, tileSize) {
@@ -281,7 +420,10 @@ export class GameRenderer {
     const key = `${url}:${x},${y},${w},${h}`;
     let texture = this._crops.get(key);
     if (!texture) {
-      texture = new Texture({ source: base.source, frame: new Rectangle(x, y, w, h) });
+      texture = new Texture({
+        source: base.source,
+        frame: new Rectangle(base.frame.x + x, base.frame.y + y, w, h),
+      });
       this._crops.set(key, texture);
     }
     return texture;
@@ -428,8 +570,8 @@ export class GameRenderer {
         texture = new Texture({
           source: background.source,
           frame: new Rectangle(
-            Math.floor((background.width - width) / 2),
-            Math.floor((background.height - height) / 2),
+            background.frame.x + Math.floor((background.width - width) / 2),
+            background.frame.y + Math.floor((background.height - height) / 2),
             width,
             height,
           ),
@@ -520,6 +662,7 @@ export class GameRenderer {
     this._fade.visible = this._fade.alpha > 0;
     this._drawEffects(game);
     this.app.render();
+    if (this._textureBudgetDirty || this._frameCount % 120 === 0) this._trimTextureCache();
     this._frameCount++;
     this._renderTimes.push(performance.now() - start);
     if (this._renderTimes.length > 120) this._renderTimes.shift();
@@ -548,6 +691,14 @@ export class GameRenderer {
       texturesReady: textures.filter((record) => record.texture).length,
       texturesLoading: textures.filter((record) => record.loading).length,
       texturesFailed: textures.filter((record) => record.failed).length,
+      textureSources: this._textureSources.size,
+      estimatedTextureBytes: this._estimatedTextureBytes,
+      textureBudgetBytes: TEXTURE_BUDGET,
+      textureBytesEstimate:
+        "decoded page pixelWidth * pixelHeight * 4; excludes GPU copies, browser overhead and UI text",
+      cachedPages: [...this._textureSources.values()].filter((page) => page.texture).length,
+      evictedPages: this._evictedPages,
+      atlasImages: this._atlasViews.size,
       warnings: [...this._warnings],
     };
   }
@@ -555,8 +706,15 @@ export class GameRenderer {
   destroy() {
     this._resizeObserver?.disconnect();
     if (this._resize) window.removeEventListener("resize", this._resize);
+    this._assetGeneration++;
+    for (const page of this._textureSources.values()) {
+      if (page.texture) this._evictPage(page);
+      else if (page.pending) page.promise.then(() => this._evictPage(page)).catch(() => {});
+    }
     for (const texture of this._crops.values()) texture.destroy(false);
+    for (const texture of this._atlasViews) texture.destroy(false);
     this._crops.clear();
+    this._atlasViews.clear();
     this.app.destroy(
       { removeView: false },
       { children: true, texture: false, textureSource: false },

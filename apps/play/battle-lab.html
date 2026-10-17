@@ -4,10 +4,7 @@
     name="viewport"
     content="width=device-width,initial-scale=1"
   /><title>FFVI 战斗指令操作测试</title
-  ><link rel="stylesheet" href="/game/style.css" />
-  <script type="importmap">
-    { "imports": { "pixi.js": "/vendor/pixi.mjs" } }
-  </script>
+  ><link rel="stylesheet" href="./style.css" />
   <body class="game">
     <main>
       <header>
@@ -33,7 +30,7 @@
             <option value="4">卫兵（普通战斗）</option>
           </select></label
         ><button id="restart">开始测试战斗</button><button id="cycle">切换就绪角色（Tab）</button
-        ><a href="/game/">返回游戏</a>
+        ><a href="./">返回游戏</a>
         <div id="gogo-commands" hidden></div>
       </header>
       <canvas id="screen" width="320" height="180"></canvas>
@@ -48,6 +45,6 @@
         <pre id="action-log"></pre>
       </details>
     </main>
-    <script type="module" src="/game/battle-lab.js"></script>
+    <script type="module" src="./battle-lab.js"></script>
   </body>
 </html>

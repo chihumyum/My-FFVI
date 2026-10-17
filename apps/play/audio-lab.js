@@ -1,11 +1,12 @@
-import { WebAudioPlayer, loopSeconds } from "/game/audio.js";
+import { WebData, webIndexURL } from "./data.js";
+import { WebAudioPlayer, loopSeconds } from "./audio.js";
 const $ = (id) => document.getElementById(id),
   player = new WebAudioPlayer({ volume: 0.5 }),
   report = [];
-const catalog = await fetch("/play-data/audio.json").then((r) => {
-  if (!r.ok) throw Error(r.status);
-  return r.json();
-});
+const repository = new WebData(webIndexURL());
+const index = await repository.json(webIndexURL().href);
+const catalog = (await repository.json(index.core)).audio;
+player.setAssets(index.assets.audio, repository.baseURL);
 player.setCatalog(catalog);
 const entries = Object.entries(catalog.bgm.tracks),
   looped = entries.filter(([, t]) => t.loop);

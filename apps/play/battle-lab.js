@@ -1,14 +1,18 @@
-import { GameRenderer } from "/game/renderer.js";
-import { GameUI, createWidget } from "/game/ui.js";
-import { configureGogo } from "/play-runtime/battle-commands.js";
-import { Battle } from "/play-runtime/battle.js";
-import { createCharacter, learnNaturalAbilities } from "/play-runtime/progression.js";
-import { createBattleMenu } from "/game/battle-menu.js";
+import { WebData, webIndexURL } from "./data.js";
+import { GameRenderer } from "./renderer.js";
+import { GameUI, createWidget } from "./ui.js";
+import { configureGogo } from "../../src/play/battle-commands.js";
+import { Battle } from "../../src/play/battle.js";
+import { createCharacter, learnNaturalAbilities } from "../../src/play/progression.js";
+import { createBattleMenu } from "./battle-menu.js";
 const renderer = new GameRenderer(document.getElementById("screen"));
 await renderer.init();
 const ui = new GameUI(renderer.layers.ui);
 const $ = (id) => ui.get(id) || document.getElementById(id);
-const data = await fetch("/play-data/battle.json").then((r) => r.json());
+const repository = new WebData(webIndexURL());
+const index = await repository.json(webIndexURL().href);
+const data = await repository.json(index.battle);
+renderer.setAssets(index.assets.images, repository.baseURL);
 const menu = createBattleMenu({
   commands: $("commands"),
   targets: $("targets"),

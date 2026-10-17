@@ -20,6 +20,10 @@ export class WebAudioPlayer {
     this.warned = new Set();
     this.status = "locked";
   }
+  setAssets(files, baseURL) {
+    this.files = files;
+    this.baseURL = baseURL;
+  }
   setCatalog(catalog) {
     this.catalog = catalog || {};
   }
@@ -53,7 +57,10 @@ export class WebAudioPlayer {
     let last;
     for (const candidate of [track, track.fallback].filter(Boolean)) {
       try {
-        const response = await fetch(candidate.file, { signal });
+        const file = this.files?.[candidate.file];
+        const response = await fetch(file ? new URL(file, this.baseURL) : candidate.file, {
+          signal,
+        });
         if (!response.ok) throw Error(`${response.status} ${candidate.file}`);
         let buffer = await this.context.decodeAudioData(await response.arrayBuffer());
         // Discard the unused post-loop tail. Using the exact buffer boundary as

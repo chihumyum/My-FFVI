@@ -1,3 +1,4 @@
+import { prepareWeb } from "./web.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { readFile, readdir, stat, writeFile, access } from "node:fs/promises";
 import path from "node:path";
@@ -44,6 +45,7 @@ await run("unity.py", ["--game", source, "--out", out]);
 await run("native.py", ["--game", source, "--out", path.join(out, "raw/magic-stones.json")]);
 await run("audio.py", ["--out", out, ...(args.includes("--aac") ? ["--aac"] : [])]);
 const counts = await compileRuntime(out);
+await prepareWeb({ dataRoot: out });
 const categories = {};
 async function scan(directory, prefix = "") {
   for (const entry of await readdir(directory, { withFileTypes: true })) {

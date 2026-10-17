@@ -1,4 +1,4 @@
-import { GameRenderer } from "/game/renderer.js";
+import { GameRenderer } from "./renderer.js";
 import { reference } from "/evidence/reference-canvas.js";
 const $ = (id) => document.getElementById(id);
 const read = async (url) => {
