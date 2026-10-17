@@ -180,6 +180,7 @@ for (let tick = 0; tick < Number(process.env.TICKS || 120000); tick++) {
     break;
   }
   const input = advanceStory(game, { through });
+  if (game.loading) await game.pending;
   if (input.status === "done") {
     stop = through + "-complete";
     break;

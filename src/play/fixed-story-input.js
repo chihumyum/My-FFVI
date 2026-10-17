@@ -65,6 +65,19 @@ function recordedWalk(game, x, y, layer, directions, route) {
 }
 
 export function fixedStoryInput(game, objective) {
+  if (
+    objective.id === "cid-care" &&
+    game.mapId === 191 &&
+    (game.groups.has("ev_e_0610") ||
+      (game.banks.ScenarioFlag3?.[13] === 1 && !game.groups.has("ev_e_0627")))
+  ) {
+    const waiting = pendingEventInput(game);
+    if (waiting) return { ...waiting, route: "cid-house-reentry" };
+    return (
+      recordedWalk(game, 99, 38, 1, expand("D7 R1 D1"), "cid-house-reentry") ||
+      recordedWalk(game, 101, 38, 1, expand("D7 L1 D1"), "cid-house-reentry")
+    );
+  }
   if (objective.id === "atma-weapon" && game.mapId === 431) {
     const route = continentRoutes.find(
       ([source]) => !game.history.some((entry) => entry.script === `sc_e_0${source}`),
