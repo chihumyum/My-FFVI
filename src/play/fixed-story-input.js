@@ -76,6 +76,17 @@ function recordedWalk(game, x, y, layer, directions, route) {
 }
 
 export function fixedStoryInput(game, objective) {
+  if (objective.id === "summit-three-plate" && game.mapId === 567) {
+    const walking =
+      recordedWalk(game, 65, 14, 1, expand("U1 L1"), "summit-ladder") ||
+      recordedWalk(game, 64, 11, 1, expand("U2"), "summit-ladder");
+    if (walking) return walking;
+    if (game.player.x === 64 && game.player.y === 13) {
+      game.move("up");
+      if (!game.busy) game.confirm();
+      return { status: "fixed-input", route: "summit-ladder", action: "climb-ladder" };
+    }
+  }
   if (objective.id === "tower-platform") {
     // The second party reaches the right-hand switch through the prison and
     // ladder. Crossing the centre room's still-closed side barriers is invalid.
