@@ -1,9 +1,10 @@
 # FFVI Reweb
 
-Goal: port FF6 Pixel Remaster to the Web, playable from a normal new game to the ending. HD-2D comes later.
+Goal: port FF6 Pixel Remaster to the Web, playable from a new game to the ending. Diagnose ordinary battle failures, but do not require a perfect automatic normal-stat run. HD-2D comes later.
 
 ## Principles
-- Playable first. Progress has one measure: how far a normal new game gets in the automated playthrough. Test counts, covered sites and successful builds are not progress.
+- Playable first. Report how far the story actually runs and which test mode was used. Test counts, covered sites and successful builds are not progress.
+- When the automatic player loses, first distinguish a game bug (formula, ability effect, monster AI or source event) from a player-policy failure. Fix game bugs. For a strategy failure, continue from a real checkpoint in the explicit boosted story-test mode; do not add shopping, training, MP budgeting or other player intelligence to overcome it. Keep normal and boosted evidence separate.
 - Data and assets come from PR; behavior follows the SNES disassembly (~/ff6-snes-disasm, commit 8130132). Values explicitly in PR's data win.
 - When unsure, implement the most reasonable reading, log a warning, keep running. No unknown may ever stop the story.
 - Original game assets, extracted text and generated output stay out of Git.
@@ -17,4 +18,4 @@ Goal: port FF6 Pixel Remaster to the Web, playable from a normal new game to the
 - Don't run multiple parallel sub-agents in "integration waves". Two genuinely independent pieces (e.g. battle formulas and map instructions) may run in parallel and merge directly when done.
 
 ## Reporting
-Self-accept each milestone using the normal-new-game automated playthrough and browser checks, then continue toward the ending without waiting for user confirmation. Report: how far it plays, new guessed implementations, known bugs, time spent. No percentages. Use the separate boosted-party test mode for story testing; never mistake it for battle-balance acceptance.
+Self-accept using automated playthroughs and browser checks, then continue toward the ending without waiting for user confirmation. Ordinary failures must be classified before choosing a fix or a boosted continuation. Report how far it plays, the mode and checkpoint transition, new guessed implementations, known bugs and time spent. No percentages. A strategy failure does not block story migration; boosted completion is not normal battle-balance acceptance.

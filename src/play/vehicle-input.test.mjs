@@ -4,6 +4,7 @@ import { executeVehicleInstruction, executeVehicleSyscall, vehicleInputState,
   openVehicleInput, submitVehicleInput, moveVehicle, canVehicleLand, autoVehicleInput } from './vehicle-input.js';
 import { updateVehicleInput } from './vehicle-input.js';
 import { vehicleJourneyInput } from './story-actions.js';
+import { PlayGame } from './game.js';
 
 function host() {
   const row = (id, extra = {}) => ({ id: String(id), asset_id: String(id + 32), release_flag: String(899 + id),
@@ -33,6 +34,21 @@ function host() {
   };
 }
 const place = (game, id = 4, x = 1, y = 0) => executeVehicleInstruction(game, null, 'SetVehicle', [id, 1, x, y, 1, 3]);
+
+test('a PR transportation action uses same-cell confirmation with its declared vehicle instead of terrain landing', () => {
+  const game=new PlayGame({data:{programs:{0:{name:'entry',ops:[['Exit']]}},global:{entry:0},byMap:{}}});
+  const target={id:'entry',kind:21,x:1,y:1,layer:0,script:'entry',transportationIds:[5]};
+  Object.assign(game,{mapId:2,map:{width:3,height:3,worldTerrain:{}},entities:[target]});
+  Object.assign(game.player,{x:1,y:1,layer:0,vehicle:1});assert.equal(game.confirm(),false);
+  game.player.vehicle=4;assert.equal(game.confirm(),false);
+  Object.assign(game.player,{x:0,direction:'right',vehicle:5});assert.equal(game.confirm(),false);
+  game.player.x=1;assert.equal(game.confirm(),true);assert.equal(game.tasks[0].program,0);
+  assert.deepEqual(game.banks,{});
+  const flight=host();flight.player.vehicle=4;
+  assert.equal(vehicleJourneyInput(flight,{target:{...target,transportationIds:[4]}},()=>{
+    throw Error('A source flight entry must not search for a walking/landing route.');
+  }),null);
+});
 
 test('flight can land farther than four tiles from a cave and then use its normal walking corridor', () => {
   const game=host(),target={id:'cave',kind:3,x:12,y:0,layer:1};

@@ -3,6 +3,23 @@ import assert from 'node:assert/strict';
 import { createCharacter, applyBattleRewards, correctJoinLevel, abilityMpCost } from './progression.js';
 import { equip, equipMagicite, useFieldItem, useFieldAbility } from './resources.js';
 import { openShop, buyFromShop, sellToShop } from './event-systems.js';
+import { PlayGame } from './game.js';
+
+test('an explicit boosted checkpoint continuation preserves the normal save and its story state', async () => {
+  const data={init:[],programs:{0:{name:'init',ops:[['Exit']]}},byMap:{},global:{init:0}},
+    map={width:3,height:3,initializer:'init',entities:[],layers:[],entrances:[]};
+  const source=new PlayGame({data});Object.assign(source,{mapId:1,map});
+  const saved=structuredClone(source.snapshot()),before=JSON.stringify(saved);
+  const game=new PlayGame({data,loadMap:async()=>map});
+  await game.restore(saved,{testBoost:true});
+  assert.equal(game.testBoost,true);assert.equal(game.party[0].level,99);assert.equal(game.party[0].hp,9999);
+  assert.equal(game.unit(9).testBoost,true);
+  assert.deepEqual(game.banks,saved.banks);assert.deepEqual(game.partySlots,saved.partySlots);
+  assert.deepEqual(game.battles,saved.battles);assert.deepEqual(game.history,saved.history);
+  assert.equal(JSON.stringify(saved),before);
+  const normal=new PlayGame({data,loadMap:async()=>map});await normal.restore(saved);
+  assert.equal(normal.testBoost,false);assert.notEqual(normal.party[0].level,99);
+});
 
 function fixture() {
   const data = {

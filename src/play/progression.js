@@ -99,6 +99,11 @@ export function recalculateEquipment(data, unit) {
   return unit;
 }
 
+export function applyTestBoost(unit) {
+  return Object.assign(unit, { testBoost: true, level: 99, hp: 9999, maxHp: 9999, mp: 999, maxMp: 999,
+    strength: 255, magic: 255, attack: 255, defense: 250, magicDefense: 250, speed: 255, accuracy: 255 });
+}
+
 export function createCharacter(data, id, testBoost = false) {
   const src = structuredClone(data.characters?.[id] ?? {});
   const unit = { id, name: `角色${id}`, maxHp: 120, maxMp: 30, level: 1,
@@ -110,8 +115,7 @@ export function createCharacter(data, id, testBoost = false) {
   unit.magicite = 0;
   unit.magicLearning = {};
   unit.growthBonuses = {};
-  if (testBoost) Object.assign(unit, { testBoost: true, level: 99, hp: 9999, maxHp: 9999, mp: 999, maxMp: 999,
-    strength: 255, magic: 255, attack: 255, defense: 250, magicDefense: 250, speed: 255, accuracy: 255 });
+  if (testBoost) applyTestBoost(unit);
   else recalculateEquipment(data, unit);
   return unit;
 }

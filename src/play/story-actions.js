@@ -90,6 +90,7 @@ export function vehicleJourneyInput(game, input, pathTo) {
       autoVehicleInput(game, { action: 'dismount', vehicleId: model.id }))
     return { ...input, status: 'vehicle' };
   if (model.flying && input.target) {
+    if(input.target.kind===21)return input.target.transportationIds?.includes(model.id)?null:{...input,status:'wrong-vehicle'};
     const candidates = landingCandidates(game,model.id,input.target);
     for (const point of candidates) {
       const foot = Object.create(game);
@@ -104,7 +105,7 @@ export function vehicleJourneyInput(game, input, pathTo) {
     }
     return { ...input, status: 'no-landing' };
   }
-  if (model.id === 1 && (input.status === 'no-route' || input.route?.length > 12)) {
+  if (model.id === 1 && (input.status === 'no-route' || input.route?.length > 12 || input.target?.kind===21)) {
     const parked = Object.entries(game.banks.PlaySystems?.vehicles || {})
       .filter(([id, value]) => [4, 5].includes(Number(id)) && value.mapId === game.mapId && value.enabled !== false)
       .map(([id, value]) => ({ ...value, id: `board:${id}`, kind: 6, vehicleId: Number(id) }));

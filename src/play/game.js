@@ -3,7 +3,7 @@ import {executePartyInput,autoPartyInput} from './party-input.js';
 import {walkEncounter,worldCollisionAt} from './encounters.js';
 import {executeVehicleInstruction,executeVehicleSyscall,updateVehicleInput,moveVehicle,canVehicleMove} from './vehicle-input.js';
 import {autoShopInput,openShop,buyFromShop,sellToShop} from './event-systems.js';
-import {createCharacter} from './progression.js';
+import {createCharacter,applyTestBoost} from './progression.js';
 import {equip,optimizeEquipment,equipMagicite,useFieldItem,useFieldAbility,canUseTent,changeInventory,activeSavePoint,openTreasure} from './resources.js';
 import {updateCooperativeInput,saveCooperativePosition} from './cooperative-input.js';
 import {executeSyscall,updateSyscallSystems,configureSyscallTimer,finishSyscallTimer} from './syscalls.js';
@@ -199,7 +199,13 @@ export class PlayGame{
   return 0;
  }
  interact(){if(this.busy)return false;const n=dirs.indexOf(this.player.direction),d=delta[n]||[0,1];
+  // PR kind21 is an explicit same-cell transportation action, such as
+  // entering a site from the air. Its source vehicle list owns eligibility.
+  const vehicleAction=this.entities.find(e=>e.kind===21&&e.script&&e.layer===this.player.layer&&
+    Math.abs(e.x-this.player.x)<.6&&Math.abs(e.y-this.player.y)<.6&&e.transportationIds?.includes(Number(this.player.vehicle)));
+  if(vehicleAction){this.startScript(vehicleAction.script);return true;}
   for(const distance of [1,2])for(const e of this.entities){
+   if(e.kind===21)continue;
    const actual={...e,...this.actors.get(String(e.id))};if(actual.visible===false||!this.interactionDistance(actual))continue;
    if(Math.abs(actual.x-this.player.x-d[0]*distance)>=.6||Math.abs(actual.y-this.player.y-d[1]*distance)>=.6)continue;
    if(distance===2&&this.interactionDistance(actual)!==2)continue;
@@ -212,5 +218,5 @@ export class PlayGame{
  }
 
  snapshot(){return{stepCount:this.stepCount,titleScreen:this.titleScreen,cooperativeState:this.cooperativeState,partyPositions:this.partyPositions,rts:this.rts,time:this.time,visited:this.visited,actors:[...this.actors],assignedRoutes:[...this.assignedRouteTasks||[]].filter(([,t])=>!t.done).map(([actor,t])=>({actor,route:this.actor(actor).routeId,loop:this.actor(actor).routeLoop,pc:t.pc,wait:t.wait,waitFor:t.waitFor,locals:t.locals})),walkEncounterState:this.walkEncounterState,finalBattleOrder:this.finalBattleOrder,completedStoryObjectives:this.completedStoryObjectives||[],testBoost:this.testBoost,mapId:this.mapId,player:{...this.player,motion:null},banks:this.banks,partySlots:this.partySlots,partyIndex:this.partyIndex,roster:this.roster,inventory:this.inventory,gil:this.gil,groups:[...this.groups],history:this.history,battles:this.battles};}
- async restore(saved){this.testBoost=!!saved.testBoost;await this.enter(saved.mapId,0);this.tasks=[];this.afterInit='';Object.assign(this,{stepCount:saved.stepCount||0,titleScreen:saved.titleScreen,cooperativeState:saved.cooperativeState,partyPositions:saved.partyPositions,rts:saved.rts,time:saved.time??this.time,visited:saved.visited??this.visited,walkEncounterState:saved.walkEncounterState,finalBattleOrder:saved.finalBattleOrder,completedStoryObjectives:saved.completedStoryObjectives||[],banks:saved.banks,partySlots:saved.partySlots,partyIndex:saved.partyIndex,roster:saved.roster,inventory:saved.inventory,gil:saved.gil,history:saved.history,battles:saved.battles});Object.assign(this.player,saved.player);this.groups=new Set(saved.groups);this.refreshActors();if(saved.actors)this.actors=new Map(saved.actors);else this.startScript(this.map.initializer,{init:true});for(const cursor of saved.assignedRoutes||[]){executeInstruction(this,{pc:0},'AssignMoveRoute',[cursor.actor,cursor.route,Number(cursor.loop)]);const task=this.assignedRouteTasks.get(cursor.actor);if(task)Object.assign(task,{pc:cursor.pc,wait:cursor.wait,waitFor:cursor.waitFor,locals:cursor.locals});}}
+ async restore(saved,{testBoost=false}={}){if(testBoost)saved=structuredClone(saved);this.testBoost=!!saved.testBoost;await this.enter(saved.mapId,0);this.tasks=[];this.afterInit='';Object.assign(this,{stepCount:saved.stepCount||0,titleScreen:saved.titleScreen,cooperativeState:saved.cooperativeState,partyPositions:saved.partyPositions,rts:saved.rts,time:saved.time??this.time,visited:saved.visited??this.visited,walkEncounterState:saved.walkEncounterState,finalBattleOrder:saved.finalBattleOrder,completedStoryObjectives:saved.completedStoryObjectives||[],banks:saved.banks,partySlots:saved.partySlots,partyIndex:saved.partyIndex,roster:saved.roster,inventory:saved.inventory,gil:saved.gil,history:saved.history,battles:saved.battles});Object.assign(this.player,saved.player);this.groups=new Set(saved.groups);this.refreshActors();if(saved.actors)this.actors=new Map(saved.actors);else this.startScript(this.map.initializer,{init:true});for(const cursor of saved.assignedRoutes||[]){executeInstruction(this,{pc:0},'AssignMoveRoute',[cursor.actor,cursor.route,Number(cursor.loop)]);const task=this.assignedRouteTasks.get(cursor.actor);if(task)Object.assign(task,{pc:cursor.pc,wait:cursor.wait,waitFor:cursor.waitFor,locals:cursor.locals});}if(testBoost){this.testBoost=true;for(const unit of Object.values(this.roster))applyTestBoost(unit);this.event("test-mode",{mode:"story-test"});}}
 }
