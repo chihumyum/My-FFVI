@@ -12,36 +12,12 @@ import {
 
 // Independent physical-input fixtures using real PR scripts and plate objects.
 // They do not represent a played mainline save or mainline completion.
-const data = JSON.parse(await readFile(new URL("../../build/play/data.json", import.meta.url)));
-const source = JSON.parse(
-  await readFile(new URL("../../build/world/maps/549.json", import.meta.url)),
+const data = JSON.parse(await readFile(new URL("../../build/web-data/data.json", import.meta.url)));
+const sourceMap = JSON.parse(
+  await readFile(new URL("../../build/web-data/maps/549.json", import.meta.url)),
 );
-const bundleName = source.map.entities
-  .find((entity) => entity.kind === 30)
-  .source.file.split("/")
-  .pop()
-  .replace(".bundle", ".json");
-const bundle = JSON.parse(
-  await readFile(new URL(`../../build/corpus/bundles/${bundleName}`, import.meta.url)),
-);
-const platesFor = (source) =>
-  source.map.entities
-    .filter((entity) => entity.kind === 30)
-    .map((entity) => {
-      const asset = bundle.find((asset) => asset.source.assetPath === entity.source.assetPath);
-      const raw = entity.source.pointer
-        .split("/")
-        .filter(Boolean)
-        .reduce((value, key) => value[key], asset.data);
-      const properties = Object.fromEntries(
-        raw.properties.map((property) => [property.name, property.value]),
-      );
-      return {
-        ...entity,
-        leaveScriptId: properties.leave_script_id,
-        actionId: properties.action_id,
-      };
-    });
+const source = { mapId: sourceMap.id, map: sourceMap };
+const platesFor = (source) => source.map.entities.filter((entity) => entity.kind === 30);
 const plates = platesFor(source);
 
 function fixture(sourceMap = source, sourcePlates = plates) {
@@ -158,9 +134,10 @@ test("cross-map RTS source continuation restores the destination party without o
 });
 
 test("two parties sharing one PR three-plate switch leave one spare party and preserve the occupied source flag", async () => {
-  const source = JSON.parse(
-    await readFile(new URL("../../build/world/maps/565.json", import.meta.url)),
+  const map = JSON.parse(
+    await readFile(new URL("../../build/web-data/maps/565.json", import.meta.url)),
   );
+  const source = { mapId: map.id, map };
   const game = fixture(source, platesFor(source));
   game.partyPositions = [
     { mapId: 565, x: 43, y: 10, layer: 1, direction: "up" },

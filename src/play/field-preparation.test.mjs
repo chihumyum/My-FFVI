@@ -13,12 +13,12 @@ import { preparationRoute, observePreparationTravel } from "./preparation-route.
 import { pathTo } from "./m1-route.js";
 
 const read = (path) => JSON.parse(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"));
-const data = read("build/play/data.json"),
-  battleData = read("build/play/battle.json");
+const data = read("build/web-data/data.json"),
+  battleData = read("build/web-data/battle.json");
 function gameOn(mapId) {
-  const map = read(`build/world/maps/${mapId}.json`).map;
+  const map = read(`build/web-data/maps/${mapId}.json`);
   const game = new PlayGame({
-    data: { ...data, navigation: read("build/play/navigation.json") },
+    data: { ...data, navigation: read("build/web-data/navigation.json") },
     battleData,
     loadMap: async () => map,
     random: () => 0.5,

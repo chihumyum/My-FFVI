@@ -1,0 +1,524 @@
+const numberRow = (row) =>
+  Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [
+      key,
+      typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : value,
+    ]),
+  );
+const dictionary = (rows) => Object.fromEntries(rows.map((row) => [row.id, row]));
+
+export function compileBattle(tables, assets, media, play, nativeStones) {
+  const extra =
+    assets.find((asset) => asset.source.assetPath?.toLowerCase().endsWith("/battleextradesc.json"))
+      ?.data || assets.find((asset) => asset.data.add_ability_weapon)?.data;
+  if (!extra) throw Error("Missing PR BattleExtraData");
+  const dictionaries = nativeStones;
+  const cleanName = (value) =>
+    typeof value === "string" ? value.replace(/<[^>]+>/g, "").trim() : "";
+  const localizedAbilities = Object.fromEntries(
+    (tables["content.csv"] || [])
+      .filter((row) => Number(row.type_id) === 4)
+      .map((row) => [row.type_value, { name: play.messages[row.mes_id_name] }]),
+  );
+  const aiPrograms = Object.fromEntries(
+    Object.values(play.programs)
+      .filter((p) => p.name.startsWith("sc_ai_"))
+      .map((p) => [p.name, p]),
+  );
+  const eventPrograms = Object.fromEntries(
+    Object.values(play.programs)
+      .filter((p) => p.name.startsWith("sc_b_"))
+      .map((p) => [p.name, p]),
+  );
+  const rows = (name) => (tables[`${name}.csv`] ?? []).map(numberRow);
+  const byId = (name) => dictionary(rows(name));
+  const contents = byId("content"),
+    functions = byId("function_group"),
+    conditions = byId("condition");
+  const weapons = byId("weapon"),
+    armors = byId("armor"),
+    aiNames = byId("monster_ai_script");
+  const spriteEntries = media.sprites
+    .filter((image) => image.source.assetPath)
+    .map((image) => [
+      image.source.assetPath,
+      { url: "/web-data/" + image.url, width: image.width, height: image.height },
+    ]);
+  const sprite = (suffix) =>
+    spriteEntries.find(([name]) => name.toLowerCase().endsWith(suffix.toLowerCase()))?.[1] || null;
+  const sprites = Object.fromEntries(spriteEntries);
+  const attrs = (group) =>
+    Object.fromEntries(
+      rows("attribute_group")
+        .filter((row) => row.group_id === group)
+        .map((row) => [row.attribute_id, row.type_id]),
+    );
+  const flags = (group) =>
+    rows("content_flag_group")
+      .filter((row) => row.group_id === group)
+      .map((row) => row.content_flag_id);
+  const names = {
+    1: "蒂娜",
+    2: "洛克",
+    3: "加源",
+    4: "影忍",
+    5: "埃德加",
+    6: "马修",
+    7: "莎莉丝",
+    8: "斯特拉格斯",
+    9: "莉姆",
+    10: "西捷亚",
+    11: "莫古",
+    12: "嘎",
+    13: "戈戈",
+    14: "乌玛洛",
+    15: "巴南",
+    16: "雷欧",
+    17: "幽灵",
+    18: "幽灵",
+    31: "魏吉",
+    32: "比格斯",
+  };
+  const abilityNames = {
+    1: "战斗",
+    2: "防御",
+    8: "偷窃",
+    132: "爆裂拳",
+    31: "疗伤",
+    32: "中疗伤",
+    33: "大疗伤",
+    40: "火焰",
+    41: "寒冰",
+    42: "雷电",
+    218: "火焰光束",
+    219: "雷电光束",
+    220: "寒冰光束",
+    221: "生化冲击",
+    222: "回复之力",
+    223: "混乱",
+    224: "消融射线",
+    225: "魔导导弹",
+    310: "网",
+    321: "百万伏特",
+    1406: "百万伏特",
+  };
+  const abilities = dictionary(
+    rows("ability").map((row) => {
+      const fn = functions[row.battle_function_group_id] ?? {};
+      const content = Object.values(contents).find(
+        (c) => c.type_id === 4 && c.type_value === row.id,
+      );
+      const physical =
+        row.id === 1 || row.process_prog?.toLowerCase() === "multiply" || fn.function1_id === 2;
+      const healing =
+        [1, 32, 34].includes(fn.function1_id) ||
+        [1, 2, 3].some((n) => fn[`function${n}_id`] === 34);
+      return {
+        id: row.id,
+        name:
+          cleanName(localizedAbilities[row.id]?.name) || abilityNames[row.id] || `技能 ${row.id}`,
+        nameKey: content?.mes_id_name,
+        power: row.standard_value,
+        mp: row.use_value,
+        accuracy: row.accuracy_rate,
+        systemId: row.system_id,
+        typeId: row.type_id,
+        functions: Array.from({ length: 3 }, (_, k) => ({
+          id: fn[`function${k + 1}_id`],
+          values: [1, 2, 3].map((n) => fn[`function${k + 1}_value${n}`]),
+        })).filter((f) => f.id),
+        kind: row.id === 2 ? "defend" : healing ? "heal" : physical ? "physical" : "magic",
+        target:
+          healing ||
+          [1, 2, 5, 12].includes(row.battle_renge_id) ||
+          ([6, 7, 8, 9, 20].includes(row.battle_renge_id) && [1, 2, 4].includes(row.system_id))
+            ? "ally"
+            : "enemy",
+        all: [2, 4, 8, 9, 16, 20, 21].includes(row.battle_renge_id),
+        flags: flags(row.content_flag_group_id),
+        elements: [
+          ...new Set([
+            ...(row.attribute_id ? [row.attribute_id] : []),
+            ...rows("attribute_group")
+              .filter((g) => g.group_id === row.attribute_group_id)
+              .map((g) => g.attribute_id),
+          ]),
+        ],
+        process: row.process_prog,
+        multiplier: row.process_prog?.toLowerCase() === "multiply" ? row.data_a / 100 : 1,
+        functionId: fn.function1_id ?? 0,
+        groupId: row.ability_group_id,
+        range: row.battle_renge_id,
+        menuRange: row.menu_renge_id,
+        menuFunctionGroup: row.menu_function_group_id,
+        functionGroup: row.battle_function_group_id,
+        attackCount: row.attack_count,
+        invalidBoss: Boolean(row.invalid_boss),
+        invalidReflection: Boolean(row.invalid_reflection),
+        forbiddenConditions: rows("condition_group")
+          .filter((g) => g.group_id === row.condition_group_id)
+          .map((g) => g.condition_id),
+        abilityWait: row.ability_wait,
+        condition:
+          fn.function1_id === 9 && conditions[fn.function1_value1]
+            ? {
+                id: fn.function1_value1,
+                type: conditions[fn.function1_value1].condition_type,
+                duration: conditions[fn.function1_value1].until_value,
+              }
+            : null,
+        dataA: row.data_a,
+        dataB: row.data_b,
+        dataC: row.data_c,
+      };
+    }),
+  );
+  const characterAssets = byId("character_asset"),
+    monsterAssets = byId("monster_asset");
+  const characters = dictionary(
+    rows("character_status").map((row) => {
+      const curve = rows("intermediate_growth_curve").find(
+        (g) => g.character_id === row.id && g.job_id === row.job_id,
+      );
+      const equipment = Array.from(
+        { length: 6 },
+        (_, index) => contents[row[`content_id${index + 1}`]],
+      )
+        .filter(Boolean)
+        .map((c) =>
+          c.type_id === 2 ? weapons[c.type_value] : c.type_id === 3 ? armors[c.type_value] : null,
+        )
+        .filter(Boolean);
+      const sum = (key) => equipment.reduce((total, item) => total + (item[key] ?? 0), 0);
+      const growth = rows("growth_curve").filter(
+        (g) => g.group_id === row.growth_curve_group_id && g.lv <= row.lv,
+      );
+      const weapon = equipment.find((item) => item.attack > 0);
+      const asset = characterAssets[row.character_asset_id]?.asset_name;
+      const learned = rows("learning")
+        .filter((l) => l.job_id === row.job_id && l.type_id === 1 && l.value1 <= row.lv)
+        .map((l) => contents[l.content_id])
+        .filter((c) => c?.type_id === 4)
+        .map((c) => c.type_value);
+      return {
+        id: row.id,
+        name:
+          names[row.id] ??
+          (row.id >= 19 && row.id <= 28 ? `莫古 ${row.id - 18}` : `角色 ${row.id}`),
+        level: row.lv,
+        jobId: row.job_id,
+        growthGroup: curve?.growth_curve_group_id ?? row.growth_curve_group_id,
+        expGroup: curve?.exp_table_group_id ?? 1,
+        baseStats: {
+          strength: row.strength,
+          vitality: row.vitality,
+          magic: row.magic,
+          speed: row.agility,
+          attack: row.attack,
+          defense: row.defense,
+          magicDefense: row.ability_defense,
+          evasion: row.evasion_rate,
+          magicEvasion: row.magic_evasion_rate,
+        },
+        baseHp: row.hp,
+        baseMp: row.mp,
+        maxHp: row.hp + growth.reduce((sum, level) => sum + level.hp_value1, 0),
+        maxMp: row.mp + growth.reduce((sum, level) => sum + level.mp_value1, 0),
+        strength: row.strength + sum("strength"),
+        magic: row.magic + sum("magic"),
+        speed: row.agility + sum("agility"),
+        attack: row.attack + (weapon?.attack ?? 0),
+        defense: row.defense + sum("defense"),
+        magicDefense: row.ability_defense + sum("ability_defense"),
+        evasion: row.evasion_rate + sum("evasion_rate"),
+        magicEvasion: row.magic_evasion_rate + sum("ability_evasion_rate"),
+        accuracy: weapon?.accuracy_rate || 100,
+        criticalRate: weapon?.critical_rate ?? 3,
+        exp: row.exp,
+        // The first two Terra spells and Celes's Blizzard precede PR learning.csv's rows.
+        // SNES NaturalMagic supplies those initial levels (1, 3 and 1 respectively).
+        abilities: [
+          ...new Set([
+            1,
+            2,
+            ...(row.id === 1 ? [31, ...(row.lv >= 3 ? [40] : [])] : row.id === 7 ? [41] : []),
+            ...learned,
+            ...(row.id === 2 ? [8] : row.id === 6 ? [132] : []),
+          ]),
+        ],
+        naturalLearning: rows("learning")
+          .filter((l) => l.job_id === (row.id === 1 ? 1 : row.job_id) && l.type_id === 1)
+          .map((l) => ({
+            level: l.value1,
+            abilityId: contents[l.content_id]?.type_value,
+          }))
+          .filter((l) => l.abilityId),
+        sprite: asset ? sprite(`/${asset}/Default_00.png`) : null,
+        magitekSprite: sprite("/BC_FF6_P019/Default_00.png"),
+        equipment: Array.from({ length: 6 }, (_, index) => row[`content_id${index + 1}`]),
+        commands: Array.from({ length: 6 }, (_, index) => row[`command_id${index + 1}`]).filter(
+          Boolean,
+        ),
+      };
+    }),
+  );
+  const monsters = dictionary(
+    rows("monster").map((row) => {
+      const declaredAI = aiNames[row.script_id]?.script_name ?? "";
+      const prefix = declaredAI.match(/^sc_ai_[\dA-F]+_/i)?.[0];
+      const matchingAI = prefix
+        ? Object.keys(aiPrograms).filter((name) => name.startsWith(prefix))
+        : [];
+      const aiName = aiPrograms[declaredAI]
+        ? declaredAI
+        : matchingAI.length === 1
+          ? matchingAI[0]
+          : declaredAI;
+      if (aiName !== declaredAI)
+        console.warn(
+          `Monster ${row.id}: PR table ${declaredAI} resolves to PR program ${aiName} by script number.`,
+        );
+      const asset = monsterAssets[row.monster_asset_id];
+      const role =
+        aiName === "sc_ai_100_Ymir"
+          ? "ymir-shell"
+          : aiName === "sc_ai_134_Ymir"
+            ? "ymir-head"
+            : null;
+      return {
+        id: row.id,
+        name:
+          role === "ymir-shell"
+            ? "尤弥尔（壳）"
+            : role === "ymir-head"
+              ? "尤弥尔"
+              : aiName.replace(/^sc_ai_[^_]+_/, "").replace(/([a-z])([A-Z])/g, "$1 $2") ||
+                `怪物 ${row.id}`,
+        nameKey: row.mes_id_name,
+        species: row.species,
+        undead: row.species === 1,
+        hp: row.hp,
+        maxHp: row.hp,
+        mp: row.mp,
+        maxMp: row.mp,
+        level: row.lv,
+        strength: row.strength,
+        vitality: row.vitality,
+        magic: row.ability_attack,
+        attack: row.attack,
+        speed: row.agility,
+        defense: row.defense,
+        magicDefense: row.ability_defense,
+        evasion: row.evasion_rate,
+        magicEvasion: row.magic_evasion_rate,
+        accuracy: row.accuracy_rate,
+        criticalRate: row.critical_rate,
+        exp: row.exp,
+        gil: row.gill,
+        boss: Boolean(row.boss),
+        diesAtZeroMp: rows("monster_flag_group").some(
+          (flag) => flag.group_id === row.monster_flag_group_id && flag.monster_flag_id === 4,
+        ),
+        initialConditions: rows("condition_group")
+          .filter((condition) => condition.group_id === row.initial_condition)
+          .map((condition) => condition.condition_id),
+        conditionImmunities: rows("condition_group")
+          .filter((condition) => condition.group_id === row.resistance_condition)
+          .map((condition) => condition.condition_id),
+        elementResistances: attrs(row.resistance_attribute),
+        role,
+        aiName,
+        scriptId: row.script_id,
+        rageGroup: row.rage_ability_random_group_id,
+        sketchGroup: row.release_ability_random_group_id,
+        commandGroup: row.command_group_type,
+        steal: Array.from({ length: 8 }, (_, k) => ({
+          id: row[`steal_content_id${k + 1}`],
+          count: row[`steal_content_id${k + 1}_value`] || 1,
+        })).filter((x) => x.id > 0),
+
+        drops: Array.from({ length: 8 }, (_, index) => ({
+          id: row[`drop_content_id${index + 1}`],
+          count: row[`drop_content_id${index + 1}_value`],
+        })).filter((d) => d.id > 0 && d.count > 0),
+        dropRate: row.drop_rate,
+        sprite: asset
+          ? sprite(`/${asset.group_name}/${asset.group_name}_${asset.asset_name}.png`)
+          : null,
+      };
+    }),
+  );
+  const backgrounds = dictionary(
+    rows("battle_background_asset").map((row) => ({
+      id: row.id,
+      sprite: sprite(`/${row.asset_name}/${row.asset_name}.png`),
+    })),
+  );
+  const parties = dictionary(
+    rows("monster_party").map((row) => ({
+      id: row.id,
+      backgroundId: row.battle_background_asset_id,
+      bgmId: row.battle_bgm_asset_id,
+      battlePatterns: Array.from({ length: 6 }, (_, n) => row[`battle_pattern${n + 1}`]),
+      // FFVI magic learning points use get_value. get_ap is a separate
+      // cross-title field and is zero throughout this PR table.
+      ap: row.get_value,
+      notEscape: Boolean(row.not_escape),
+      script: String(row.script_name),
+      members: Array.from({ length: 9 }, (_, index) => ({
+        monsterId: row[`monster${index + 1}`],
+        slot: index,
+        x: row[`monster${index + 1}_x_position`],
+        y: row[`monster${index + 1}_y_position`],
+      })).filter((m) => m.monsterId > 0),
+    })),
+  );
+  const result = {
+    aiPrograms,
+    eventPrograms,
+    scriptNames: play.scriptIds,
+    messages: play.messages,
+    conditions,
+    conditionGroups: rows("condition_group"),
+    eraseConditionGroups: rows("erase_condition_group"),
+    randomAbilityGroups: rows("ability_random_group"),
+    monsterExchangeItems: extra.monster_exchange_item,
+    notManipulateMonsters: extra.not_manipulate_monster_list,
+    commandGroups: rows("command_group"),
+    monsterExchangeWeights: extra.monster_exchange_weight,
+    abilityGroups: rows("ability_group"),
+    itemNames: Object.fromEntries(
+      rows("item").map((row) => {
+        const content = Object.values(contents).find(
+          (c) => c.type_id === 1 && c.type_value === row.id,
+        );
+        return [row.id, cleanName(play.messages[content?.mes_id_name]) || `道具 ${row.id}`];
+      }),
+    ),
+    functions,
+    monsters,
+    parties,
+    abilities,
+    characters,
+    commands: Object.fromEntries(
+      rows("command").map((row) => {
+        const old = { name: cleanName(play.messages[row.mes_id_name]) };
+        const types = rows("ability_group")
+          .filter((g) => g.group_id === row.ability_group_id)
+          .map((g) => byId("chanting")[g.type_id]?.ability_type_id);
+        return [
+          row.id,
+          {
+            ...row,
+            name:
+              old?.name ||
+              cleanName(localizedAbilities[row.ability_id]?.name) ||
+              {
+                8: "幻化",
+                11: "夺取",
+                13: "投掷",
+                18: "素描",
+                19: "操纵",
+                20: "老虎机",
+                21: "扔钱",
+                28: "激震",
+                30: "跳跃",
+                31: "连续魔",
+              }[row.id] ||
+              `指令 ${row.id}`,
+            abilityTypes: types,
+            forbiddenConditions: rows("condition_group")
+              .filter((g) => g.group_id === row.condition_group_id)
+              .map((g) => g.condition_id),
+          },
+        ];
+      }),
+    ),
+    items: byId("item"),
+    contents,
+    contentNames: Object.fromEntries(
+      Object.values(contents).map((content) => [
+        content.id,
+        cleanName(play.messages[content.mes_id_name]) || `物品 ${content.id}`,
+      ]),
+    ),
+    weapons,
+    weaponAdditionalAbilities: (extra.add_ability_weapon || []).map((row) => ({
+      weaponId: row.weapon_id,
+      abilityId: row.ability_id,
+      chance: row.ability_per,
+    })),
+    armors,
+    jobGroups: byId("job_group"),
+    partsGroups: byId("parts_group"),
+    attributeGroups: rows("attribute_group"),
+    learning: rows("learning"),
+    limits: Object.fromEntries(rows("game_constant_int").map((row) => [row.key_name, row.value1])),
+    magicStones: Object.fromEntries(
+      Object.values(contents)
+        .filter((content) => content.type_id === 9)
+        .map((content) => {
+          const saved = dictionaries[content.id];
+          return [
+            content.id,
+            {
+              contentId: content.id,
+              name: cleanName(play.messages[content.mes_id_name]) || `魔石 ${content.id}`,
+              summonAbilityId: saved?.summonAbilityId ?? 0,
+              bonus: saved?.bonus ?? { parameter: 0, value: 0 },
+              learning: rows("learning")
+                .filter((row) => row.type_id === 2 && row.value1 === content.id)
+                .map((row) => ({
+                  abilityId: contents[row.content_id]?.type_value,
+                  contentId: row.content_id,
+                  rate: row.value2,
+                })),
+            },
+          ];
+        }),
+    ),
+    backgrounds,
+    sprites,
+    growth: rows("growth_curve"),
+    expTable: rows("exp_table"),
+    encounters: {
+      maps: dictionary(
+        rows("map").map((row) => ({
+          id: row.id,
+          set: row.monster_set_id,
+          grid: row.encount_area_grid_id,
+          min: row.required_steps_min,
+          max: row.required_steps_max,
+          subtract: row.subtract_steps,
+        })),
+      ),
+      sets: dictionary(
+        rows("monster_set").map((row) => ({
+          id: row.id,
+          choices: Array.from({ length: 16 }, (_, n) => ({
+            id: row[`monster_set${n + 1}`],
+            weight: row[`monster_set${n + 1}_rate`],
+          })),
+        })),
+      ),
+      grids: byId("encount_area_grid"),
+      areas: Object.fromEntries(
+        rows("encount_area").map((row) => [
+          row.encount_area_grid_number,
+          Array.from(
+            { length: 32 },
+            (_, n) => row[`foot${String(n + 1).padStart(2, "0")}_monster_set`],
+          ),
+        ]),
+      ),
+    },
+    warnings: [
+      "PR MonsterAI programs execute directly; uncertain selector and timing details warn with script and instruction index.",
+      "Enemy actions, reactions, timers and final actions are selected by PR AI; function and process families execute compositionally with explicit warnings for approximations.",
+      "Initial ATB randomizes a speed-based gauge; browser actions resolve immediately without SNES animation and command wait queues.",
+      "Battle event presentation is simplified; main-story event conditions and required commands execute in the battle loop.",
+      "Ability and character names without an extracted battle translation use short fallback names.",
+    ],
+  };
+  return result;
+}

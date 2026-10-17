@@ -18,9 +18,9 @@ import {
   sourceSummonPlan,
 } from "./ability-effects.js";
 import { Battle, calculateDamage } from "./battle.js";
-import { auditAbilities } from "../../scripts/audit-play-abilities.mjs";
+import { auditAbilities } from "../../tools/play/audit-play-abilities.mjs";
 const data = JSON.parse(
-  fs.readFileSync(new URL("../../build/play/battle.json", import.meta.url), "utf8"),
+  fs.readFileSync(new URL("../../build/web-data/battle.json", import.meta.url), "utf8"),
 );
 const unit = (props = {}) => ({
   hp: 500,
@@ -349,7 +349,7 @@ test("PR Imp self-negation makes two casts toggle, while an ordinary overlapping
 const weaponProcRows = JSON.parse(
   fs.readFileSync(
     new URL(
-      "../../build/corpus/bundles/battleextradata_assets_all_1295049eaf8a1a34aca99fdc338e0a02.json",
+      "../../build/web-data/raw/bundles/battleextradata_assets_all_1295049eaf8a1a34aca99fdc338e0a02.json",
       import.meta.url,
     ),
     "utf8",

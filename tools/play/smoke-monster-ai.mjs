@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
-import { Battle } from "../src/play/battle.js";
-import { MONSTER_AI_OPS } from "../src/play/monster-ai.js";
-const data = JSON.parse(await fs.readFile("build/play/battle.json", "utf8"));
+import { Battle } from "../../src/play/battle.js";
+import { MONSTER_AI_OPS } from "../../src/play/monster-ai.js";
+const data = JSON.parse(await fs.readFile("build/web-data/battle.json", "utf8"));
 const programs = Object.values(data.aiPrograms),
   opcodes = new Set(programs.flatMap((p) => p.ops.map((o) => o[0])));
 assert.equal(programs.length, 430);
@@ -125,6 +125,7 @@ const report = {
   results,
   warnings: [...warnings],
 };
+await fs.mkdir("build/play", { recursive: true });
 await fs.writeFile("build/play/ai-smoke.json", JSON.stringify(report, null, 2));
 console.log(
   `${results.length} PR MonsterAI programs × 6 normal turns plus reactions, timers and final actions: completed without exception; ${report.seconds.toFixed(2)}s.`,

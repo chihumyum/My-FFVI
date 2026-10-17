@@ -1,10 +1,10 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
-import { Battle } from "../src/play/battle.js";
-import { createCharacter, learnNaturalAbilities } from "../src/play/progression.js";
-import { setCondition } from "../src/play/ability-effects.js";
-import { effectiveCommandIds, configureGogo, blitzInputs } from "../src/play/battle-commands.js";
-const data = JSON.parse(await fs.readFile("build/play/battle.json", "utf8")),
+import { Battle } from "../../src/play/battle.js";
+import { createCharacter, learnNaturalAbilities } from "../../src/play/progression.js";
+import { setCondition } from "../../src/play/ability-effects.js";
+import { effectiveCommandIds, configureGogo, blitzInputs } from "../../src/play/battle-commands.js";
+const data = JSON.parse(await fs.readFile("build/web-data/battle.json", "utf8")),
   results = [];
 function fixture(id, { veldt = false } = {}) {
   const unit = createCharacter(data, id, true);
@@ -226,6 +226,7 @@ await check("Veldt Rage learning waits for a real Leap-and-return cycle", () => 
   assert(z.unit.rages.includes(2));
   assert.equal(z.unit.pendingRages.length, 0);
 });
+await fs.mkdir("build/play", { recursive: true });
 await fs.writeFile("build/play/commands-check.json", JSON.stringify({ results }, null, 2));
 for (const r of results) console.log(r.result, r.name, r.error ?? "");
 if (results.some((r) => r.result === "failed")) process.exitCode = 1;

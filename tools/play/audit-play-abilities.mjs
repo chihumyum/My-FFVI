@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { FUNCTION_EFFECTS, PROCESS_EFFECTS, functionsFor } from "../src/play/ability-effects.js";
+import { FUNCTION_EFFECTS, PROCESS_EFFECTS, functionsFor } from "../../src/play/ability-effects.js";
 
 // Inventory of actual PR rows, not a claim of main-story or balance acceptance.
 // Approximate families and source markers remain visible even with a handler.
@@ -84,7 +84,7 @@ export function auditAbilities(data) {
 }
 if (import.meta.url === new URL(process.argv[1], `file://${process.cwd()}/`).href) {
   const data = JSON.parse(
-    await fs.readFile(process.env.BATTLE_DATA || "build/play/battle.json", "utf8"),
+    await fs.readFile(process.env.BATTLE_DATA || "build/web-data/battle.json", "utf8"),
   );
   const result = auditAbilities(data);
   if (process.argv.includes("--json")) console.log(JSON.stringify(result, null, 2));

@@ -1,10 +1,10 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { PlayGame } from "../src/play/game.js";
-import { Battle } from "../src/play/battle.js";
-import { preparePlayMap } from "./build-play.mjs";
-import { advanceStory } from "../src/play/story-route.js";
-import { storyChoice } from "../src/play/story-plan.js";
-import { buildNavigation } from "./build-play-navigation.mjs";
+import { PlayGame } from "../../src/play/game.js";
+import { Battle } from "../../src/play/battle.js";
+import { advanceStory } from "../../src/play/story-route.js";
+import { storyChoice } from "../../src/play/story-plan.js";
+const dataRoot = process.env.PLAY_DATA_DIR || "build/web-data";
+await mkdir("build/play", { recursive: true });
 let randomState = Number(process.env.PLAY_SEED || 1) >>> 0;
 const random = () => {
   randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
@@ -15,11 +15,11 @@ for (const signal of ["SIGINT", "SIGTERM"])
   process.once(signal, () => {
     interrupted = true;
   });
-const data = JSON.parse(await readFile("build/play/data.json")),
-  battleData = JSON.parse(await readFile("build/play/battle.json"));
+const data = JSON.parse(await readFile(`${dataRoot}/data.json`)),
+  battleData = JSON.parse(await readFile(`${dataRoot}/battle.json`));
 let last = "";
 const events = [];
-data.navigation = JSON.parse(await readFile(await buildNavigation()));
+data.navigation = JSON.parse(await readFile(`${dataRoot}/navigation.json`));
 let through = process.env.PLAY_THROUGH;
 if (process.env.PLAY_CHECKPOINT_DIR)
   await mkdir(process.env.PLAY_CHECKPOINT_DIR, { recursive: true });
@@ -29,7 +29,7 @@ const game = new PlayGame({
   Battle,
   testBoost: process.env.PLAY_TEST_BOOST === "1",
   random,
-  loadMap: async (id) => JSON.parse(await readFile(await preparePlayMap(id))),
+  loadMap: async (id) => JSON.parse(await readFile(`${dataRoot}/maps/${id}.json`)),
   onEvent: (e) => {
     if (["script", "map", "battle", "battle-end"].includes(e.kind)) {
       events.push(e);
@@ -98,7 +98,7 @@ function recordBattle(battle) {
     warnings: [...battle.warnings],
   });
 }
-for (let tick = 0; tick < Number(process.env.TICKS || 90000); tick++) {
+for (let tick = 0; tick < Number(process.env.TICKS || 120000); tick++) {
   if (interrupted) {
     stop = "interrupted";
     break;
@@ -295,3 +295,10 @@ console.log(
     2,
   ),
 );
+
+if (
+  game.testBoost &&
+  through === "all" &&
+  !(game.titleScreen && game.battles.some((b) => b.encounterId === 472 && b.outcome === "victory"))
+)
+  process.exitCode = 1;

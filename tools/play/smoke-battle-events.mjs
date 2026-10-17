@@ -1,10 +1,10 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
-import { Battle } from "../src/play/battle.js";
+import { Battle } from "../../src/play/battle.js";
 
 // Independent boosted battle fixtures using the exported PR programs and
 // formations. This is neither a normal-new-game playthrough nor balance acceptance.
-const data = JSON.parse(await fs.readFile(process.argv[2] ?? "build/play/battle.json", "utf8"));
+const data = JSON.parse(await fs.readFile(process.argv[2] ?? "build/web-data/battle.json", "utf8"));
 const start = performance.now(),
   simulatedLimit = 240,
   wallLimit = 30_000,

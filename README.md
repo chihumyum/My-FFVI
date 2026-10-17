@@ -1,47 +1,51 @@
 # FFVI Reweb
 
-将 FF6 Pixel Remaster 迁移到浏览器。PR 提供地图、剧情、中文文本、图像、音乐和表数据；行为以 `~/ff6-snes-disasm` 的 `8130132` 为参考，PR 显式参数优先。不确定处记录警告并继续执行。
+将 FF6 Pixel Remaster 迁移到浏览器。PR 提供全部地图、剧情、中文文本、图片、音乐和参数；行为参考 `~/ff6-snes-disasm` 的 `8130132`，PR 显式参数优先。不确定处记录警告并继续。
 
-本机已提取的数据位于 `build/`。运行：
+原版素材与生成数据仅供本机私下使用，`build/`、`dist/` 不进入 Git，不部署到公开地址。
+
+需要 Node.js 22.18+、Python 3、[vgmstream-cli](https://github.com/vgmstream/vgmstream) 和 [FFmpeg](https://ffmpeg.org/)。本机可用 `brew install vgmstream ffmpeg`；首次安装 JS 与 Python 依赖：
 
 ```sh
-npm run play:build
+npm ci
+python3 -m venv .venv
+.venv/bin/pip install -r tools/export/requirements.txt
+```
+
+从原始 PR 安装目录独立导出全部运行数据：
+
+```sh
+npm run export -- --game "/path/to/FINAL FANTASY VI"
+```
+
+输出为 `build/web-data/`，可用 `--out "/path/to/empty-directory"` 更换。导出器只读这个游戏目录和自身缓存，不读旧工程。SHA256 按原文件跳过未变化的 Unity 提取，音频按原 bank 字节缓存，地图提前整理完成。`manifest.json` 列每类数量和大小；`raw/index.json` 是当前源文件索引，`raw/issues.json` 记录未能完整解析的原生对象并保留原字节。地图、剧情、战斗、图像、音频、UI/相机元数据均可重新生成。魔石在该 PR Windows 版本的 `GameAssembly.dll` 构造函数中，不在 CSV；导出器直接解码整数字典，遇不兼容版本会明确报错。
+
+开发运行：
+
+```sh
 npm run dev
 ```
 
-打开 http://127.0.0.1:4173/game/ 。方向键 / WASD 移动，Enter / 空格确认，Esc 打开队伍与道具，Q 切换防卫战队伍。世界地图上的「载具操作」可起飞、着陆、返回甲板及乘降。战斗选择指令后选择目标；「自动推进」同时加速对白和自动战斗。「剧情测试」使用 99 级、999999 HP 和高攻防队伍；与普通模式分开存档。自动游玩默认普通属性；`PLAY_TEST_BOOST=1 npm run play:through` 显式启用强化剧情测试。
+打开 `http://127.0.0.1:4173/game/`。当前服务器只读导出文件，不再按请求编译地图；Vite 与纯静态打包在地基第 5 步完成。音频目前仍输出兼容 FLAC，Opus/Web Audio 在地基第 3 步完成。
 
-「自动行走」按主线目标输入移动、交谈、选项和战斗指令，可随时关闭手动操作。普通自动推进为 4 倍速，强化剧情测试为 16 倍速；存档保存在此浏览器中。测试地址加 `?through=M2` 可在三分线选择处停止。队伍编成和商店有实际菜单；自动行走按当前目标选择已招募角色。野外行走按 PR 地形和步数遇敌，兽原可用真实干肉喂食嘎。自动跑法只做回归：强化模式从新游戏到结局；普通属性到三分线结束左右。旧补给、购物和训练策略已冻结，回归入口不再调用它们；经验、魔法学习点、金币与道具仍由游戏实际结算。Esc 菜单支持装备、魔石、学习进度、场外魔法和道具；战斗可选择背包中的投掷物，逃跑遵守原始阵型限制。
+方向键 / WASD 移动，Enter / 空格确认，Esc 打开菜单，Q 切换分队。世界地图「载具操作」可起飞、着陆和进入甲板。战斗按 PR 指令显示子菜单；Tab 切换就绪角色，支持前后排、ATB 等待/主动和战斗速度。必杀技使用方向键及 X/Y/L/R、Enter 确认；剑技蓄力，老虎机逐轮停止。戈戈可自选三项指令。`/game/battle-lab.html` 是使用真实 PR 阵型的独立指令测试，不改剧情存档。
+
+「剧情测试」使用 Lv99、999999 HP 的明确强化队伍；存档与普通模式分开。「自动行走」只做回归，不增加购物、练级、补给、MP 预算等策略。普通跑法打不过时只修真正的游戏 bug；策略问题由强化模式继续，平衡交给实玩。
+
+强化新游戏到结局回归：
 
 ```sh
 PLAY_TEST_BOOST=1 npm run play:through
-PLAY_THROUGH=M1 PLAY_TEST_BOOST=0 npm run play:through
-PLAY_THROUGH=M2 PLAY_TEST_BOOST=1 npm run play:through
-npm run play:ai-smoke
-npm run play:events-smoke
-node --test src/play/*.test.mjs
-node scripts/audit-play-abilities.mjs
 ```
 
-自动游玩默认普通属性、目标为 M3-sabin；强化模式默认目标为结局。结果写入 `build/play/playthrough.json`。它使用和浏览器相同的运行时、战斗与按键路线。地图按需生成。随机序列默认种子1，`PLAY_SEED` 可指定其他种子；`PLAY_REPORT` 可指定独立报告路径。`PLAY_CHECKPOINT=build/play/checkpoint.json` 会在可操作边界保存实际游玩的状态；`PLAY_CHECKPOINT_DIR=build/play/checkpoints` 可保留各目标进入时的真实存档。`PLAY_RESUME=build/play/checkpoint.json npm run play:through` 从该存档继续，结果会标记为 resume，不计作一次新的完整新游戏验收。
-
-自动跑法败北时，先检查公式、技能、怪物AI和战斗事件。游戏bug必须修复；确认属于跑法策略不足时，不再增加购物、练级或MP预算策略，直接从真实战前存档进入强化剧情测试：
+默认读取 `build/web-data/`；`PLAY_DATA_DIR` 可指向另一个独立导出目录。普通模式默认到三分线结束附近，也可用 `PLAY_THROUGH=M1` 验证开场。`PLAY_REPORT` 指定报告，`PLAY_SEED` 指定随机种子。`PLAY_CHECKPOINT_DIR` 记录真实游玩产生的目标存档；`PLAY_RESUME` 继续存档，不计作新游戏全程验收。强化会复制普通存档，不写回原槽，不修改剧情旗标。怪物 AI 直接解释 PR 的 430 个程序和 69 种指令。
 
 ```sh
-PLAY_TEST_BOOST=1 PLAY_RESUME=build/play/checkpoint.json \
-PLAY_BOOST_REASON='已核对源数据，本次为跑法策略不足' \
-PLAY_REPORT=build/play/boosted-continuation.json npm run play:through
+npm test
+npm run play:ai-smoke
+npm run play:events-smoke
+npm run play:commands-check
+npm run format:check
 ```
 
-显式强化会复制读取的普通存档并使用已有测试属性，不改写原存档或剧情旗标；战斗仍实际执行。报告记录原存档模式、强化模式和原因，强化结果只证明剧情可继续。
-浏览器败北界面的「强化重试（剧情测试）」使用同一入口，读取普通存档副本，后续保存在独立的剧情测试槽。
-
-怪物 AI 直接解释 PR 的 430 个程序和 69 种指令，所有遭遇共用。`play:ai-smoke` 给每个程序执行六回合及受击、计时、临死通知；`play:events-smoke` 检查 42 个有遭遇绑定的 PR 战斗事件，并断言瓦尔加斯真实爆裂拳、偷衣及最终战阶段切换。独立强化战斗测试不代表主线通关或战斗平衡验收。未实现的技能效果会记录来源后使用普通攻击。
-
-`src/play/` 为精简脚本、战斗与输入运行时；`apps/play/` 为 Canvas 画面和操作界面；`scripts/build-play*.mjs` 复用已有提取数据。原始游戏资产及生成数据不进入 Git。旧 `src/core` 和旧检查脚本仅供查阅，不再作为迁移门禁。
-
-战斗按 PR 指令显示正式菜单；魔法、道具、投掷、机械、青魔法、舞蹈和狂怒各有子菜单。Tab 或「操作角色」切换就绪成员；菜单支持前后排、ATB 模式和战斗速度。必杀技支持方向键及 X/Y/L/R 输入，Enter 确认；剑技按蓄力等级选择，老虎机逐轮停止。戈戈可在队伍菜单自选三项指令。
-
-独立指令测试页为 `/game/battle-lab.html`，使用 PR 阵型和明确强化的测试队伍，不修改剧情存档。`node scripts/check-play-commands.mjs` 检查角色学习、指令替换、幻化消耗、状态清理和真实资源消耗。最近完整强化回归见 `build/play/stage1-accepted.json`，普通回归在洛克线隧道装甲战败北，未继续调整跑法。已知问题与猜测实现见 [STATUS.md](STATUS.md)。
-
-下一阶段先做地基调整：纯格式化、独立 PR 数据导出、Opus/Web Audio、Pixi WebGL、Vite 静态打包，之后再制作 PR 界面。音频迁到地基阶段，HD-2D 暂不处理。
+`src/play/` 是独立游戏逻辑；`apps/play/` 是画面和操作界面；`tools/export/` 从 PR 原文件导出；`tools/play/` 是开发服务和回归工具。旧工程归档到 `legacy/`，不要阅读或重新接入。当前可玩边界、问题与猜测只维护在 [STATUS.md](STATUS.md)。HD-2D 暂不处理。

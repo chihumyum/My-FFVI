@@ -230,7 +230,7 @@ test("a random group capable of killing the party within one action cycle is avo
 });
 
 const sourceData = JSON.parse(
-  fs.readFileSync(new URL("../../build/play/battle.json", import.meta.url), "utf8"),
+  fs.readFileSync(new URL("../../build/web-data/battle.json", import.meta.url), "utf8"),
 );
 function sourceBattle(abilities, monsterId = 280, program = null, party = null) {
   const source = sourceData.monsters[monsterId];

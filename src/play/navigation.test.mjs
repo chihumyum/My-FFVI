@@ -4,7 +4,7 @@ import { PlayGame } from "./game.js";
 import { pathTo } from "./m1-route.js";
 import { routeToStory, encountersForInput } from "./navigation.js";
 import { executeInstruction } from "./instructions.js";
-import { navigationRegions } from "../../scripts/play-navigation-regions.mjs";
+import { navigationRegions } from "../../tools/export/regions.mjs";
 
 test("cross-map routing uses the source initializer NPC position without moving live actors", () => {
   const door = {

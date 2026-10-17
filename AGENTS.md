@@ -10,6 +10,7 @@ Goal: port FF6 Pixel Remaster to the Web, playable from a new game to the ending
 - Original game assets, extracted text and generated output stay out of Git.
 
 ## Don't
+- Don't read legacy/ or reconnect archived builders, scripts or generated products.
 - Don't add game-strategy intelligence to the automatic player. Freeze existing policy; no new shopping, grinding, supplies, MP budgets or counter-cost prediction. Diagnose genuine game bugs and fix them; use explicit boosted mode for strategy failures.
 - Don't add source hashes, evidence levels or "verified" flags to objects.
 - Don't write a doc per feature. Maintain only README.md (how to run it) and STATUS.md (how far it plays, known issues, list of guessed implementations).
@@ -24,3 +25,10 @@ Implement in order: battle commands/effects, foundation adjustment (format only;
 Foundation steps are sequential and separately committed. Every step must pass boosted fresh-new-game-to-ending regression and add a result line to STATUS.md. No game-logic changes in this phase; src/play must never import a renderer. Audio work moves from field presentation into foundation. Never deploy original assets publicly or commit them to Git.
 
 After the formatter is introduced, run npm run format:check before every commit.
+
+## Modules
+- tools/export: independent data export from original PR files; hashes belong only in export caches/manifests.
+- src/play: game logic and core regression tests; no renderer imports. Existing automatic-player strategy is frozen.
+- apps/play: rendering and game UI; Pixi/WebGL migration follows audio, and reads state/events.
+- tools/play: development service and regression harnesses; load only already exported data.
+- legacy/: archived old project; do not read.

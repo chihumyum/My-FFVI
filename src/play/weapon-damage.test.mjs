@@ -9,7 +9,7 @@ import {
   diceWeaponDamage,
 } from "./weapon-damage.js";
 const data = JSON.parse(
-  fs.readFileSync(new URL("../../build/play/battle.json", import.meta.url), "utf8"),
+  fs.readFileSync(new URL("../../build/web-data/battle.json", import.meta.url), "utf8"),
 );
 const fight = data.abilities[1];
 const contentFor = (id) =>

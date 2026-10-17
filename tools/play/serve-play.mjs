@@ -1,8 +1,7 @@
 import http from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import { resolve, extname, sep } from "node:path";
-import { preparePlayMap } from "./build-play.mjs";
-const root = resolve(import.meta.dirname, "..");
+const root = resolve(import.meta.dirname, "../..");
 const types = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -17,16 +16,12 @@ http
     try {
       const url = new URL(req.url, "http://localhost"),
         p = decodeURIComponent(url.pathname);
-      if (p.startsWith("/play-data/maps/")) {
-        const id = Number(p.split("/").pop().replace(".json", ""));
-        if (Number.isInteger(id)) await preparePlayMap(id);
-      }
       let base, rel;
       if (p === "/" || p === "/game/" || p === "/play/") {
         base = "apps/play";
         rel = "index.html";
       } else if (p.startsWith("/play-data/")) {
-        base = "build/play";
+        base = process.env.PLAY_DATA_DIR || "build/web-data";
         rel = p.slice(11);
       } else if (p.startsWith("/play-runtime/")) {
         base = "src/play";
