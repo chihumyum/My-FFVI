@@ -187,6 +187,12 @@ export function applyTestBoost(unit) {
     magicDefense: 250,
     speed: 255,
     accuracy: 255,
+    // This explicit story-test profile skips permanent Charm/LoveToken
+    // control/cover loops as well as numeric combat difficulty. It does not
+    // describe ordinary balance, and does not change either source effect.
+    conditionImmunities: [
+      ...new Set([...(unit.conditionImmunities ?? unit.resistanceConditions ?? []), 70, 86]),
+    ],
   });
 }
 

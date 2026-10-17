@@ -15,6 +15,14 @@ import {
   finishRoles,
 } from "./role-commands.js";
 import { abilityMpCost, applyBattleRewards } from "./progression.js";
+import { attackHits } from "./battle-accuracy.js";
+import {
+  charmAction,
+  loveTokenCover,
+  pruneStatusLinks,
+  clearStatusLinks,
+  statusLinkFor,
+} from "./status-links.js";
 import { MonsterAI } from "./monster-ai.js";
 import { BattleEvents } from "./battle-events.js";
 import { autoBattleInput } from "./battle-input.js";
@@ -61,27 +69,21 @@ export function calculateDamage(
   const berserk = actor.berserk || conditions.includes(18);
   const level = value(actor.level, 1);
   const healing = ability.kind === "heal";
-  const accuracy = ability.flags?.includes(1)
-    ? 255
-    : value(ability.accuracy, actor.accuracy ?? 100);
-  const evade = clamp(value(physical ? target.evasion : target.magicEvasion, 0), 0, 128);
-  if (
-    !healing &&
-    accuracy < 255 &&
-    random() * 100 >= Math.floor(((256 - evade * 2) * accuracy) / 256)
-  ) {
+  if (!ability.hitResolved && !attackHits(actor, target, ability, random, data)) {
     return { amount: 0, missed: true, critical: false };
   }
   let base;
   if (physical) {
-    const attack = value(actor.attack, 20) + power;
+    // PR's explicit skill/item power replaces weapon BattlePower. Zero-power
+    // Fight/StealAttack/multiply specials still use the attacker's weapon.
+    const attack = power > 0 ? power : value(actor.attack, 20);
+    const levelTerm = Math.floor(
+      (level * level * (Math.min(255, value(actor.strength, 30) * 2) + attack)) / 256,
+    );
     base =
       actor.side === "enemy"
         ? Math.floor(((56 + Math.floor(random() * 8) + 4 * attack) * level * level) / 256)
-        : attack +
-          Math.floor(
-            ((level * level * (Math.min(255, value(actor.strength, 30) * 2) + attack)) / 256) * 1.5,
-          );
+        : attack + levelTerm + Math.floor(levelTerm / 2);
     base = Math.floor(base * value(ability.multiplier, 1));
     if (
       actor.row === "back" &&
@@ -92,8 +94,10 @@ export function calculateDamage(
       base = Math.floor(base / 2);
   } else {
     const magic = value(actor.magic, 30);
-    base =
-      power * 4 + Math.floor((level * magic * power * (actor.side === "enemy" ? 1.5 : 1)) / 32);
+    // SNES monster initialization AddHalf truncates before spell scaling.
+    const effectiveMagic =
+      actor.side === "enemy" ? Math.min(255, magic + Math.floor(magic / 2)) : magic;
+    base = power * 4 + Math.floor((level * effectiveMagic * power) / 32);
   }
   base *= value(ability.multiplier, 1) === 1 || physical ? 1 : value(ability.multiplier, 1);
   if (actor.trance) base *= 2;
@@ -423,6 +427,7 @@ export class Battle {
       this.enemies.splice(this.enemies.indexOf(old), 1, unit);
     } else this.enemies.push(unit);
     this.setupAI(unit);
+    pruneStatusLinks(this);
     return unit;
   }
   changeEnemyParty(id, { hidden = false } = {}) {
@@ -437,6 +442,7 @@ export class Battle {
       const unit = this.addEnemy(m.monsterId, m.slot + 1);
       if (unit) unit.hidden = hidden;
     }
+    pruneStatusLinks(this);
     this.event("battle-party", { partyId: id });
   }
   queueAIAction(action) {
@@ -976,7 +982,12 @@ export class Battle {
         unit.ready = unit.atb >= 100;
         if (!unit.ready) continue;
         if (unit.chargedAbility) this.releaseCharged(unit);
-        else if (this.events.interactive && (forcedRoleTurn(this, unit) || this.forcedTurn(unit))) {
+        else if (
+          this.events.interactive &&
+          ((statusLinkFor(this, unit, 630) && this.forcedTurn(unit)) ||
+            forcedRoleTurn(this, unit) ||
+            this.forcedTurn(unit))
+        ) {
           /* source condition owns this turn */
         } else if (unit.side === "enemy") this.enemyTurn(unit);
         else if (this.context.colosseum && this.events.interactive) colosseumTurn(this, unit);
@@ -1023,6 +1034,32 @@ export class Battle {
   }
 
   forcedTurn(unit) {
+    const charmed = statusLinkFor(this, unit, 630)
+      ? charmAction(
+          this,
+          unit,
+          unit.side === "player"
+            ? commandMenu(this, this.players.indexOf(unit), { involuntary: true })
+                .filter((menu) => !menu.disabled)
+                .flatMap((menu) => menu.actions)
+                .filter((ability) => !ability.disabled)
+            : [this.data.abilities?.[1]].filter(Boolean),
+        )
+      : null;
+    if (charmed) {
+      this.clearRunic(unit);
+      unit.defending = false;
+      unit.mp = Math.max(0, unit.mp - abilityMpCost(unit, charmed.ability));
+      const sequence = {};
+      for (const [index, target] of charmed.targets.entries())
+        this.perform(unit, target, charmed.ability, charmed.targets.length, {
+          sequence,
+          updateVariables: index === 0,
+        });
+      this.consumeTurn(unit);
+      this.checkEnd();
+      return true;
+    }
     const input = forcedConditionAction(this, unit);
     if (!input) return false;
     const target = (input.target.side === "enemy" ? this.enemies : this.players)[
@@ -1234,6 +1271,7 @@ export class Battle {
 
   perform(actor, target, ability, targetCount = 1, options = {}) {
     if (!actor || !target || !ability) return;
+    target = loveTokenCover(this, actor, target, ability, targetCount);
     const weaponPlan = weaponDamagePlan(this.data, actor, target, ability, this.random, {
       weaponContentId: options.weaponContentId,
       warn: (message) => this.warning(message),
@@ -1292,6 +1330,7 @@ export class Battle {
       options,
       (...args) => calculateDamage(...args, this.data),
     );
+    pruneStatusLinks(this);
     if (result.delegated) return;
     if (ability.id === 13 && result.hit && (target.conditions ?? []).includes(85))
       actor.controlledEnemyIndex = this.enemies.indexOf(target);
@@ -1344,6 +1383,7 @@ export class Battle {
   }
 
   checkEnd() {
+    pruneStatusLinks(this);
     if (this.phase !== "active") return;
     observeBattleMonsters(this);
     for (const enemy of this.enemies)
@@ -1430,6 +1470,7 @@ export class Battle {
         log: (message) => this.addLog(message),
       });
     }
+    clearStatusLinks(this);
     finishRoles(this, outcome);
     for (const unit of this.players) {
       if (unit.engulfed) unit.hidden = false;

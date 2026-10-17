@@ -2,6 +2,7 @@
 // used by both the manual UI and the frozen regression input policy.
 import { abilityMpCost } from "./progression.js";
 import { isRevival, throwableCommands } from "./ability-effects.js";
+import { statusLinkFor } from "./status-links.js";
 const unique = (values) => [...new Set(values)];
 const learned = (unit) => (unit.abilities ?? []).map((a) => (typeof a === "object" ? a.id : a));
 const equipmentCommandEffects = (data, unit) =>
@@ -84,9 +85,10 @@ export function actionFor(battle, unit, source) {
       (a.forbiddenConditions ?? []).some((id) => (unit.conditions ?? []).includes(id)),
   };
 }
-export function commandMenu(battle, index) {
+export function commandMenu(battle, index, { involuntary = false } = {}) {
   const unit = battle.players[index];
   if (!unit || unit.rageMonster || unit.danceAbility || unit.id === 14 || unit.berserk) return [];
+  if (!involuntary && statusLinkFor(battle, unit, 630)) return [];
   const data = battle.data,
     known = learned(unit);
   const controlled = battle.enemies[unit.controlledEnemyIndex];

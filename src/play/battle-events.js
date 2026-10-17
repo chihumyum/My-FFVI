@@ -642,6 +642,23 @@ export class BattleEvents {
         this.bank("PlaySystems").timer.paused = true;
       return;
     }
+    if (name === "ネラパ死の宣告") {
+      if (state.nelapaDoomApplied) return;
+      state.nelapaDoomApplied = true;
+      const caster = b.enemies.find((unit) => this.alive(unit));
+      const doom = b.data.abilities?.[140];
+      if (!caster || !doom) {
+        this.warning(
+          "Nelapa opening Doom has no source caster/PR ability140; no substitute status was invented.",
+        );
+        return;
+      }
+      // SNES NERAPA opens with CONDEMNED on each party slot once. PR moves
+      // that sequence to this host call; retain PR140/condition14 and immunity.
+      for (const unit of b.players.filter((unit) => this.alive(unit)))
+        b.perform(caster, unit, doom);
+      return;
+    }
     if (name === "FinishBattleByTimeOut") {
       if (this.bank("PlaySystems").timer?.expired)
         this.forcedOutcome = { outcome: "escape", code: 4, saved: false };

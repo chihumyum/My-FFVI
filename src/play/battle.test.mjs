@@ -8,9 +8,78 @@ const fight = { kind: "physical", power: 0, accuracy: 100 };
 const fire = { kind: "magic", power: 60, accuracy: 100, flags: [1], elements: [1] };
 
 test("ordinary physical damage uses level, strength, attack, variance and target defense", () => {
-  assert.equal(calculateDamage(actor, target, fight, () => 0.5).amount, 28);
+  assert.equal(calculateDamage(actor, target, fight, () => 0.5).amount, 27);
   assert.equal(calculateDamage({ ...actor, level: 6 }, target, fight, () => 0.5).amount, 37);
   assert.equal(calculateDamage(actor, { ...target, defense: 255 }, fight, () => 0.5).amount, 1);
+});
+
+test("physical PR skill power replaces weapon power while Fight, Mug, Jump and special multipliers retain it", () => {
+  const source = { ...actor, level: 30, strength: 37, attack: 40 };
+  const neutral = { ...target, defense: 0 };
+  const skill = { id: 132, kind: "physical", power: 110, accuracy: 255 };
+  assert.equal(calculateDamage(source, neutral, skill, () => 0.5).amount, 1009);
+  assert.equal(calculateDamage({ ...source, attack: 120 }, neutral, skill, () => 0.5).amount, 1009);
+  for (const id of [1, 9, 22, 104, 377]) {
+    const weapon = {
+      id,
+      kind: "physical",
+      power: 0,
+      accuracy: 255,
+      multiplier: id === 377 ? 1.5 : 1,
+    };
+    assert(
+      calculateDamage({ ...source, attack: 120 }, neutral, weapon, () => 0.5).amount >
+        calculateDamage(source, neutral, weapon, () => 0.5).amount,
+    );
+  }
+});
+
+test("all PR physical ability rows retain either explicit BattlePower or zero-power weapon dependence", async () => {
+  const fs = await import("node:fs");
+  const data = JSON.parse(
+    fs.readFileSync(new URL("../../build/web-data/battle.json", import.meta.url), "utf8"),
+  );
+  const source = { ...actor, level: 30, strength: 37, attack: 40 };
+  for (const ability of Object.values(data.abilities).filter(
+    (a) =>
+      a.kind === "physical" ||
+      a.functions.some((f) => [2, 77, 78].includes(f.id)) ||
+      a.process === "StealAttack",
+  )) {
+    const normalized = { ...ability, kind: "physical", accuracy: 255, flags: [1] };
+    const first = calculateDamage(source, { defense: 20 }, normalized, () => 0.5).amount;
+    const second = calculateDamage(
+      { ...source, attack: 120 },
+      { defense: 20 },
+      normalized,
+      () => 0.5,
+    ).amount;
+    if (ability.power > 0)
+      assert.equal(first, second, `PR ability${ability.id} added weapon power`);
+    else assert(second > first, `PR ability${ability.id} lost weapon power`);
+  }
+});
+
+test("integer intermediate rounding follows SNES fallback without changing PR magic powers", () => {
+  const neutral = { defense: 0, magicDefense: 0 };
+  assert.equal(
+    calculateDamage(
+      { ...actor, level: 30, strength: 37, attack: 40 },
+      neutral,
+      { id: 1, kind: "physical", power: 0, accuracy: 255 },
+      () => 0.5,
+    ).amount,
+    599,
+  );
+  assert.equal(
+    calculateDamage(
+      { side: "enemy", level: 30, magic: 7 },
+      neutral,
+      { kind: "magic", power: 21, accuracy: 255 },
+      () => 0.5,
+    ).amount,
+    262,
+  );
 });
 
 test("PR beam power is used with SNES magic scaling and elemental priority", () => {

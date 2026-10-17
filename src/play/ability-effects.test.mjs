@@ -69,6 +69,197 @@ function fixture() {
   return { actor, target, host, warnings, cast };
 }
 
+test("PR fn9 retains authored accuracy and target magic evasion; forced and guaranteed effects bypass it", () => {
+  const f = fixture();
+  f.host.random = () => 0.8;
+  executeAbilityEffects(f.host, f.actor, f.target, data.abilities[314], 1, {}, calculateDamage);
+  assert.deepEqual(f.target.conditions, []); // PR Shockwave70%, roll80 must miss.
+  assert.equal(f.target.hp, 500);
+  f.host.random = () => 0.6;
+  executeAbilityEffects(f.host, f.actor, f.target, data.abilities[314], 1, {}, calculateDamage);
+  assert(f.target.conditions.includes(5));
+
+  const g = fixture();
+  g.target.magicEvasion = 64;
+  g.host.random = () => 0.6;
+  const missed = executeAbilityEffects(
+    g.host,
+    g.actor,
+    g.target,
+    data.abilities[72],
+    1,
+    {},
+    calculateDamage,
+  );
+  assert.equal(missed.hit, false);
+  assert.deepEqual(g.target.conditions, []);
+  executeAbilityEffects(g.host, g.actor, g.target, data.abilities[11], 1, {}, calculateDamage);
+  assert(g.target.conditions.includes(57)); // explicit fn9 b=1 is still forced.
+  executeAbilityEffects(g.host, g.actor, g.target, data.abilities[74], 1, {}, calculateDamage);
+  assert(g.target.conditions.includes(17)); // PR content flag1 is guaranteed.
+});
+
+test("every unforced PR single-status ability below 100 retains its own percent threshold", () => {
+  const abilities = Object.values(data.abilities).filter(
+    (a) =>
+      a.power === 0 &&
+      a.functions.length === 1 &&
+      a.functions[0].id === 9 &&
+      a.functions[0].values[1] !== 1 &&
+      !a.flags.includes(1) &&
+      a.accuracy < 100,
+  );
+  assert.equal(abilities.length, 13);
+  for (const ability of abilities) {
+    const f = fixture();
+    f.host.random = () => (ability.accuracy + 0.5) / 100;
+    executeAbilityEffects(f.host, f.actor, f.target, ability, 1, {}, calculateDamage);
+    assert.deepEqual(f.target.conditions, [], `PR ability ${ability.id} ignored accuracy`);
+  }
+});
+
+test("damage and its status share one base hit, while group invocation keeps its own chance", () => {
+  const f = fixture();
+  Object.assign(f.actor, { side: "player", magic: 30 });
+  f.target.magicEvasion = 64;
+  const draws = [0.4, 0.5];
+  f.host.random = () => {
+    assert(draws.length, "duplicate base hit roll");
+    return draws.shift();
+  };
+  executeAbilityEffects(f.host, f.actor, f.target, data.abilities[43], 1, {}, calculateDamage);
+  assert(f.target.hp < 500);
+  assert(f.target.conditions.includes(10));
+  assert.equal(draws.length, 0);
+
+  const g = fixture();
+  Object.assign(g.actor, { side: "player", magic: 30 });
+  g.target.magicEvasion = 64;
+  g.host.random = () => 0.6;
+  executeAbilityEffects(g.host, g.actor, g.target, data.abilities[43], 1, {}, calculateDamage);
+  assert.equal(g.target.hp, 500);
+  assert.deepEqual(g.target.conditions, []);
+
+  const h = fixture();
+  h.host.data = {
+    ...data,
+    conditionGroups: [{ group_id: 9999, condition_id: 10, invocation_rate: 25 }],
+  };
+  const rolls = [0.1, 0.3];
+  h.host.random = () => rolls.shift();
+  executeAbilityEffects(
+    h.host,
+    h.actor,
+    h.target,
+    {
+      id: "group-chance",
+      accuracy: 80,
+      kind: "magic",
+      functions: [{ id: 10, values: [9999, 0, 0] }],
+    },
+    1,
+    {},
+    calculateDamage,
+  );
+  assert.deepEqual(h.target.conditions, []); // base80 succeeds; member25 fails.
+  assert.equal(rolls.length, 0);
+
+  const guard = fixture();
+  guard.host.random = () => 0.99;
+  executeAbilityEffects(
+    guard.host,
+    guard.actor,
+    guard.target,
+    data.abilities[146],
+    1,
+    {},
+    calculateDamage,
+  );
+  assert(guard.target.conditions.includes(22));
+  assert(guard.target.conditions.includes(23)); // PR group406's unparameterized zero values remain effective.
+});
+
+test("status immunity reports a pure miss, while partial groups and landed compound damage retain success", () => {
+  const death = fixture();
+  death.target.conditionImmunities = [5];
+  death.host.random = () => 0;
+  assert.equal(death.cast(53).hit, false);
+  assert.equal(death.target.hp, 500);
+  assert.deepEqual(death.target.conditions, []);
+
+  const group = fixture();
+  group.target.conditionImmunities = [22];
+  assert.equal(group.cast(146).hit, true);
+  assert(!group.target.conditions.includes(22));
+  assert(group.target.conditions.includes(23));
+  const immuneGroup = fixture();
+  immuneGroup.target.conditionImmunities = [22, 23];
+  assert.equal(immuneGroup.cast(146).hit, false);
+
+  const compound = fixture();
+  compound.target.conditionImmunities = [10];
+  const result = executeAbilityEffects(
+    compound.host,
+    compound.actor,
+    compound.target,
+    {
+      ...data.abilities[43],
+      functions: [...data.abilities[43].functions, { id: 9, values: [9, 0, 0] }],
+    },
+    1,
+    {},
+    () => ({ amount: 80, missed: false, critical: false }),
+  );
+  assert.equal(result.hit, true);
+  assert.equal(result.amount, 80);
+  assert(!compound.target.conditions.includes(10));
+  assert(compound.target.conditions.includes(9));
+});
+
+test("failed Mug theft retains its landed damage without granting an item; pure Steal still fails", () => {
+  for (const abilityId of [8, 9]) {
+    const f = fixture();
+    f.target.level = 200;
+    f.target.steal = [{ id: 3, count: 1 }];
+    f.host.random = () => 0.9;
+    const result = f.cast(abilityId);
+    assert.equal(result.hit, abilityId === 9);
+    assert.equal(result.amount, abilityId === 9 ? 80 : 0);
+    assert.equal(f.target.hp, abilityId === 9 ? 420 : 500);
+    assert.deepEqual(f.host.inventory, {});
+    assert(!f.target.stolen);
+  }
+});
+
+test("Blind aliases halve ordinary physical hit rate but not PR magic or undodgeable attacks", () => {
+  const f = fixture();
+  f.actor.conditions = [9];
+  const basic = { id: 1, kind: "physical", power: 0, accuracy: 100 };
+  const defender = { ...f.target, evasion: 64, magicEvasion: 64 };
+  assert(calculateDamage(f.actor, defender, basic, () => 0.4, 1, data).missed);
+  assert(
+    !calculateDamage({ ...f.actor, conditions: [] }, defender, basic, () => 0.4, 1, data).missed,
+  );
+  assert(
+    !calculateDamage(f.actor, defender, { ...basic, kind: "magic", power: 21 }, () => 0.4, 1, data)
+      .missed,
+  );
+  assert(!calculateDamage(f.actor, defender, { ...basic, flags: [1] }, () => 0.99, 1, data).missed);
+  assert(
+    !calculateDamage(
+      f.actor,
+      { ...defender, evasion: 0 },
+      { ...basic, accuracy: 255 },
+      () => 0.99,
+      1,
+      data,
+    ).missed,
+  );
+  assert(
+    calculateDamage({ ...f.actor, conditions: [89] }, defender, basic, () => 0.4, 1, data).missed,
+  );
+});
+
 test("PR Runic ability11 adds condition57/type612 and removal or source death clears the armed state", () => {
   const f = fixture();
   f.cast(11);

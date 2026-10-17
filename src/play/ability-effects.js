@@ -1,5 +1,7 @@
 // PR function_group composition. Table values win; approximations are explicit
 // here and warn at the ability/source that actually uses them.
+import { attackHits } from "./battle-accuracy.js";
+import { bindStatusLink, pruneStatusLinks } from "./status-links.js";
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 export const FUNCTION_EFFECTS = {
   1: ["recovery", "implemented"],
@@ -365,6 +367,7 @@ export function setCondition(host, unit, id, add = true, { force = false } = {})
     unit.runic = has(612);
     unit.berserk = has(410);
   }
+  pruneStatusLinks(host);
   return present === add;
 }
 export function actionBlocked(data, unit) {
@@ -602,6 +605,7 @@ export function periodicStatusAmount(unit, row) {
   return type === 25 ? -amount : amount;
 }
 export function tickConditions(host, unit, seconds) {
+  pruneStatusLinks(host);
   const wasStopped = hasConditionType(host.data, unit, 17);
   for (const [id, until] of Object.entries(unit.conditionUntil || {}))
     if (host.elapsed >= until) {
@@ -681,7 +685,12 @@ export function executeAbilityEffects(
     numeric = false,
     lastDamage = 0,
     handledProcess = false,
-    delegated = false;
+    delegated = false,
+    hitResolved = false,
+    baseHit = true,
+    numericHit = false,
+    statusAttempted = false,
+    statusApplied = false;
   const apply = (n, resource = "hp") => {
     n = Math.trunc(n);
     const max = resource === "mp" ? target.maxMp : target.maxHp;
@@ -693,6 +702,7 @@ export function executeAbilityEffects(
     else mpAmount += actual;
     lastDamage = actual;
     numeric = true;
+    numericHit = true;
     if (actual > 0 && resource === "hp" && ability.kind === "physical")
       for (const id of [...(target.conditions || [])])
         if ([7, 12].includes(data.conditions?.[id]?.condition_type ?? id))
@@ -702,7 +712,11 @@ export function executeAbilityEffects(
   const damage = (kind = ability.kind, resource = "hp", extra = {}) => {
     numeric = true;
     lastDamage = 0;
-    const effect = { ...ability, kind, ...extra };
+    const effect = { ...ability, kind, ...extra, hitResolved };
+    if (hitResolved && !baseHit) {
+      hit = false;
+      return;
+    }
     const imageId = (target.conditions || []).find(
       (id) => data.conditions?.[id]?.condition_type === 14,
     );
@@ -717,6 +731,8 @@ export function executeAbilityEffects(
       return;
     }
     const result = calculateDamage(actor, target, effect, random, targetCount);
+    hitResolved = true;
+    baseHit = !result.missed;
     hit &&= !result.missed;
     critical ||= result.critical;
     if (!result.missed) {
@@ -1079,35 +1095,56 @@ export function executeAbilityEffects(
         if (!hit) break;
         const rows =
           fn.id === 9
-            ? [{ condition_id: a, invocation_rate: 100 }]
+            ? [{ condition_id: a }]
             : (data.conditionGroups || []).filter((r) => r.group_id === a);
+        statusAttempted = true;
         for (const row of rows) {
           const id = row.condition_id,
             definition = data.conditions?.[id] || {};
           if (ability.invalidBoss && target.boss) continue;
-          const force = b === 1 || ability.flags?.includes(1),
-            rate = row.invocation_rate || ability.accuracy || 100;
+          const force = b === 1 || ability.flags?.includes(1);
+          if (!force && !hitResolved) {
+            baseHit = attackHits(actor, target, ability, random, data);
+            hitResolved = true;
+          }
+          if (!force && !baseHit) {
+            hit = false;
+            break;
+          }
+          // A group member's chance is a separate authored invocation roll.
+          // fn9 has no member roll; it must retain the ability's base accuracy.
+          // Zero marks an unparameterized member in PR groups, including
+          // Mighty Guard406's Shell/Protect. It is not a zero-percent effect.
+          const rate = fn.id === 10 && row.invocation_rate > 0 ? row.invocation_rate : 100;
           if (
             definition.condition_type === 627 &&
             (target.side !== "player" ||
               host.captures?.has(actor) ||
               [...(host.captures?.values() || [])].includes(target))
           ) {
-            hit = false;
             continue;
           }
-          if (force || random() * 100 < Math.min(100, rate)) {
-            const applied = setCondition(host, target, id, true, {
+          if (force || rate >= 100 || random() * 100 < Math.max(0, rate)) {
+            let applied = setCondition(host, target, id, true, {
               force: ability.flags?.includes(4),
             });
+            if (
+              applied &&
+              [630, 674].includes(definition.condition_type) &&
+              !bindStatusLink(host, actor, target, id)
+            )
+              applied = false;
+            statusApplied ||= applied;
             if (applied && definition.condition_type === 627) {
               host.captures ??= new Map();
               host.captures.set(actor, target);
             }
-          } else if (rows.length === 1) hit = false;
+          }
           if (
             definition.condition_type >= 500 &&
-            ![625, 673, 667, 665, 666, 621, 612, 627, 682, 657].includes(definition.condition_type)
+            ![625, 673, 667, 665, 666, 621, 612, 627, 682, 657, 630, 674].includes(
+              definition.condition_type,
+            )
           )
             approximate(
               host,
@@ -1413,17 +1450,25 @@ export function executeAbilityEffects(
   if (!PROCESS_EFFECTS[process])
     approximate(host, ability, `process ${process} has no handler; table functions still execute.`);
   if (!fns.length && !handledProcess && ability.id === 1) damage("physical");
-  return { amount, mp: mpAmount, hit, critical };
+  return {
+    amount,
+    mp: mpAmount,
+    hit: numericHit || (hit && (!statusAttempted || statusApplied)),
+    critical,
+  };
   function steal() {
     const chance = clamp(50 + (actor.level - target.level) * 2, 5, 100);
-    hit = random() * 100 < chance;
-    if (hit && !target.stolen) {
+    let stole = random() * 100 < chance;
+    if (stole && !target.stolen) {
       const rows = (target.steal || []).filter((x) => x.id > 0),
         item = rows[Math.min(rows.length - 1, random() < 0.125 ? 1 : 0)];
       if (item) {
         host.inventory[item.id] = (host.inventory[item.id] || 0) + (item.count || 1);
         target.stolen = true;
-      } else hit = false;
+      } else stole = false;
     }
+    // A failed secondary theft cannot retroactively miss landed Mug damage.
+    // Keep the theft roll separate so damage success never grants an item.
+    hit = numericHit || stole;
   }
 }

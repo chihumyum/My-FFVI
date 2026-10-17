@@ -1,6 +1,6 @@
 {
-  "boundaryDirectory": "build/play/acceptance/step-5/reference-frames",
-  "referenceDirectory": "build/play/acceptance/step-5/goldens",
+  "boundaryDirectory": "build/play/acceptance/step-6/reference-frames",
+  "referenceDirectory": "build/play/acceptance/step-6/goldens",
   "limits": {
     "channelDelta": 8,
     "differentPixels": 32
