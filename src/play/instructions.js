@@ -283,10 +283,11 @@ export function executeInstruction(
     case "ChangeScriptAtOnTrigger":
       game.triggerActor = i[1];
       game.triggerChangesScript = Boolean(i[0]);
+      game.triggerScriptProgram = task.program;
       warning(
         game,
         task,
-        "Trigger-script changes use the current map triggers; changing the interruption policy is deferred.",
+        "Trigger interruption applies to this source program and current map; Unity overlap interruption is approximated at the next accepted player step.",
       );
       return true;
     case "InvalidateTelepo":

@@ -218,7 +218,7 @@ export function compileMap(row, binding, tables, media, messages) {
             actionId: Number(p.action_id || 0),
             visible: object.visible !== false,
           };
-        if (kind === 21)
+        if (kind === 21 || (kind === 2 && p.target_transportation_ids))
           entity.transportationIds = String(p.target_transportation_ids || "")
             .split(",")
             .map(Number)

@@ -132,6 +132,7 @@ export class PlayGame {
       this.nameInput ||
       this.partySelection ||
       this.shop ||
+      this.colosseumMenu ||
       this.vehicleMenu ||
       this.tasks.some((t) => !t.done && !t.background)
     );
@@ -202,7 +203,10 @@ export class PlayGame {
     this.partySelection = null;
     this.nameInput = null;
     this.shop = null;
+    this.colosseumMenu = null;
     this.vehicleMenu = null;
+    this.triggerChangesScript = false;
+    this.triggerScriptProgram = null;
     try {
       this.map = await this.loadMap(mapId);
       this.mapId = +mapId;
@@ -613,6 +617,22 @@ export class PlayGame {
         return;
       case "Hide":
         a.visible = false;
+        // PR EventTriggerEntity.Hide (RVA8788f0) calls Reset (RVA878500),
+        // which sets TriggerPower=1 and TriggerOverlap=0. Its logical trigger
+        // is independent of sprite visibility; source609 relies on this.
+        if (a.kind === 2) {
+          a.triggerEnabled = Boolean(
+            this.triggerChangesScript &&
+            this.triggerActor === -1001 &&
+            this.triggerScriptProgram === t.program,
+          );
+        }
+        if (a.triggerEnabled) {
+          this.warn(
+            t,
+            "PR Hide resets a touch trigger in the source-armed ChangeScriptAtOnTrigger context; web cell contact approximates Unity overlap interruption callbacks.",
+          );
+        }
         return;
       case "Show":
         a.visible = true;
@@ -967,6 +987,7 @@ export class PlayGame {
       },
       warn: (msg) => this.warn(t, String(msg)),
       onEnd: (result) => {
+        this.battle?.events?.releaseFieldTimer?.(result.outcome);
         this.battles.push({ encounterId: id, ...result });
         this.gil = Math.min(
           this.battleData.limits?.MAX_GIL ?? 9999999,
@@ -975,6 +996,11 @@ export class PlayGame {
         for (const drop of result.drops || []) changeInventory(this, drop.id, drop.count || 1);
         this.battle = null;
         t.waitFor = null;
+        if (context.colosseum) {
+          context.onColosseumEnd?.(result);
+          this.event("battle-end", { encounterId: id, ...result });
+          return;
+        }
         if (result.fieldReturn === "engulf" && this.map?.worldTerrain) {
           // The serialized PR callback sc_e_0832 (script860) alone owns the
           // telepo cache, area variable and ChangeMap500/entrance1. SNES world
@@ -1134,7 +1160,12 @@ export class PlayGame {
     if (this.busy || (this.map?.worldTerrain && this.player.vehicle > 1)) return;
     for (const e of this.entities) {
       const actual = this.actors.get(String(e.id)) || e;
-      if (actual.visible === false) continue;
+      if (actual.visible === false && !(e.kind === 2 && actual.triggerEnabled)) continue;
+      if (
+        e.transportationIds?.length &&
+        !e.transportationIds.includes(Number(this.player.vehicle || 1))
+      )
+        continue;
       if (actual.layer != null && actual.layer !== this.player.layer && !e.npc?.allLayers) continue;
       const touchNpc = e.kind === 6 && e.npc?.moveType === 3 && this.rts?.active;
       if (
@@ -1196,7 +1227,7 @@ export class PlayGame {
     }
     for (const distance of [1, 2])
       for (const e of this.entities) {
-        if (e.kind === 21) continue;
+        if (e.kind === 21 || e.kind === 2) continue;
         const actual = { ...e, ...this.actors.get(String(e.id)) };
         if (actual.visible === false || !this.interactionDistance(actual)) continue;
         if (

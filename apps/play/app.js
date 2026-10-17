@@ -13,6 +13,15 @@ import {
 import { createBattleMenu } from "./battle-menu.js";
 import { buyFromShop, closeShop, openShop } from "../../src/play/event-systems.js";
 import { submitPartyInput, cancelPartyInput } from "../../src/play/party-input.js";
+import { partyInputMembers } from "../../src/play/party-input.js";
+import {
+  colosseumWagers,
+  openColosseum,
+  selectColosseumWager,
+  selectColosseumChallenger,
+  confirmColosseum,
+  cancelColosseum,
+} from "../../src/play/colosseum.js";
 import {
   openVehicleInput,
   vehicleInputState,
@@ -389,6 +398,50 @@ function renderShop() {
     }
   }
 }
+let colosseumView = "";
+function renderColosseum() {
+  const menu = game.colosseumMenu;
+  $("colosseum").hidden = !menu;
+  if (!menu) {
+    colosseumView = "";
+    return;
+  }
+  const marker = JSON.stringify([menu.phase, menu.selected, menu.challenger, game.inventory]);
+  if (colosseumView === marker) return;
+  colosseumView = marker;
+  const choices = $("colosseum-choices");
+  choices.replaceChildren();
+  const button = (label, action) => {
+    const node = createWidget("button");
+    node.textContent = label;
+    node.onclick = () => {
+      action();
+      renderColosseum();
+    };
+    choices.append(node);
+  };
+  const wager = colosseumWagers(game).find((w) => w.contentId === menu.selected);
+  if (menu.phase === "wager") {
+    $("colosseum-prompt").textContent = "请选择押注道具。胜利获得奖励，失败失去押注。";
+    for (const w of colosseumWagers(game))
+      button(`${w.name} ×${w.count} → ${w.reward} · 对手 ${w.opponent}`, () =>
+        selectColosseumWager(game, w.contentId),
+      );
+  } else if (menu.phase === "challenger") {
+    $("colosseum-prompt").textContent =
+      `押注 ${wager.name}，请选择一名出战者。战斗中角色自行行动。`;
+    for (const unit of partyInputMembers(game))
+      button(`${unit.name} · Lv ${unit.level}`, () => selectColosseumChallenger(game, unit.id));
+  } else {
+    $("colosseum-prompt").textContent =
+      `${game.unit(menu.challenger).name} 对战 ${wager.opponent}，押注 ${wager.name}，奖励 ${wager.reward}。`;
+    button("确认参战", () => confirmColosseum(game));
+  }
+}
+$("colosseum-cancel").onclick = () => {
+  cancelColosseum(game);
+  renderColosseum();
+};
 const battleMenu = createBattleMenu({
   commands: $("commands"),
   targets: $("targets"),
@@ -565,6 +618,7 @@ function loop(now) {
     renderFormation();
     renderNaming();
     renderShop();
+    renderColosseum();
     renderVehicle();
     $("battle").hidden = !game.battle || !!battleDialogue;
     $("switch").hidden = !game.rts?.active;
@@ -626,6 +680,7 @@ if (import.meta.env.DEV) {
         );
       game.dialogue = { text: game.text(key), speaker: data.speakers[key] || speaker, elapsed: 0 };
     } else if (panel === "shop") openShop(game, Number(params.get("shop")) || 1);
+    else if (panel === "colosseum") openColosseum(game, { locals: [], waitFor: null });
     else if (panel === "opera") {
       const script = params.get("script") || "sc_e_0318_1";
       if (["sc_e_0315_1", "sc_e_0315_3", "sc_e_0318_1", "sc_e_0330_1"].includes(script)) {

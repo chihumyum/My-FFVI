@@ -142,3 +142,31 @@ test("Cid suspension saves the source counter and removes it until the source re
   assert.equal(game.banks.ScenarioFlag2, undefined);
   assert.equal(game.banks.ScenarioFlag3, undefined);
 });
+
+test("Shadow arrival uses the authorized paused escape timer, dispatches source609 once and never grants the survival flag itself", () => {
+  const game = host();
+  game.mapId = 631;
+  game.player = { x: 115, y: 25 };
+  game.map = { groups: { ev_e_0608: { entities: [{ kind: 2, x: 115, y: 25 }] } } };
+  game.banks.ScenarioFlag2 = { 40: 1 };
+  game.resolve = (name) => (["sc_e_0609", "source-interception"].includes(name) ? 2 : undefined);
+  game.warn = () => {};
+  const context = { characterSelectors: {}, names: {}, warn() {} };
+  configureSyscallTimer(game, caller, [0, 0, 1, 1], [10], ["source-interception"]);
+  executeEventSystem(game, caller, "シャドウタイマー設定", [], [], context);
+  game.banks.PlaySystems.timer.paused = true;
+  updateSyscallSystems(game, 10);
+  assert.equal(game.banks.PlaySystems.shadow.remaining, 5);
+  assert.deepEqual(game.started, []);
+  game.banks.PlaySystems.timer.paused = false;
+  assert.equal(pendingEventInput(game).callback, "sc_e_0609");
+  game.busy = true;
+  updateSyscallSystems(game, 5);
+  assert.deepEqual(game.started, []);
+  game.busy = false;
+  updateSyscallSystems(game, 0);
+  assert.deepEqual(game.started, ["sc_e_0609"]);
+  updateSyscallSystems(game, 0);
+  assert.deepEqual(game.started, ["sc_e_0609"]);
+  assert.equal(game.banks.ScenarioFlag2?.[42], undefined);
+});

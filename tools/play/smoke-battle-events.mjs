@@ -29,7 +29,7 @@ class ObservedBattle extends Battle {
   }
 }
 
-function run(encounterId, partyIds = [1, 2, 5, 6]) {
+function run(encounterId, partyIds = [1, 2, 5, 6], expectedOutcome = "victory") {
   assert.ok(data.parties[encounterId], `Missing PR formation ${encounterId}`);
   const units = {},
     events = [],
@@ -87,7 +87,7 @@ function run(encounterId, partyIds = [1, 2, 5, 6]) {
     })),
     log: battle.log.slice(-5),
   });
-  assert.equal(battle.phase, "victory", diagnostic);
+  assert.equal(battle.phase, expectedOutcome, diagnostic);
   assert.ok(battle.events.done, `PR event program did not finish: ${diagnostic}`);
   assert.equal(ended, 1, `Battle completion was not delivered once: ${diagnostic}`);
   assert.ok(battle.elapsed <= simulatedLimit, diagnostic);
@@ -165,7 +165,9 @@ assert.deepEqual(
   [1, 2, 5],
 );
 
-const clothes = run(44, [2]),
+// PR's surviving merchant actually uses Escape after Steal, rather than dying.
+// This terminal return cannot grant ordinary victory rewards.
+const clothes = run(44, [2], "escape"),
   locke = clothes.battle.players.find((unit) => unit.id === 2);
 assert.ok(
   clothes.battle.observedActions.some(
@@ -185,6 +187,10 @@ assert.ok(
   "The merchant did not execute his source escape action",
 );
 assert.equal(clothes.battle.enemies[0].hp, clothes.battle.enemies[0].maxHp);
+assert.deepEqual(
+  [clothes.battle.result.exp, clothes.battle.result.gil, clothes.battle.result.ap],
+  [0, 0, 0],
+);
 assert.equal(locke.hp, locke.maxHp, "Presentation-only change-of-clothes actions damaged Locke");
 
 const finale = run(472);

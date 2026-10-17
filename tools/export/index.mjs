@@ -49,6 +49,7 @@ if (pythonCheck.status !== 0)
 const start = Date.now();
 await run("unity.py", ["--game", source, "--out", out]);
 await run("native.py", ["--game", source, "--out", path.join(out, "raw/magic-stones.json")]);
+await run("colosseum.py", ["--game", source, "--out", path.join(out, "raw/colosseum.json")]);
 await run("audio.py", ["--out", out, ...(args.includes("--aac") ? ["--aac"] : [])]);
 const counts = await compileRuntime(out);
 await compilePresentation(out, { game: source });

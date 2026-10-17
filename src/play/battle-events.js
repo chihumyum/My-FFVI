@@ -434,6 +434,17 @@ export class BattleEvents {
     if (outcome === "defeat" && /sc_b_00(?:67|71)$/.test(this.program?.name ?? "")) return 4;
     return outcome === "victory" ? 0 : outcome === "escape" ? 1 : 2;
   }
+  releaseFieldTimer(outcome) {
+    const saved = this.pausedFieldTimer;
+    if (!saved) return;
+    if (outcome !== "defeat" && this.bank("PlaySystems").timer === saved.timer) {
+      saved.timer.paused = saved.paused;
+      this.warning(
+        "PR battle-end timer pause is released on the field return; native host pause ownership is inferred.",
+      );
+    }
+    this.pausedFieldTimer = null;
+  }
   autoCommand(unit) {
     const b = this.battle,
       gau = b.enemies.find(
@@ -619,7 +630,11 @@ export class BattleEvents {
       return;
     }
     if (name === "タイマー一時停止") {
-      if (this.bank("PlaySystems").timer) this.bank("PlaySystems").timer.paused = true;
+      const timer = this.bank("PlaySystems").timer;
+      if (timer) {
+        this.pausedFieldTimer ??= { timer, paused: timer.paused };
+        timer.paused = true;
+      }
       return;
     }
     if (name === "全滅でタイマー停止") {
@@ -893,10 +908,19 @@ export class BattleEvents {
     }
     if (name === "デスゲイズHP設定" || name === "デスゲイズHP保存") {
       const doom = b.enemies[0],
-        bank = this.bank("PlaySystems");
+        bank = this.bank("PlaySystems"),
+        source = this.bank("ScenarioVariable");
       if (doom) {
-        if (name.endsWith("保存")) bank.deathgazeHp = doom.hp;
-        else if (bank.deathgazeHp > 0) doom.hp = Math.min(doom.maxHp, bank.deathgazeHp);
+        if (!name.endsWith("保存")) {
+          // ScenarioVariable3 is shared scratch used by other field events.
+          // Only the dedicated persistent encounter record owns entry HP.
+          const hp = Number(bank.deathgazeHp);
+          if (hp > 0) doom.hp = Math.min(doom.maxHp, hp);
+        }
+        // PR field0964_1 explicitly branches on ScenarioVariable[3]>0.
+        // Persist actual remaining HP even when the source AI retreats; zero
+        // alone permits its real Bahamut continuation. Keep old-save alias.
+        source[3] = bank.deathgazeHp = Math.max(0, doom.hp);
       }
       return;
     }

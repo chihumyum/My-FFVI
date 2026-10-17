@@ -14,13 +14,14 @@ async function write(file, value) {
 }
 
 export async function compileRuntime(out) {
-  const [rawTables, text, media, audio, nativeStones] = await Promise.all(
+  const [rawTables, text, media, audio, nativeStones, colosseum] = await Promise.all(
     [
       "raw/tables.json",
       "raw/messages.json",
       "raw/media.json",
       "audio.json",
       "raw/magic-stones.json",
+      "raw/colosseum.json",
     ].map((file) => read(path.join(out, file))),
   );
   const tables = Object.fromEntries(
@@ -203,6 +204,7 @@ export async function compileRuntime(out) {
     mnemonics: [...mnemonics].sort(),
   };
   const battle = compileBattle(tables, assets, media, data, nativeStones);
+  battle.colosseum = colosseum;
   const navigation = compileNavigation(sourceMaps, data);
   await write(path.join(out, "data.json"), data);
   await write(path.join(out, "battle.json"), battle);

@@ -1,6 +1,8 @@
 import { isVeldt } from "./encounters.js";
 import { equipmentDefinition, emptyEquipment, recalculateEquipment } from "./progression.js";
 import { optimizeEquipment } from "./resources.js";
+import { openColosseum } from "./colosseum.js";
+import { executeFlightEncounterSyscall } from "./flight-encounters.js";
 const bank = (game, name) => (game.banks[name] ??= {});
 const systems = (game) => bank(game, "PlaySystems");
 const pose = (actor) => ({
@@ -69,18 +71,24 @@ export function pendingEventInput(game) {
     };
   const timer = state?.timer;
   if (!timer || timer.dispatched || timer.paused) return null;
-  const callback = (timer.callbacks ?? []).find(
-    (name) => game.resolve?.(name, game.mapId) !== undefined,
-  );
+  const shadow = state?.shadow,
+    shadowPending =
+      shadow &&
+      !shadow.dispatched &&
+      shadow.mapId === game.mapId &&
+      game.resolve?.(shadow.callback) !== undefined;
+  const callback = shadowPending
+    ? shadow.callback
+    : (timer.callbacks ?? []).find((name) => game.resolve?.(name, game.mapId) !== undefined);
   if (!callback) return null;
   return {
     status: "wait-event",
     callback,
-    remaining: Math.max(0, Number(timer.remaining) || 0),
+    remaining: Math.max(0, Number(shadowPending ? shadow.remaining : timer.remaining) || 0),
     timer: {
       duration: timer.duration,
       visible: timer.visible,
-      expired: Boolean(timer.expired),
+      expired: Boolean(shadowPending ? shadow.expired : timer.expired),
       advancing: !timer.expired && Boolean(timerCanAdvance(game, timer)),
       source: timer.source,
     },
@@ -132,6 +140,7 @@ export function updateSyscallSystems(game, seconds) {
     !game.dialogue &&
     !game.partySelection &&
     !game.shop &&
+    !game.colosseumMenu &&
     !game.vehicleMenu &&
     !game.tasks.some((task) => !task.done && !task.background)
   ) {
@@ -144,11 +153,34 @@ export function updateSyscallSystems(game, seconds) {
     state.cid.remaining = Math.max(0, before - dt);
     if (before > 0 && state.cid.remaining === 0) game.event("cid-timer-expired");
   }
-  if (state.shadow && !state.shadow.expired) {
+  if (state.shadow && !state.shadow.expired && timer && timerCanAdvance(game, timer)) {
     state.shadow.remaining = Math.max(0, state.shadow.remaining - dt);
     if (!state.shadow.remaining) {
       state.shadow.expired = true;
       game.event("shadow-timer");
+    }
+  }
+  const shadow = state.shadow;
+  if (shadow?.expired && !shadow.dispatched && shadow.mapId === game.mapId && !game.busy) {
+    shadow.dispatched = true;
+    // PR SetupShadowTimer callback RVA5f9660 checks wait-intent40 and
+    // the player's actual cliff grid cell before requesting source609.
+    const atCliff = game.map?.groups?.ev_e_0608?.entities?.some(
+      (entity) =>
+        entity.kind === 2 &&
+        Math.trunc(entity.x) === Math.trunc(game.player?.x) &&
+        Math.trunc(entity.y) === Math.trunc(game.player?.y),
+    );
+    if (
+      Number(game.banks.ScenarioFlag2?.[40]) === 1 &&
+      atCliff &&
+      game.resolve(shadow.callback) !== undefined
+    ) {
+      game.warn?.(
+        null,
+        "PR Shadow timer requests source609 at five seconds only after wait-intent40 within the source cliff cells; callback suspension and grid contact are approximated.",
+      );
+      game.startScript(shadow.callback);
     }
   }
   if (state.messageUntil !== undefined && game.time >= state.messageUntil) {
@@ -307,6 +339,7 @@ export function shopScriptsForContent(game, contentId) {
 }
 
 export function executeEventSystem(game, task, name, i, r, { characterSelectors, names, warn }) {
+  if (executeFlightEncounterSyscall(game, task, name, i, r)) return true;
   const state = systems(game),
     subject = name.split(/[：:]/).slice(1).join("：");
   if (name.startsWith("ショップを開く:")) {
@@ -330,11 +363,7 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
     return true;
   }
   if (name === "コロシアム開始") {
-    game.event("colosseum", {
-      available: Object.keys(game.inventory).filter((id) => game.inventory[id] > 0),
-    });
-    task.locals[0] = 0;
-    warn("Colosseum currently returns without placing an automatic wager.");
+    openColosseum(game, task);
     return true;
   }
   if (name === "タイマー一時停止" || name === "タイマー一時停止解除") {
@@ -390,7 +419,13 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
   }
   if (name === "シャドウタイマー設定") {
     if (state.timer?.remaining > 5 && !state.shadow)
-      state.shadow = { remaining: state.timer.remaining - 5, expired: false };
+      state.shadow = {
+        remaining: state.timer.remaining - 5,
+        expired: false,
+        mapId: game.mapId,
+        callback: "sc_e_0609",
+        dispatched: false,
+      };
     return true;
   }
   if (name === "シャドウタイマー解除") {

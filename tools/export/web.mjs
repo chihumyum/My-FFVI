@@ -72,6 +72,10 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
   // Battle AI/events execute from battleData. Its script-name registry is not
   // a field-VM dependency and must not pull the complete story into every map.
   if (data.scriptIds[5000]) universal.add(data.scriptIds[5000]);
+  // Native host callbacks are not expressed as script operands in field JSON.
+  // Keep their source programs available in the static, lazy-loaded game too.
+  for (const name of ["sc_e_0609", "sc_e_0750", "sc_e_0832"])
+    if (knownNames.has(name)) universal.add(name);
   const incoming = new Map();
   for (const p of Object.values(data.programs))
     for (const [op, i, , s] of p.ops)

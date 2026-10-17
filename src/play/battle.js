@@ -18,6 +18,7 @@ import { abilityMpCost, applyBattleRewards } from "./progression.js";
 import { MonsterAI } from "./monster-ai.js";
 import { BattleEvents } from "./battle-events.js";
 import { autoBattleInput } from "./battle-input.js";
+import { colosseumTurn } from "./colosseum.js";
 import { weaponDamagePlan, finalizeWeaponDamage } from "./weapon-damage.js";
 import { requestEscape as requestBattleEscape, tickEscape, canEscape } from "./escape.js";
 import {
@@ -902,6 +903,7 @@ export class Battle {
     return this.players.map((_, index) => this.commandsFor(index));
   }
   get readyPlayers() {
+    if (this.context.colosseum) return [];
     return this.players.filter(
       (unit) =>
         unit.hp > 0 && unit.ready && !unit.rageMonster && !unit.danceAbility && unit.id !== 14,
@@ -958,6 +960,7 @@ export class Battle {
         else if (this.events.interactive && (forcedRoleTurn(this, unit) || this.forcedTurn(unit))) {
           /* source condition owns this turn */
         } else if (unit.side === "enemy") this.enemyTurn(unit);
+        else if (this.context.colosseum && this.events.interactive) colosseumTurn(this, unit);
         else if (auto && this.events.interactive) this.autoTurn(unit);
         if (this.phase !== "active") break;
       }
@@ -1349,7 +1352,10 @@ export class Battle {
             ? "escape"
             : "defeat"
           : !this.enemies.some((unit) => this.alive(unit))
-            ? "victory"
+            ? this.enemies.some((unit) => unit.escaped && unit.hp > 0) &&
+              !this.enemies.some((unit) => unit.hp <= 0)
+              ? "escape"
+              : "victory"
             : null);
     let outcome = terminalOutcome();
     if (!outcome) return;
@@ -1387,9 +1393,10 @@ export class Battle {
       drops: [],
       ...(outcome === "escape" && allEngulfed() ? { fieldReturn: "engulf" } : {}),
     };
-    if (outcome === "victory") {
+    if (outcome === "victory" && !this.context.colosseum) {
       const rewardEnemies = [...(this.events?.state.veldtDefeated ?? []), ...this.enemies];
       for (const enemy of rewardEnemies) {
+        if (enemy.escaped || (enemy.removed && enemy.hp > 0)) continue;
         if (!this.isVeldt) this.result.exp += enemy.exp ?? 0;
         this.result.gil += enemy.gil ?? 0;
         if (enemy.drops?.length && this.random() * 100 < (enemy.dropRate ?? 0))

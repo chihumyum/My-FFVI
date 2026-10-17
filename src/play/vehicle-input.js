@@ -3,6 +3,7 @@
 // Destination story scripts, ScenarioFlags and arbitrary coordinates are never
 // accepted as input. SetVehicle/LoseVehicle legitimately change release flags.
 import { worldCollisionByFoot } from "./encounters.js";
+import { checkFlightEncounterContact } from "./flight-encounters.js";
 const selectors = Object.freeze({
   "乗り物に乗る：船": 2,
   "乗り物に乗る：チョコボ": 3,
@@ -331,6 +332,7 @@ export function moveVehicle(game, direction) {
   if (game.camera) game.camera.manual = false;
   records(game)[id] = { ...records(game)[id], ...pose(game), enabled: true };
   emit(game, "vehicle-move", { id, direction, x: point.x, y: point.y });
+  checkFlightEncounterContact(game);
   return true;
 }
 
