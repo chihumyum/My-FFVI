@@ -14,6 +14,7 @@
     "play:through": "node tools/play/playthrough.mjs",
     "play:optional-inventory": "node tools/play/optional-inventory.mjs",
     "play:optional": "node tools/play/optional-run.mjs",
+    "play:optional-npcs": "node tools/play/optional-npc-run.mjs",
     "play:ai-smoke": "node tools/play/smoke-monster-ai.mjs",
     "play:events-smoke": "node tools/play/smoke-battle-events.mjs",
     "play:commands-check": "node tools/play/check-play-commands.mjs",

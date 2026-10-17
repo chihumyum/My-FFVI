@@ -335,6 +335,11 @@ export const esperOptionalCases = [
       step("ragnarok-unlock-door", [868], flag(156), {
         maps: [3],
         party: { include: [2] },
+        approach: [
+          { mapId: 262, entityId: "3" },
+          { mapId: 2, boardVehicle: 5 },
+          { mapId: 2, entityId: "104" },
+        ],
         sourceRefs: [source(868, 3, "116", [32, 31, 1], { kind: 5, group: "ev_e_0703" })],
       }),
       step("esper-ragnarok", [873], all(flag(161), item(86)), {

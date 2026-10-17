@@ -119,6 +119,48 @@ function objectiveTarget(game, objective, fixedRoutes) {
     condition(game, objective.repeat.when)
   )
     return findStoryTarget(game, { action: "visit-map", maps: [objective.repeat.viaMap] });
+  // Literal acceptance waypoints, like a human's written route. These select
+  // an existing live doorway or parked vehicle, never project a future event
+  // as a shortcut or change the frozen automatic player's navigation policy.
+  for (const point of objective.approach || []) {
+    if (point.mapId !== game.mapId) continue;
+    if (point.when && !condition(game, point.when)) continue;
+    if (point.boardVehicle) {
+      const key = `${objective.id}:board:${point.boardVehicle}`;
+      if (Number(game.player.vehicle) === point.boardVehicle) fixedRoutes.set(key, true);
+      // This is a sequential manual fixture: once the source takeoff has
+      // happened, its later landing must not restart the boarding step.
+      if (fixedRoutes.get(key)) continue;
+      const parked = game.banks.PlaySystems?.vehicles?.[point.boardVehicle];
+      if (!parked || parked.enabled === false || parked.mapId !== game.mapId)
+        return { status: "needs-input", reason: "fixture's real parked vehicle unavailable" };
+      const target = {
+          ...parked,
+          id: `fixture-board:${point.boardVehicle}`,
+          kind: 6,
+          // Public boarding checks world-cell adjacency, not the parked
+          // sprite's authored render layer.
+          layer: game.player.layer,
+        },
+        route = pathTo(game, target);
+      if (!route) return { status: "no-route", reason: "no foot path to the parked vehicle" };
+      if (route.length) return { status: "target", target, route };
+      return {
+        status: submitVehicleInput(game, { action: "takeoff", vehicleId: point.boardVehicle })
+          ? "fixed-boarding-input"
+          : "needs-input",
+      };
+    }
+    const entity = game.entities.find((e) => e.id === point.entityId),
+      actor = entity && game.actors.get(String(entity.id));
+    if (!entity || actor?.visible === false)
+      return { status: "needs-input", reason: "fixture's real source doorway unavailable" };
+    const target = { ...entity, ...actor },
+      route = pathTo(game, target);
+    return route
+      ? { status: "target", target, route }
+      : { status: "no-route", reason: `no ordinary path to source entity ${point.entityId}` };
+  }
   if (objective.action === "fixed-field-route") {
     if (!objective.maps.includes(game.mapId))
       return findStoryTarget(game, { action: "visit-map", maps: objective.maps });

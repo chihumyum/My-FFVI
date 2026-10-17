@@ -34,11 +34,21 @@ const phoenixEntry = [
     navigation: "airship",
     cooperative: true,
     partyCount: 2,
+    approach: [
+      { mapId: 483, entityId: "2" },
+      { mapId: 482, entityId: "31" },
+      { mapId: 480, entityId: "31" },
+      { mapId: 477, entityId: "36" },
+      { mapId: 476, entityId: "3" },
+      { mapId: 2, boardVehicle: 5 },
+      { mapId: 2, entityId: "158" },
+    ],
     after: ["sc_e_0792_1", "sc_e_0792_2"],
     sourceRefs: [source(792, 2, "158", [117, 157, 0], { kind: 21, transportationIds: [4, 5] })],
     notes: [
       "World2 vehicle trigger0792 leads through map268 and the original two-party formation menu.",
       "0792_2 places both parties in map497 and sets ScenarioFlag3[45] op16. Do not enter map497 directly.",
+      "The continuous eight-dragon fixture leaves the Cultists Tower through its five actual exit doors, boards the actually parked Falcon and flies to source entity158. This is a fixed manual acceptance route; the automatic player's navigation policy stays frozen.",
     ],
   }),
   step("phoenix-first-switch", [799], flag(143), {
@@ -167,9 +177,38 @@ const towerEntry = step("optional-tower-landing", [966], flag(217), {
   navigation: "airship",
   cooperative: true,
   partyCount: 3,
+  approach: [
+    { mapId: 519, entityId: "4" },
+    { mapId: 518, entityId: "2" },
+    { mapId: 517, entityId: "3" },
+    { mapId: 515, entityId: "entity_default:0:2" },
+    { mapId: 512, entityId: "14" },
+    { mapId: 511, entityId: "1" },
+    { mapId: 510, entityId: "3" },
+    { mapId: 509, entityId: "1" },
+    { mapId: 508, entityId: "4" },
+    { mapId: 250, entityId: "1" },
+    { mapId: 248, entityId: "6", when: { any: [flag(169), flag(81, "ScenarioFlag2", 0)] } },
+    // Use the lower/front stair (0276_0); 0273_0 exits into the enclosed
+    // inner courtyard, which cannot walk through the castle wall to the gate.
+    {
+      mapId: 248,
+      entityId: "entity_default:0:8",
+      when: all(flag(169, "ScenarioFlag2", 0), flag(81)),
+    },
+    { mapId: 249, entityId: "5", when: { any: [flag(169), flag(81, "ScenarioFlag2", 0)] } },
+    { mapId: 249, entityId: "2", when: all(flag(169, "ScenarioFlag2", 0), flag(81)) },
+    { mapId: 247, entityId: "80" },
+    { mapId: 2, boardVehicle: 5 },
+    { mapId: 2, entityId: "162" },
+  ],
+  choices: [674, 675, 882, 1067].flatMap((script) =>
+    [scene(script), `${scene(script)}_2`].map((name) => ({ script: name, index: 0 })),
+  ),
   after: ["sc_e_0966_4"],
   notes: [
     "Use the real three-party Kefka's Tower landing/formation sequence; do not restore a party to a dragon room.",
+    "The continuous fixture parked Falcon on Figaro's west side. After leaving the ancient stop, take the real engine operator back until source81=1 (west exit28), then leave through the front stair. East exit8 is a separate landmass from the parked ship; never relocate the player or vehicle to repair that test route.",
   ],
 });
 const dragon = (id, title, script, mapId, flagIndex, encounterId, entityId, position, extra = {}) =>

@@ -74,6 +74,8 @@ PLAY_TEST_BOOST=1 npm run play:through
 
 `npm run play:optional -- --cases all` 从真实 Falcon 检查点独立跑各项强化支线；`--start` 可指定另一个真实存档，`--cases mog,cyan,gogo` 可筛选。结果表在 `build/play/optional/results.csv`，每项只保存最新报告和存档；`--summarize-only` 只重新汇总已有证据，验收目标变动后旧结果不会自动算通过。影忍用源剧情仍允许等待生还的真实崩坏前存档连续推进，不切换到已死亡的崩坏后存档；依赖洛克的支线使用真正的不死鸟洞窟完成存档。测试只使用普通移动、对话、组队和固定剧情交互，不写剧情旗标或直接调用剧情脚本，不增加购物、练级或补给策略。吞空巨虫用实际 PR 遇敌格触发，固定防御等待源 AI 吸入；全员被吞后由原版 `sc_e_0832` 进入虫体，随后通过原剧情招募格格。世界地图遇敌按原版逐格 `encount_grid`，不再用规则矩形近似岛屿等特殊区域。开发服务器可用 `?checkpoint=gogo-save&checkpointSet=optional` 查看真实支线结果存档；这个界面入口不计剧情覆盖。
 
+`npm run play:optional-npcs -- --limit 573 --same-map` 从真实检查点和已通过支线存档，批量走到纯消息 NPC 身前交谈，输出 `build/play/optional-npc-report.json` 与地区 CSV；去掉 `--same-map` 可尝试普通跨图移动。按实际地图、活动组和实体分别记录确认，付费、菜单、剧情状态写入及不可达路线另列，不能用同名脚本覆盖替代。固定验收路线只在 `tools/play` 描述现有门口、停放载具和原版选择，不改变自动跑法策略。
+
 ```sh
 npm test
 npm run play:ai-smoke
