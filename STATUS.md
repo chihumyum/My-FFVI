@@ -1,11 +1,12 @@
 # FFVI Web 状态
 
 ## 能玩到哪
-- 最新强化新游戏→结局通过（185 战，472 获胜、1032_18 后回标题，退出码 0），不读中途档；报告 build/play/input-camera-ending.json。
-- 普通与静态包普通 M1 均过（15 战）；301 项测试通过。已修开场载具道路限制、乘员/幽灵贴图、夹击两翼与站位、点战场目标、自动推进后的空格交互、费加罗觐见镜头退回入口；浏览器截图 build/play/ui/opening-fixes。
+- 阶段 A 第 1 步完成：F9/工具栏按钮保存截图、脚本、实体资源和最近事件；开发版写目录、静态版下载。清单 build/play/acceptance/step-1/summary.json；基线 v0.9=20cc36c。
+- 本步强化新游戏→结局 185 战通过，472 获胜、1032_18 后回标题，最终快照与基线相同；报告 build/play/acceptance/step-1/ending.json。308 项测试及开发/静态 Chromium F9 实操通过；普通/静态 M1 基线各 15 战通过。
 - 阶段 6 可用：357 条图鉴、158 张画廊、332 张资料库、61 首鉴赏音乐。内置浏览器与静态包已操作；截图 build/play/ui/stage6。静态包约 615 MB，标题加载上界约 12 MB。
 
 ## 已知问题
+- 阶段 A 后续验收尚未完成；新增待查：hover 残留、进门遮挡、池底蓝块、额外内容局促。记录 build/play/acceptance/reported-issues.json；不能把逻辑通关当作画面正确。
 - 阶段 5 的 39 项支线记录：35 通过（5 项为中途档续跑）、4 项完整跑法卡点；表 build/play/restored-optional/acceptance-results.csv。同一真实存档八龙全胜，末日 87 与旗标 221 已得；其余 NPC 留给实玩。
 - 完整跑法卡格格、古代城奥丁/莱丁、加源梦境、影忍孤岛；另有 3 项原版起点不兼容、map67 缺 sc_npc_20081_1_1、希顿检查暂缓、蓝龙509 Missing script null、墓室黑屏待复验。
 - 音乐 FLAC 1.482 GB→Opus 184.28 MB；外部浏览器兼容未验。

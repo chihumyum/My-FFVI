@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
+import { createBugReportMiddleware } from "./tools/play/bug-report-store.mjs";
 const root = import.meta.dirname;
 export default defineConfig({
   root: path.join(root, "apps/play"),
@@ -24,6 +25,9 @@ export default defineConfig({
     {
       name: "local-evidence-only",
       configureServer(server) {
+        server.middlewares.use(
+          createBugReportMiddleware({ directory: path.join(root, "bug-reports") }),
+        );
         server.middlewares.use(async (req, res, next) => {
           const url = new URL(req.url, "http://localhost");
           if (url.pathname.startsWith("/game/")) {

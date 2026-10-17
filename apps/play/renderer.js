@@ -361,6 +361,16 @@ export class GameRenderer {
     return this._texture(url);
   }
 
+  captureFrame() {
+    return this.app.renderer.extract.base64({
+      target: this.app.stage,
+      frame: new Rectangle(0, 0, this._width, this._height),
+      format: "png",
+      resolution: this._resolution || 1,
+      clearColor: "#080e1b",
+    });
+  }
+
   _warnOnce(key, message) {
     if (this._warned.has(key)) return;
     this._warned.add(key);
@@ -753,11 +763,41 @@ export class GameRenderer {
     const draw = (actor, part, x, y, order) => {
       const { asset, hideFeet = 0, offsetY = 0 } = part;
       const char = data?.characters?.[asset?.toLowerCase()];
-      if (!char?.sprites) return;
+      const record = {
+        side: "field",
+        entityId: actor.id,
+        kind: actor.kind,
+        characterId: actor.characterId,
+        asset,
+        animation: actor.animation || "Default",
+        direction: actor.direction,
+        x: actor.x,
+        y: actor.y,
+        layer: actor.layer,
+        vehicle: actor.vehicle,
+        screen: { x: x - ox, y: y - oy },
+        part: order,
+        drawn: false,
+      };
+      this.frameActors.push(record);
+      if (!char?.sprites) {
+        record.reason = "missing-character-data";
+        return;
+      }
       const frame = this.fieldAnimations.sample(actor, char, game.time, asset);
       const info = frame?.info;
+      Object.assign(record, { frame: frame?.name, clip: frame?.clip, resource: info?.file });
+      if (!info) {
+        record.reason = "missing-animation-frame";
+        return;
+      }
       let texture = this._texture(info?.file);
-      if (!texture) return;
+      if (!texture) {
+        record.reason = this._textures.get(info?.file)?.failed
+          ? "texture-failed"
+          : "texture-pending";
+        return;
+      }
       const w = info.logicalWidth || info.width || texture.width;
       const h = info.logicalHeight || info.height || texture.height;
       if (hideFeet)
@@ -765,7 +805,10 @@ export class GameRenderer {
           tilewidth: texture.width,
           tileheight: Math.max(1, texture.height - Math.round((hideFeet * texture.height) / h)),
         });
-      if (x + w < ox || x - w > ox + viewWidth || y < oy || y - h > oy + viewHeight) return;
+      if (x + w < ox || x - w > ox + viewWidth || y < oy || y - h > oy + viewHeight) {
+        record.reason = "outside-viewport";
+        return;
+      }
       const parent = this._fieldActorLayers[fieldActorPlane(actor)];
       const sprite = pooledSprite(this._fieldSprites, parent, count++);
       if (sprite.parent !== parent) parent.addChild(sprite);
@@ -783,12 +826,31 @@ export class GameRenderer {
       sprite.alpha = frame.alpha ?? 1;
       sprite.tint = frame.tint ?? 0xffffff;
       sprite.visible = true;
+      record.drawn = true;
+      record.bounds = {
+        x: sprite.x - w / 2,
+        y: sprite.y - h + hideFeet,
+        width: w,
+        height: h - hideFeet,
+      };
     };
     for (const actor of actors) {
       if (this.fieldPresentation.flight && actor === game.player) continue;
       const position = fieldActorPosition(actor, tile);
-      for (const [order, part] of fieldActorParts(actor).entries())
-        draw(actor, part, position.x, position.y, order);
+      const parts = fieldActorParts(actor);
+      if (!parts.length && (actor === game.player || [6, 10, 14, 17].includes(actor.kind)))
+        this.frameActors.push({
+          side: "field",
+          entityId: actor.id,
+          asset: actor.asset,
+          animation: actor.animation,
+          x: actor.x,
+          y: actor.y,
+          layer: actor.layer,
+          drawn: false,
+          reason: "missing-character-asset",
+        });
+      for (const [order, part] of parts.entries()) draw(actor, part, position.x, position.y, order);
     }
     hideUnused(this._fieldSprites, count);
     this._visibleActors = count;
@@ -847,6 +909,18 @@ export class GameRenderer {
       const [side, rawIndex] = key.split(":"),
         index = Number(rawIndex),
         selectable = row.container.visible && this.canSelectBattleTarget?.(side, index);
+      const unit = (side === "player" ? battle.players : battle.enemies)[index];
+      this.frameActors.push({
+        side,
+        entityId: unit?.id,
+        index,
+        slot: unit?.slot,
+        name: unit?.name,
+        ...row.renderInfo,
+        drawn: row.container.visible,
+        screen: { x: row.container.x, y: row.container.y },
+        mirror: row.container.scale.x < 0,
+      });
       row.container.eventMode = selectable ? "static" : "auto";
       row.container.interactiveChildren = false;
       row.container.cursor = selectable ? "pointer" : "default";
@@ -879,6 +953,7 @@ export class GameRenderer {
 
   render(game, data, battleData) {
     if (!this._ready) return;
+    this.frameActors = [];
     const start = performance.now();
     if (this._previousFrame && start > this._previousFrame) {
       this._frameIntervals.push(start - this._previousFrame);

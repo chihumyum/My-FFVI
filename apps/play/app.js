@@ -6,6 +6,7 @@ import { GameUI, createWidget } from "./ui.js";
 import { WebAudioPlayer } from "./audio.js";
 import { createExtras } from "./extras.js";
 import { OperaHost } from "./opera-host.js";
+import { createEventHistory, describeBugState, saveBugReport } from "./bug-report.js";
 import {
   withPresentation,
   observingAudioInstruction,
@@ -61,6 +62,8 @@ renderer.onBattleSound = (id) =>
     ?.catch?.((error) => audio.warn(error.message));
 const saveLibrary = new SaveLibrary();
 const menuState = { page: "队伍" };
+const eventHistory = createEventHistory();
+let reportingBug = false;
 let extrasReturn;
 const extras = createExtras({
   ui,
@@ -93,6 +96,7 @@ function presentation(command) {
   result?.catch?.((error) => audio.warn(error.message));
 }
 function event(e) {
+  eventHistory.record(e);
   if (e.kind === "opera" && !auto && !walking) opera.play(e.stage);
   if (e.kind === "battle-message")
     battleDialogue = {
@@ -126,6 +130,7 @@ function event(e) {
   }
 }
 async function start(saved = null, testBoost = false) {
+  eventHistory.clear();
   if (extras.active) extras.close();
   opera.reset();
   renderer.resetPresentation();
@@ -270,7 +275,43 @@ $("close").onclick = () => {
   $("menu").hidden = true;
 };
 const keys = new Set();
+async function reportBug() {
+  if (reportingBug) return;
+  reportingBug = true;
+  const previousPause = paused,
+    capturedGame = game,
+    previousClock = renderer._previewClock;
+  paused = true;
+  renderer._previewClock = performance.now() / 1000;
+  $("bug-status").textContent = "F9：正在保存现场…";
+  try {
+    renderer.render(started ? game : null, data, battleData);
+    const report = describeBugState(game, renderer, eventHistory.read(), ui.presentation.mapNames);
+    report.screenshot = {
+      mimeType: "image/png",
+      dataURL: await renderer.captureFrame(),
+    };
+    const result = await saveBugReport(report, { development: import.meta.env.DEV });
+    $("bug-status").textContent =
+      result.method === "directory"
+        ? `F9：已保存 ${result.directory}`
+        : `F9：已下载 ${result.file}`;
+  } catch (error) {
+    $("bug-status").textContent = `F9：保存失败：${error.message}`;
+    console.error("[bug-report]", error);
+  } finally {
+    if (game === capturedGame) paused = previousPause;
+    renderer._previewClock = previousClock;
+    reportingBug = false;
+  }
+}
+$("bug-report").onclick = reportBug;
 addEventListener("keydown", (e) => {
+  if (e.key === "F9") {
+    e.preventDefault();
+    if (!e.repeat) reportBug();
+    return;
+  }
   if (extras.active) {
     if (e.key === "Escape") {
       extras.close();

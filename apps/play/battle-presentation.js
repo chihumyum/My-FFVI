@@ -331,6 +331,18 @@ export class BattlePresentation {
         if (unit.hidden || unit.removed || unit.escaped) continue;
         const pose = side === "player" ? this.pose(unit, row, now, position.mirror) : null;
         const info = pose?.info || unit.sprite;
+        row.renderInfo = {
+          resource: info?.url,
+          asset: info?.url?.match(/\/(bc_ff6_[^/]+?)_assets_all_/i)?.[1],
+          animation: info?.url
+            ?.split("/")
+            .at(-1)
+            ?.replace(/\.png$/i, ""),
+          armorResource: pose?.armor?.url,
+          magitek: unit.magitek,
+          riderOffset: pose?.riderOffset,
+          riderPosition: pose?.riderPosition,
+        };
         const texture = this.getTexture(info?.url);
         if (!texture) continue;
         const dead = unit.hp <= 0;

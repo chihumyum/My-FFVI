@@ -10,7 +10,7 @@
   "scripts": {
     "export": "node tools/export/index.mjs",
     "dev": "vite --config vite.config.mjs",
-    "test": "node --test src/play/*.test.mjs apps/play/*.test.mjs tools/export/*.test.mjs",
+    "test": "node --test src/play/*.test.mjs apps/play/*.test.mjs tools/export/*.test.mjs tools/play/*.test.mjs",
     "play:through": "node tools/play/playthrough.mjs",
     "play:optional-inventory": "node tools/play/optional-inventory.mjs",
     "play:optional": "node tools/play/optional-run.mjs",
@@ -19,6 +19,7 @@
     "play:ai-smoke": "node tools/play/smoke-monster-ai.mjs",
     "play:events-smoke": "node tools/play/smoke-battle-events.mjs",
     "play:commands-check": "node tools/play/check-play-commands.mjs",
+    "play:bug-report-check": "node tools/play/check-bug-report.mjs",
     "play:ability-audit": "node tools/play/audit-play-abilities.mjs",
     "format": "prettier --write \"{src/play,apps/play,tools/export,tools/play}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
     "format:check": "prettier --check \"{src/play,apps/play,tools/export,tools/play}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
@@ -26,6 +27,7 @@
     "bundle": "node tools/play/bundle.mjs"
   },
   "devDependencies": {
+    "playwright": "1.64.1",
     "prettier": "3.9.10",
     "vite": "8.3.4"
   },
