@@ -29,6 +29,17 @@ const burningHouseRoutes = [
   [417, [10, 12, 1], "U3 L2 U1 L1 U2"],
   [419, [7, 11, 1], "U5"],
 ];
+const continentRoutes = [
+  [572, [10, 23, 2], "U2 R9 U1"],
+  [573, [19, 20, 2], "U2 R2 U1 R1 U1 R4 D5 L1 D2 L2 D4 R2"],
+  [577, [25, 27, 2], "R1 U3 R2 U1 R4 D1"],
+  [574, [40, 16, 2], "D4"],
+  [578, [40, 20, 2], "D1 L2 D1 L3 D1 L2 D2 L1 D8 R2 D3"],
+  [582, [34, 36, 2], "U1 L4 D3 R1 D1 R6 D1 R1 D1 R4 D2 R4 U1 R1 U3 R13 D5 R3 U5"],
+  [581, [40, 34, 2], "U2"],
+  [590, [63, 41, 2], "U5"],
+  [592, [63, 36, 2], "U4 L1 U1 L2 U7"],
+];
 const expand = (steps) =>
   steps
     .split(" ")
@@ -54,6 +65,26 @@ function recordedWalk(game, x, y, layer, directions, route) {
 }
 
 export function fixedStoryInput(game, objective) {
+  if (objective.id === "atma-weapon" && game.mapId === 431) {
+    const route = continentRoutes.find(
+      ([source]) => !game.history.some((entry) => entry.script === `sc_e_0${source}`),
+    );
+    if (route) {
+      const walking = recordedWalk(game, ...route[1], expand(route[2]), "floating-continent");
+      if (walking) return walking;
+      const direction =
+        route[0] === 578 && game.player.x === 34 && game.player.y === 36
+          ? "right"
+          : route[0] === 592 && game.player.x === 60 && game.player.y === 24
+            ? "up"
+            : null;
+      if (direction) {
+        game.move(direction);
+        if (!game.busy) game.confirm();
+        return { status: "fixed-input", route: "floating-continent", action: `talk-${direction}` };
+      }
+    }
+  }
   if (objective.id === "approach-continent" && game.mapId === 119) {
     const waiting = pendingEventInput(game);
     if (waiting) return { ...waiting, route: "blackjack-interception" };
