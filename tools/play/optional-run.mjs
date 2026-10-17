@@ -9,10 +9,30 @@ import { pendingEventInput } from "../../src/play/event-systems.js";
 import { cooperativeStoryInput } from "../../src/play/cooperative-input.js";
 import { pathTo } from "../../src/play/m1-route.js";
 import { partyInputMembers } from "../../src/play/party-input.js";
+import { submitVehicleInput } from "../../src/play/vehicle-input.js";
 import { optionalCases as recruitmentCases } from "./optional-cases.mjs";
 import { extraOptionalCases } from "./optional-extra-cases.mjs";
+import { recruitOptionalCases } from "./optional-recruit-cases.mjs";
+import { esperOptionalCases } from "./optional-esper-cases.mjs";
+import {
+  selectColosseumWager,
+  selectColosseumChallenger,
+  confirmColosseum,
+} from "../../src/play/colosseum.js";
 
-const optionalCases = [...recruitmentCases, ...extraOptionalCases];
+const optionalCases = [
+  ...recruitmentCases,
+  ...extraOptionalCases,
+  ...recruitOptionalCases,
+  ...esperOptionalCases,
+];
+function condition(game, test) {
+  if (test?.memberAvailable)
+    return partyInputMembers(game).some((u) => u.id === test.memberAvailable);
+  if (test?.all) return test.all.every((c) => condition(game, c));
+  if (test?.any) return test.any.some((c) => condition(game, c));
+  return storyCondition(game, test);
+}
 
 const args = process.argv.slice(2),
   option = (key, fallback) => (args.includes(key) ? args[args.indexOf(key) + 1] : fallback);
@@ -23,8 +43,11 @@ const startFile = path.resolve(
 );
 const out = path.resolve(option("--out", path.join(root, "build/play/optional")));
 const selected = option("--cases", "all").split(","),
-  cases = optionalCases.filter((c) => selected.includes("all") || selected.includes(c.id));
-if (!cases.length) throw Error("No matching optional content cases");
+  summarizeOnly = args.includes("--summarize-only"),
+  cases = summarizeOnly
+    ? []
+    : optionalCases.filter((c) => selected.includes("all") || selected.includes(c.id));
+if (!cases.length && !summarizeOnly) throw Error("No matching optional content cases");
 const json = async (file) => JSON.parse(await readFile(file));
 const [data, battleData, saved] = await Promise.all([
   json(path.join(dataRoot, "data.json")),
@@ -37,6 +60,65 @@ const maxTicks = Number(option("--ticks", "40000")),
   maxSeconds = Number(option("--seconds", "90"));
 const results = [];
 function objectiveTarget(game, objective, fixedRoutes) {
+  // Reuse the existing story plan's input phases verbatim. This reader adds
+  // no shopping, training, battle tactics or fish-selection policy.
+  if (objective.navigation === "fish-and-feed" || objective.action === "await-source") {
+    const waiting = pendingEventInput(game);
+    if (waiting) return waiting;
+  }
+  const cycle = objective.cycle?.find(
+    (step) =>
+      (!step.when || condition(game, step.when)) && (!step.unless || !condition(game, step.unless)),
+  );
+  if (cycle) objective = { ...objective, scripts: cycle.scripts };
+  if (objective.flightEncounter) {
+    const fixture = objective.flightEncounter;
+    if (!game.map?.worldTerrain)
+      return findStoryTarget(game, { scripts: [fixture.departureScript] });
+    if (Number(game.player.vehicle) !== fixture.vehicleId)
+      return { status: "needs-input", reason: "source flight vehicle unavailable" };
+    const body = game.entities.find(
+        (e) => e.script === fixture.sourceScript && fixture.entityIds.includes(String(e.id)),
+      ),
+      target = body && game.actors.get(String(body.id));
+    if (
+      !target ||
+      target.x < 0 ||
+      target.y < 0 ||
+      target.x >= game.map.width ||
+      target.y >= game.map.height
+    ) {
+      const accepted = submitVehicleInput(game, { action: "deck", vehicleId: fixture.vehicleId });
+      return { status: accepted ? "fixed-flight-deck-input" : "needs-input" };
+    }
+    // A regression fixture may locate the actual hidden contact body, then
+    // fly with ordinary cardinal inputs. It never places it or starts a script.
+    const dx = (target.x - game.player.x + game.map.width) % game.map.width,
+      dy = (target.y - game.player.y + game.map.height) % game.map.height,
+      direction = dx
+        ? dx < game.map.width / 2
+          ? "right"
+          : "left"
+        : dy
+          ? dy < game.map.height / 2
+            ? "down"
+            : "up"
+          : "left";
+    return {
+      status: game.move(direction) ? "fixed-flight-contact-input" : "needs-input",
+      direction,
+    };
+  }
+  if (objective.waitUntil && !condition(game, objective.waitUntil))
+    return (
+      pendingEventInput(game) || { status: "needs-input", reason: "source timer is not advancing" }
+    );
+  if (
+    objective.repeat &&
+    game.mapId === objective.repeat.leaveMap &&
+    condition(game, objective.repeat.when)
+  )
+    return findStoryTarget(game, { action: "visit-map", maps: [objective.repeat.viaMap] });
   if (objective.action === "fixed-field-route") {
     if (!objective.maps.includes(game.mapId))
       return findStoryTarget(game, { action: "visit-map", maps: objective.maps });
@@ -81,6 +163,30 @@ function objectiveTarget(game, objective, fixedRoutes) {
   return projected;
 }
 for (const test of cases) {
+  let caseStart = args.includes("--start")
+    ? startFile
+    : path.resolve(root, test.startSave || startFile);
+  if (!args.includes("--start") && test.requiresCases?.length) {
+    const dependency = test.requiresCases.at(-1),
+      report = await json(path.join(out, `${dependency}.json`)).catch(() => null);
+    if (report?.stop !== "passed") {
+      const result = {
+        content: test.id,
+        title: test.title,
+        stop: "dependency-unverified",
+        objectives: test.objectives,
+        completed: [],
+        blockers: [{ dependency }],
+        startSave: null,
+        mode: "boosted-regression",
+      };
+      await writeFile(path.join(out, `${test.id}.json`), JSON.stringify(result, null, 2));
+      results.push(result);
+      continue;
+    }
+    caseStart = path.join(out, `${dependency}-save.json`);
+  }
+  const caseSaved = caseStart === startFile ? saved : await json(caseStart);
   const began = performance.now(),
     events = [],
     inputs = {},
@@ -114,7 +220,7 @@ for (const test of cases) {
   });
   // Restore a real save, then apply the existing explicit boosted mode. No plot
   // flags, actor positions, available members or event program counters are set.
-  await game.restore(structuredClone(saved.snapshot || saved), { testBoost: true });
+  await game.restore(structuredClone(caseSaved.snapshot || caseSaved), { testBoost: true });
   const initialBattles = game.battles.length,
     initialHistory = game.history.length;
   game.autoChoice = (host) =>
@@ -122,17 +228,24 @@ for (const test of cases) {
       { id: test.id, title: test.title, objectives: current ? [current] : [] },
     ]);
   const alreadyComplete = [],
-    completed = [];
+    completed = [],
+    skipped = [];
+  const nextObjective = () =>
+    test.objectives.find((o) => !completed.includes(o.id) && !skipped.includes(o.id));
   const recordCompletions = (initial = false) => {
     if (!initial && game.busy) return;
     // A location is a momentary assertion. Do not credit a later "leave
     // Thamasa" step merely because the initial save is on the world map.
     for (
-      let next = test.objectives[completed.length];
+      let next = test.objectives[completed.length + skipped.length];
       next;
-      next = test.objectives[completed.length]
+      next = test.objectives[completed.length + skipped.length]
     ) {
-      if (!storyCondition(game, next.complete)) break;
+      if (next.when && !condition(game, next.when)) {
+        skipped.push(next.id);
+        continue;
+      }
+      if (!condition(game, next.complete)) break;
       completed.push(next.id);
       if (initial) alreadyComplete.push(next.id);
     }
@@ -146,7 +259,7 @@ for (const test of cases) {
       stop = "wall-time-limit";
       break;
     }
-    current = test.objectives.find((o) => !completed.includes(o.id));
+    current = nextObjective();
     if (game.over) {
       stop = "game-over";
       break;
@@ -161,6 +274,15 @@ for (const test of cases) {
       break;
     }
     game.storyObjective = current;
+    if (game.colosseumMenu && current.colosseum) {
+      const { wagerContentId, challengerId = game.party[0]?.id } = current.colosseum;
+      if (
+        selectColosseumWager(game, wagerContentId) &&
+        selectColosseumChallenger(game, challengerId) &&
+        confirmColosseum(game)
+      )
+        inputs["fixed-colosseum-input"] = (inputs["fixed-colosseum-input"] || 0) + 1;
+    }
     const fixedBattleInput = current.battleInput,
       fixedBattle =
         fixedBattleInput &&
@@ -173,14 +295,14 @@ for (const test of cases) {
     if (game.loading) await game.pending;
     recordCompletions();
     if (game.busy) continue;
-    current = test.objectives.find((o) => !completed.includes(o.id));
+    current = nextObjective();
     if (!current) {
       stop = completed.length > alreadyComplete.length ? "passed" : "already-complete";
       break;
     }
     game.storyObjective = current;
     const cooperative = cooperativeStoryInput(game, current, {
-      condition: storyCondition,
+      condition,
       findTarget: findStoryTarget,
       followTarget,
     });
@@ -206,7 +328,8 @@ for (const test of cases) {
       input.status,
       input.target?.id,
     ]);
-    const count = (visits.get(cell) || 0) + 1;
+    const waiting = input.status === "wait-event" && input.timer?.advancing;
+    const count = waiting ? 0 : (visits.get(cell) || 0) + 1;
     visits.set(cell, count);
     if (count >= 80) {
       stop = "input-stalled";
@@ -214,15 +337,18 @@ for (const test of cases) {
     }
   }
   const availableMembers = partyInputMembers(game).map((unit) => unit.id);
+  if (stop === "passed" && test.complete && !condition(game, test.complete))
+    stop = "completion-condition-failed";
   if (stop === "passed" && test.members?.some((id) => !availableMembers.includes(id)))
     stop = "member-unavailable";
   const result = {
     content: test.id,
     title: test.title,
-    startSave: path.relative(root, startFile),
+    startSave: path.relative(root, caseStart),
     mode: "boosted-regression",
     stop,
     completed,
+    skipped,
     alreadyComplete,
     ticks,
     seconds: (performance.now() - began) / 1000,
@@ -236,6 +362,7 @@ for (const test of cases) {
     unresolvedBeforeRun: test.unresolved || [],
     executedPrograms: [...executedPrograms].map((id) => ({ id, name: data.programs[id]?.name })),
     executedOpCount: executedOps.size,
+    executedOps: [...executedOps],
     lastInput,
     inputs,
     battles: game.battles.slice(initialBattles),

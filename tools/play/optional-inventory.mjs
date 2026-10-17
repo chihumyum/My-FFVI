@@ -8,6 +8,7 @@ const { values } = parseArgs({
     report: { type: "string", default: "build/play/optional-main-regression.json" },
     checkpoints: { type: "string", default: "build/play/stage1-checkpoints" },
     coverage: { type: "string", default: "build/play/main-script-coverage.json" },
+    optional: { type: "string", default: "build/play/optional" },
     out: { type: "string", default: "build/play/optional-inventory.json" },
     help: { type: "boolean" },
   },
@@ -15,7 +16,7 @@ const { values } = parseArgs({
 if (values.help) {
   console.log(
     "node tools/play/optional-inventory.mjs [--data DIR] [--report REGRESSION.json] " +
-      "[--checkpoints DIR] [--coverage VM-COVERAGE.json] [--out INVENTORY.json]\n" +
+      "[--checkpoints DIR] [--coverage VM-COVERAGE.json] [--optional CASE-REPORTS-DIR] [--out INVENTORY.json]\n" +
       "Reads existing PR exports and recorded runs only. Also writes a sibling CSV.\n" +
       "Coverage records observations, never quest completion or runtime availability.",
   );
@@ -524,14 +525,14 @@ function observe(index, entry, itemIndex, kind) {
     mapCoverage.get(mapId).add(index);
   }
 }
-async function addEvidence(file, type) {
-  const doc = await optionalRead(file);
+async function addEvidence(file, type, supplied = null) {
+  const doc = supplied || (await optionalRead(file));
   if (!doc) {
     warnings.push(`Optional evidence absent: ${relative(file)}`);
     return;
   }
   const snapshot = doc.snapshot || doc,
-    history = doc.history || snapshot.history || [];
+    history = doc.history || snapshot.history || doc.newScripts || [];
   const evidence = evidenceFiles.length;
   evidenceFiles.push({
     id: evidence,
@@ -540,8 +541,12 @@ async function addEvidence(file, type) {
     historyEntries: history.length,
     mode: doc.mode || null,
     start: doc.start || null,
-    testBoost: Boolean(snapshot.testBoost || doc.boostReason || doc.mode === "story-test"),
-    terminalMap: snapshot.mapId || doc.mapId,
+    testBoost: Boolean(
+      snapshot.testBoost ||
+      doc.boostReason ||
+      ["story-test", "boosted-regression"].includes(doc.mode),
+    ),
+    terminalMap: snapshot.mapId || doc.mapId || doc.endMap,
     terminalTime: snapshot.time || doc.time,
   });
   history.forEach((entry, index) => observe(evidence, entry, index, "history"));
@@ -572,11 +577,29 @@ const checkpointFiles = (await readdir(values.checkpoints))
 for (const file of checkpointFiles)
   await addEvidence(path.join(values.checkpoints, file), "checkpoint");
 
+const optionalDocuments = [];
+for (const file of (
+  await readdir(values.optional).catch((error) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  })
+)
+  .filter((name) => name.endsWith(".json") && !name.endsWith("-save.json"))
+  .sort()) {
+  const full = path.join(values.optional, file),
+    doc = await read(full);
+  if (!doc.content || !Array.isArray(doc.executedPrograms)) continue;
+  optionalDocuments.push({ file: relative(full), doc });
+  // Even an incomplete run proves actual observations. It does not prove its
+  // quest finished; acceptance remains exclusively in the optional result table.
+  await addEvidence(full, "optional-case-observation", doc);
+}
+
 // Host-only instruction observers can strengthen coverage without changing core VM.
 const vmCoverageDocument = await optionalRead(values.coverage),
   vmCoverage = new Map();
-if (vmCoverageDocument) {
-  const rows = vmCoverageDocument.programs || vmCoverageDocument.programIds || [];
+function mergeVm(document) {
+  const rows = document.programs || document.programIds || document.executedPrograms || [];
   for (const [key, value] of Object.entries(rows)) {
     const id = String(
       typeof value === "string" || typeof value === "number"
@@ -588,17 +611,21 @@ if (vmCoverageDocument) {
       warnings.push(`VM evidence program ${id} name differs from current PR export: ${value.name}`);
       continue;
     }
-    vmCoverage.set(id, typeof value === "object" ? value : { programId: id });
+    if (!vmCoverage.has(id))
+      vmCoverage.set(id, typeof value === "object" ? { ...value } : { programId: id });
   }
-  for (const operation of vmCoverageDocument.operations || []) {
+  for (const operation of document.operations || document.executedOps || []) {
     const [id, pc] = String(operation).split(":");
     const entry = vmCoverage.get(id);
-    if (entry && Number.isInteger(Number(pc))) {
+    if (entry && Number.isInteger(Number(pc)) && data.programs[id]?.ops[Number(pc)]) {
       entry.opIndices ??= [];
-      entry.opIndices.push(Number(pc));
+      if (!entry.opIndices.includes(Number(pc))) entry.opIndices.push(Number(pc));
     }
   }
 }
+if (vmCoverageDocument) mergeVm(vmCoverageDocument);
+const mainObservedProgramCount = vmCoverage.size;
+for (const { doc } of optionalDocuments) mergeVm(doc);
 const coverageFor = (id) => {
   const observations = historyCoverage.get(id) || [];
   return {
@@ -866,6 +893,7 @@ const output = {
     report: relative(values.report),
     checkpoints: relative(values.checkpoints),
     coverage: vmCoverageDocument ? relative(values.coverage) : null,
+    optional: relative(values.optional),
   },
   methodology: {
     sourceIdentity:
@@ -893,6 +921,18 @@ const output = {
   ],
   sourceWorldFlagProof,
   evidenceFiles,
+  optionalCoverageEvidence: {
+    files: optionalDocuments.map(({ file, doc }) => ({
+      file,
+      content: doc.content,
+      mode: doc.mode,
+      stop: doc.stop,
+      programs: doc.executedPrograms.length,
+      opSites: doc.executedOps?.length || null,
+    })),
+    mergedSourcePrograms: vmCoverage.size,
+    note: "Only actually observed source programs/ops are merged. Incomplete runs still contribute observations, never quest completion. The result table alone tracks acceptance.",
+  },
   vmCoverageEvidence: vmCoverageDocument
     ? {
         file: relative(values.coverage),
@@ -901,7 +941,7 @@ const output = {
         start: vmCoverageDocument.start,
         stop: vmCoverageDocument.stop,
         programs: vmCoverageDocument.programs?.length || vmCoverage.size,
-        sourcePrograms: vmCoverage.size,
+        sourcePrograms: mainObservedProgramCount,
         runtimeGeneratedPrograms: (vmCoverageDocument.programs || []).filter(
           (program) => !data.programs[program.id],
         ).length,

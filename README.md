@@ -18,7 +18,7 @@ python3 -m venv .venv
 npm run export -- --game "/path/to/FINAL FANTASY VI"
 ```
 
-输出为 `build/web-data/`，可用 `--out "/path/to/empty-directory"` 更换。导出器只读这个游戏目录和自身缓存，不读旧工程。SHA256 按原文件跳过未变化的 Unity 提取，音频按原 bank 字节缓存，地图提前整理完成。`manifest.json` 列每类数量和大小；`raw/index.json` 是当前源文件索引，`raw/issues.json` 记录未能完整解析的原生对象并保留原字节。地图、剧情、战斗、图像、音频、UI/相机元数据均可重新生成；`web/` 同时生成网站所需的分片数据、图集和带内容哈希的音频。魔石在该 PR Windows 版本的 `GameAssembly.dll` 构造函数中，不在 CSV；导出器直接解码整数字典，遇不兼容版本会明确报错。
+输出为 `build/web-data/`，可用 `--out "/path/to/empty-directory"` 更换。导出器只读这个游戏目录和自身缓存，不读旧工程。SHA256 按原文件跳过未变化的 Unity 提取，音频按原 bank 字节缓存，地图提前整理完成。`manifest.json` 列每类数量和大小；`raw/index.json` 是当前源文件索引，`raw/issues.json` 记录未能完整解析的原生对象并保留原字节。地图、剧情、战斗、图像、音频、UI/相机元数据均可重新生成；`web/` 同时生成网站所需的分片数据、图集和带内容哈希的音频。魔石与斗技场押注表在该 PR Windows 版本的 `GameAssembly.dll` 构造函数中，不在 CSV；导出器直接解码整数字典，遇不兼容版本会明确报错。斗技场两张字典各 256 行（含 0 空项），对手与奖励继续引用 PR 表，影忍特殊对手按原版救援/入队旗标选择。
 
 开发运行：
 
@@ -70,9 +70,9 @@ PLAY_TEST_BOOST=1 npm run play:through
 
 默认读取 `build/web-data/`；`PLAY_DATA_DIR` 可指向另一个独立导出目录，`PLAY_STATIC_DIR=dist/web` 可验证静态包。普通模式默认到三分线结束附近，也可用 `PLAY_THROUGH=M1` 验证开场。`PLAY_REPORT` 指定报告，`PLAY_SEED` 指定随机种子。`PLAY_CHECKPOINT_DIR` 记录真实游玩产生的目标存档；`PLAY_RESUME` 继续存档，不计作新游戏全程验收。强化会复制普通存档，不写回原槽，不修改剧情旗标。自动跑法为检查远处路线会显式预载全部剧情；回归会逐步审计实际执行的脚本是否已由正常地图边界取得，避免预载掩盖缺失依赖。手动游玩不全量预载。怪物 AI 直接解释 PR 的 430 个程序和 69 种指令。
 
-可选内容清单用 `npm run play:optional-inventory` 生成 `build/play/optional-inventory.json` 和 CSV，按 PR 地区列出源脚本、NPC、入口及旗标守卫。`--report`、`--checkpoints`、`--coverage` 可选择实际回归证据；`PLAY_COVERAGE_REPORT=build/play/main-script-coverage.json` 会观察真正执行的 VM 指令，区分同名的不同作用域脚本。静态入口、脚本覆盖和支线完成分别记录，不能互相代替。
+可选内容清单用 `npm run play:optional-inventory` 生成 `build/play/optional-inventory.json` 和 CSV，按 PR 地区列出源脚本、NPC、入口及旗标守卫。`--report`、`--checkpoints`、`--coverage` 可选择实际回归证据，`--optional` 指定支线报告目录（默认 `build/play/optional`）；实际支线 VM 观察会合并到地区缺口清单，未完成用例只贡献观察，不算支线通过；`PLAY_COVERAGE_REPORT=build/play/main-script-coverage.json` 会观察真正执行的 VM 指令，区分同名的不同作用域脚本。静态入口、脚本覆盖和支线完成分别记录，不能互相代替。
 
-`npm run play:optional -- --cases all` 从真实 Falcon 检查点独立跑各项强化支线；`--start` 可指定另一个真实存档，`--cases mog,cyan,gogo` 可筛选。结果表在 `build/play/optional/results.csv`，每项只保存最新报告和存档；验收目标变动后，旧结果不会自动算通过。测试只使用普通移动、对话、组队和固定剧情交互，不写剧情旗标或直接调用剧情脚本，不增加购物、练级或补给策略。吞空巨虫用实际 PR 遇敌格触发，固定防御等待源 AI 吸入；全员被吞后由原版 `sc_e_0832` 进入虫体，随后通过原剧情招募格格。世界地图遇敌按原版逐格 `encount_grid`，不再用规则矩形近似岛屿等特殊区域。开发服务器可用 `?checkpoint=gogo-save&checkpointSet=optional` 查看真实支线结果存档；这个界面入口不计剧情覆盖。
+`npm run play:optional -- --cases all` 从真实 Falcon 检查点独立跑各项强化支线；`--start` 可指定另一个真实存档，`--cases mog,cyan,gogo` 可筛选。结果表在 `build/play/optional/results.csv`，每项只保存最新报告和存档；`--summarize-only` 只重新汇总已有证据，验收目标变动后旧结果不会自动算通过。影忍用源剧情仍允许等待生还的真实崩坏前存档连续推进，不切换到已死亡的崩坏后存档；依赖洛克的支线使用真正的不死鸟洞窟完成存档。测试只使用普通移动、对话、组队和固定剧情交互，不写剧情旗标或直接调用剧情脚本，不增加购物、练级或补给策略。吞空巨虫用实际 PR 遇敌格触发，固定防御等待源 AI 吸入；全员被吞后由原版 `sc_e_0832` 进入虫体，随后通过原剧情招募格格。世界地图遇敌按原版逐格 `encount_grid`，不再用规则矩形近似岛屿等特殊区域。开发服务器可用 `?checkpoint=gogo-save&checkpointSet=optional` 查看真实支线结果存档；这个界面入口不计剧情覆盖。
 
 ```sh
 npm test
