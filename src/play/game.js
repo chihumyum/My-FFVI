@@ -314,6 +314,11 @@ export class PlayGame {
   }
   write(category, index, value, task) {
     this.bank(category || "ScriptLocalVariable", task)[index] = value | 0;
+    // The PR deployment/return scripts set/reset the party-switch flag.
+    // In particular, Phoenix's return must stop retaining inactive parties
+    // on cave plates after the source has returned to an ordinary town.
+    if (category === "ScenarioFlag3" && index === 45 && this.rts)
+      this.rts.active = (value | 0) !== 0;
   }
   compare(a, op, b) {
     switch (op) {
@@ -369,8 +374,8 @@ export class PlayGame {
         return b;
     }
   }
-  text(key) {
-    return (this.data.messages[key] ?? key ?? "")
+  text(key, fallback = key) {
+    return (this.data.messages[key] ?? fallback ?? "")
       .replace(/\\n/g, "\n")
       .replace(
         /\((TINA|LOCK|ROCK|EDGAR|MASH|CELES|MOG)\)/g,
@@ -573,7 +578,9 @@ export class PlayGame {
         );
         return;
       case "SetRandomValue":
-        this.write(s[0], i[0], Math.floor(this.random() * Math.max(1, i[2] - i[1] + 1)) + i[1], t);
+        // PR Misc.SetRandomValue uses Random.Range(1, iValues[1] + 1).
+        // The following zero-filled parameter is not a second range bound.
+        this.write(s[0], i[0], 1 + Math.floor(this.random() * Math.max(1, i[1])), t);
         return;
       case "Wait":
         t.wait = Math.max(0, r[0] || 0);
@@ -1249,6 +1256,21 @@ export class PlayGame {
         }
         if (e.npc?.interaction?.actionId === 8) {
           return openShop(this, e.npc.interaction.productGroup);
+        }
+        if (e.npc?.interaction?.kind === "talk") {
+          const message = e.npc.interaction.message,
+            key = message?.key || "",
+            text = this.text(key, message?.text);
+          if (!text) continue;
+          this.dialogue = {
+            key,
+            text,
+            speaker: this.data.speakers?.[key] || message.speaker || "",
+            task: null,
+            elapsed: 0,
+          };
+          this.event("dialogue", { key, text, entityId: e.id, group: e.group });
+          return true;
         }
         if (e.destination && e.kind !== 3) {
           this.pending = this.enter(e.destination.mapId, e.destination.entrance);

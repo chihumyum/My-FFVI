@@ -108,6 +108,20 @@ function host() {
 const place = (game, id = 4, x = 1, y = 0) =>
   executeVehicleInstruction(game, null, "SetVehicle", [id, 1, x, y, 1, 3]);
 
+test("PR vehicle parking converts its layer request and preserves bottom layer zero on boarding", () => {
+  const game = host();
+  game.player.layer = 2;
+  place(game, 4, 2, 1);
+  assert.equal(game.banks.PlaySystems.vehicles[4].layer, 0);
+  assert.equal(game.actor(-103).layer, 0);
+  assert.equal(game.player.layer, 2);
+  executeVehicleInstruction(game, null, "OnTheVehicle", [4]);
+  assert.equal(game.player.layer, 0);
+  assert.equal(game.actor(-1).layer, 0);
+  executeVehicleInstruction(game, null, "SetVehicle", [4, 1, 2, 1, 3, 3]);
+  assert.equal(game.banks.PlaySystems.vehicles[4].layer, 2);
+});
+
 test("cinematic vehicle hiding expires on map replacement without changing parking or release flags", async () => {
   const fixture = host();
   const game = new PlayGame({

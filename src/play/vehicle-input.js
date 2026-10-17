@@ -114,7 +114,7 @@ export function syncVehicleActors(game) {
       Object.assign(body, {
         x: record.x,
         y: record.y,
-        layer: record.layer || game.player.layer,
+        layer: record.layer ?? game.player.layer,
         direction: record.direction || "down",
       });
     body.visible = active && parkedHere && currentId(game) !== id;
@@ -153,7 +153,9 @@ export function executeVehicleInstruction(game, task, name, i = [], r = [], s = 
       mapId: Number(i[1]),
       x: Number(i[2]),
       y: Number(i[3]),
-      layer: i[4] > 0 ? i[4] : game.player.layer,
+      // Like Puppet.SetPos, PR Vehicle.SetVehicle maps a nonzero layer
+      // request to Unity layer request+8 (our exported layers start at zero).
+      layer: i[4] > 0 ? i[4] - 1 : game.player.layer,
       direction: directions[i[5]] || game.player.direction,
       enabled: true,
     };
@@ -179,7 +181,7 @@ export function executeVehicleInstruction(game, task, name, i = [], r = [], s = 
       Object.assign(game.player, {
         x: record.x,
         y: record.y,
-        layer: record.layer || game.player.layer,
+        layer: record.layer ?? game.player.layer,
         motion: null,
       });
       if (game.camera)
@@ -492,7 +494,7 @@ export function submitVehicleInput(game, input) {
     Object.assign(game.player, {
       x: parked.x,
       y: parked.y,
-      layer: parked.layer || game.player.layer,
+      layer: parked.layer ?? game.player.layer,
     });
     closeVehicleInput(game);
     changeVehicle(game, id, task);

@@ -19,6 +19,63 @@ const game = () => ({
   },
 });
 
+test("PR random variable draws every integer from one through its sole upper bound", () => {
+  for (const upper of [1, 4, 6, 8]) {
+    const g = new PlayGame({
+      data: {
+        programs: {
+          0: {
+            name: "random-lot",
+            ops: [["SetRandomValue", [2, upper, 0, 0], [], ["MapLocalVariable"]]],
+          },
+        },
+      },
+    });
+    for (let expected = 1; expected <= upper; expected++) {
+      for (const offset of [0, 0.999999]) {
+        g.random = () => (expected - 1 + offset) / upper;
+        g.step({ program: 0, pc: 0, actor: null, locals: [] });
+        assert.equal(g.banks.MapLocalVariable[2], expected);
+      }
+    }
+  }
+});
+
+test("an ordinary confirm displays a PR direct-message NPC and releases control on dismissal", () => {
+  const g = new PlayGame({
+    data: { messages: { greeting: "欢迎\\n<C1>！" }, speakers: { greeting: "居民" } },
+  });
+  g.unit(1).name = "蒂娜";
+  Object.assign(g.player, { x: 12, y: 13, layer: 2, direction: "up" });
+  g.entities = [
+    {
+      id: "6",
+      kind: 6,
+      x: 12,
+      y: 12,
+      layer: 2,
+      group: "town",
+      npc: {
+        interaction: {
+          kind: "talk",
+          actionId: 4,
+          message: { key: "greeting", text: "fallback", speaker: "" },
+        },
+      },
+    },
+  ];
+  assert.equal(g.confirm(), true);
+  assert.equal(g.dialogue.text, "欢迎\n蒂娜！");
+  assert.equal(g.dialogue.speaker, "居民");
+  assert.equal(g.tasks.length, 0);
+  assert.equal(g.busy, true);
+  assert.equal(g.confirm(), true);
+  assert.equal(g.dialogue, null);
+  assert.equal(g.busy, false);
+  g.player.layer = 1;
+  assert.equal(g.confirm(), false);
+});
+
 test("source rejoin returns a staged character to the active party without duplication or free healing", () => {
   const g = new PlayGame({ data: {} });
   g.partySlots = [[3, 5], [2], [7]];
@@ -32,6 +89,18 @@ test("source rejoin returns a staged character to the active party without dupli
   assert.equal(unit.level, 9);
   executeSyscall(g, { locals: [] }, "メンバー加入：ロック");
   assert.deepEqual(g.partySlots, [[3, 5, 2], [], [7]]);
+});
+
+test("the source party-switch flag ends a cooperative deployment without removing reserve members", () => {
+  const g = new PlayGame({ data: {} });
+  g.rts = { active: true, count: 2 };
+  g.partySlots = [[7, 2], [5], []];
+  g.write("ScenarioFlag3", 45, 0, {});
+  assert.equal(g.rts.active, false);
+  assert.equal(g.banks.ScenarioFlag3[45], 0);
+  assert.deepEqual(g.partySlots, [[7, 2], [5], []]);
+  g.write("ScenarioFlag3", 45, 1, {});
+  assert.equal(g.rts.active, true);
 });
 
 test("relative SetPos keeps a separate character on the player reference without copying its layer", () => {
