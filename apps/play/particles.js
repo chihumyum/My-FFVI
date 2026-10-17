@@ -592,7 +592,9 @@ export class PRParticles {
       step = dt * (d.speed ?? 1),
       previous = state.time;
     state.time += step;
-    if (state.active) this._emit(instance, state, previous, state.time);
+    // Age the particles that existed at the start of this interval first.
+    // Emitting before this loop gave every newborn a full frame of age and
+    // killed PR's 10ms background-water particles before their first draw.
     for (let n = state.particles.length - 1; n >= 0; n--) {
       const p = state.particles[n];
       p.age += step;
@@ -677,6 +679,14 @@ export class PRParticles {
       }
       this._draw(instance, state, p, velocity);
     }
+    const existing = state.particles.length;
+    if (state.active) this._emit(instance, state, previous, state.time);
+    for (const p of state.particles.slice(existing)) this._draw(instance, state, p, p.velocity);
+    if (state.particles.some((p) => p.lifetime < step))
+      this._warning(
+        `birth-timing:${instance.asset}:${d.node}`,
+        `${instance.asset}/${d.name}: sub-frame particle births are quantized to the end of the presentation step; exact Unity emission timestamps remain approximate.`,
+      );
   }
   _texture(image, uv, particle, state, materialTexture = undefined, details = {}) {
     const t = clamp(particle.age / particle.lifetime);

@@ -14,6 +14,21 @@ export function fieldActorPlane(actor) {
 // floor's foreground. A character on UpperObject must be above UpperLayer.
 export const fieldTileOrder = (layer) => fieldTilePlane(layer) * 2;
 export const fieldActorOrder = (actor) => fieldActorPlane(actor) * 2 + 1;
+export const fieldBodyOrder = (actor) => fieldActorPlane(actor) * 2 - 1;
+
+// PR FieldCharaEntity uses VisualInstanceBody/Head materials (_IsUpper=0/1)
+// and a map-specific horizontal border. The body sits behind furniture in its
+// walking plane, while the head remains above it. Crops share the same source
+// image, pose, clock and anchor; this never changes the actor's logical floor.
+export function fieldBodySegments({ asset, height, pivotY = 0, threshold, hideFeet = 0, vehicle }) {
+  if (!/^mo_ff6_[pn]/i.test(asset || "") || vehicle || hideFeet || !Number.isFinite(threshold))
+    return [{ name: "whole", top: 0, height }];
+  const border = Math.max(0, Math.min(height, height * (1 - pivotY) - threshold));
+  return [
+    ...(border < height ? [{ name: "body", top: border, height: height - border }] : []),
+    ...(border > 0 ? [{ name: "head", top: 0, height: border }] : []),
+  ];
+}
 
 // PR actor/path positions mark cell centers. Sprite pivots are applied at this
 // point, rather than at the bottom edge of the cell (half a tile too low).

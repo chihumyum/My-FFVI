@@ -150,6 +150,27 @@ export class FieldAnimations {
     this.cues = new WeakMap();
     this.custom = new WeakMap();
   }
+  // Host-owned playback is included only in diagnostic still frames. A normal
+  // game save remains independent of rendering and contains none of this.
+  capture(actors) {
+    return [...new Set(actors)].filter(Boolean).map((actor) => {
+      const custom = this.custom.get(actor);
+      return {
+        actor,
+        states: this.actors.get(actor),
+        cue: this.cues.get(actor),
+        custom: custom && { source: custom.source, script: custom.script, cache: custom.cache },
+      };
+    });
+  }
+  restore(rows) {
+    this.reset();
+    for (const { actor, states, cue, custom } of rows || []) {
+      if (states) this.actors.set(actor, states);
+      if (cue) this.cues.set(actor, cue);
+      if (custom) this.custom.set(actor, { ...custom, catalogs: new WeakMap() });
+    }
+  }
   event(event) {
     if (!event?.animationActor) return;
     const cue = ["CueAnim", "PlayAnim"].includes(event.name);

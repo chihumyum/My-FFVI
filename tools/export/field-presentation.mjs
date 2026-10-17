@@ -31,6 +31,21 @@ export async function compileFieldPresentation(out) {
   const maps = {},
     tilemaps = new Map(),
     missing = new Set();
+  const actorMaterials = {},
+    actorShaderTypes = {};
+  for (const entry of raw.files.filter((e) => e.bundleOutput && /\/mo_/.test(e.file)))
+    for (const asset of await read(path.join(out, entry.bundleOutput))) {
+      if (!asset.source.assetPath?.toLowerCase().endsWith("/anim_info.json")) continue;
+      const shaderType = Number(asset.data.shader_type || 0),
+        name = path.basename(entry.file).split("_assets_all_")[0];
+      actorShaderTypes[shaderType] = (actorShaderTypes[shaderType] || 0) + 1;
+      if (shaderType !== 0)
+        actorMaterials[name] = {
+          shaderType,
+          blendMode: shaderType === 1 ? "add" : "normal",
+          source: asset.source,
+        };
+    }
   for (const entry of raw.files.filter((e) => e.bundleOutput && /\/map_\d+_assets/.test(e.file)))
     for (const asset of await read(path.join(out, entry.bundleOutput)))
       if (asset.data.type === "map" && asset.data.layers)
@@ -63,6 +78,7 @@ export async function compileFieldPresentation(out) {
           visible: inherited.visible !== false && layer.visible !== false,
         };
         if (p.backdrop) value.backdrop = p.backdrop;
+        if (p.body_threshold != null) value.bodyThreshold = Number(p.body_threshold);
         if (layer.type === "imagelayer") {
           const kind = /near/i.test(layer.name)
             ? "near"
@@ -89,7 +105,13 @@ export async function compileFieldPresentation(out) {
       }
     };
     walk(tilemap.layers);
-    if (value.far.length || value.near.length || value.filter.length || value.backdrop)
+    if (
+      value.far.length ||
+      value.near.length ||
+      value.filter.length ||
+      value.backdrop ||
+      value.bodyThreshold != null
+    )
       maps[row.id] = value;
   }
   const gps = {};
@@ -153,17 +175,20 @@ export async function compileFieldPresentation(out) {
     ocean,
     sky,
     cameras,
+    actorMaterials,
     summary: {
       farBundles: raw.files.filter((f) => /\/map_far.*\.bundle$/.test(f.file)).length,
       nearBundles: raw.files.filter((f) => /\/map_near.*\.bundle$/.test(f.file)).length,
       filterBundles: raw.files.filter((f) => /\/map_filter.*\.bundle$/.test(f.file)).length,
       boundMaps: Object.keys(maps).length,
       gpsVariants: Object.keys(gps).length,
+      actorShaderTypes,
     },
     warnings: [
       "Scenery images, order, active flags, offsets, scroll ratios/speeds, texture groups, water colors and shader names come from PR Tiled imagelayers. Nine-slice edge stretching, native clipping and background-selector crossfade duration (0.7s) are presentation approximations.",
       "World flight reprojects the live tile/actor plane with the PR bird-view FOV and sky texture. Camera altitude/pitch/bank and skybox cylinder geometry are approximated; field movement and terrain remain unchanged.",
       "GPS uses the PR gps.csv variant, original 800px screen/overlay and 256-tile coordinates; compact placement and blinking player marker are adapted for the web viewport.",
+      "Field anim_info shader_type=1 is interpreted as additive blending for the three opaque-black-backed waterfall/effect assets. The enum-to-material binding is inferred from source pixels and usage; shader_type0 keeps normal alpha blending and unknown types emit diagnostics.",
     ],
   };
   if (missing.size)

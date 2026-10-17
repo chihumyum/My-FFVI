@@ -324,7 +324,7 @@ export class PlayGame {
       // Resolve the actual source row so those operations retain its type and
       // geometry, rather than creating an untyped object at the player cell.
       const entity =
-        selector > 0
+        selector > 0 || (typeof selector === "string" && !Number.isFinite(Number(selector)))
           ? this.entities?.find((entry) => String(entry.id) === key) ||
             Object.values(this.map?.groups || {})
               .flatMap((group) => group.entities)

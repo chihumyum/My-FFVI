@@ -161,20 +161,15 @@ export function fieldBlockerAt(game, x, y, layer, mover = game.player, ignoredBo
   return null;
 }
 
-// A door can release only its own source-linked tile region. Decorative tile
-// animations and hidden unrelated objects never turn walls into floor.
+// The door body is a walkable aperture once open. Its linked tile rectangle is
+// only the visual animation: wide frames include pillars and walls that must
+// retain their PR collision even when the centre door has opened.
 export function openedDoorTerrainAt(game, x, y, layer) {
   for (const door of game.entities || []) {
     if (door.kind !== 8 || door.door?.actionId !== 5) continue;
     const actor = live(game, door);
     if (!isOpenDoor(game, door, actor)) continue;
     if (sameLayer(door, actor, layer) && covers(door, actor, x, y)) return true;
-    for (const region of regionsFor(game, door))
-      if (
-        (region.layer === layer || region.tileAnimation?.allLayers) &&
-        covers(region, live(game, region), x, y)
-      )
-        return true;
   }
   return false;
 }

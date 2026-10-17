@@ -76,6 +76,15 @@ function recordedWalk(game, x, y, layer, directions, route) {
 }
 
 export function fixedStoryInput(game, objective) {
+  if (objective.id === "gestahl-audience" && game.mapId === 165)
+    return recordedWalk(
+      game,
+      8,
+      18,
+      2,
+      expand("R1 U7 R2 U1 R4 U1"),
+      "imperial-palace-central-door",
+    );
   if (objective.id === "summit-three-plate" && game.mapId === 567) {
     const walking =
       recordedWalk(game, 65, 14, 1, expand("U1 L1"), "summit-ladder") ||

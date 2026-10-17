@@ -15,6 +15,8 @@ import { PRParticles } from "./particles.js";
 import { EffectLibrary } from "./effects.js";
 import { FieldPresentation } from "./field-presentation.js";
 import { PRFilter } from "./pr-filters.js";
+import { WaterMaterial } from "./water-material.js";
+import { sceneFadeAlpha } from "./field-screen-effects.js";
 import { RenderDiagnostics } from "./render-diagnostics.js";
 import {
   FieldAnimations,
@@ -27,6 +29,8 @@ import {
   fieldTileOrder,
   fieldActorPlane,
   fieldActorOrder,
+  fieldBodyOrder,
+  fieldBodySegments,
   fieldActorPosition,
 } from "./field-order.js";
 
@@ -108,6 +112,13 @@ export class GameRenderer {
       this.layers.mapLayers.addChild(layer);
       return layer;
     });
+    this._fieldBodyLayers = Array.from({ length: 4 }, (_, plane) => {
+      const layer = container(`field-body-${plane}`);
+      layer.zIndex = fieldBodyOrder({ layer: plane });
+      layer.sortableChildren = true;
+      this.layers.mapLayers.addChild(layer);
+      return layer;
+    });
     this.fieldAnimations = new FieldAnimations((key, message, details) => {
       if (details?.category)
         this.diagnostics.record(details.category, { ...details, reason: message });
@@ -138,6 +149,14 @@ export class GameRenderer {
       getTexture: (url, details) => this._texture(url, { entityId: "particle", ...details }),
       warn: (message) => this._warnOnce(`particles:${message}`, message),
     });
+    this._battleSceneLayer = container("battle-background-prefab");
+    this.backgroundParticles = new PRParticles({
+      container: this._battleSceneLayer,
+      diagnostics: this.diagnostics,
+      getTexture: (url, details) =>
+        this._texture(url, { entityId: "battle-background", ...details }),
+      warn: (message) => this._warnOnce(`background:${message}`, message),
+    });
     this.battlePresentation = new BattlePresentation({
       actors: this.layers.actors,
       effects: this.layers.effects,
@@ -167,6 +186,7 @@ export class GameRenderer {
       sharedTicker: false,
       preference: ["webgl"],
       antialias: false,
+      useBackBuffer: true,
       roundPixels: true,
       background: "#080e1b",
       accessibilityOptions: {
@@ -180,6 +200,7 @@ export class GameRenderer {
     this.app.renderer.accessibility?.setAccessibilityEnabled(false);
     this.app.renderer.accessibility?.setAccessibilityEnabled(true);
     this.particles.setRenderer(this.app.renderer);
+    this.backgroundParticles.setRenderer(this.app.renderer);
     const overlay = this.app.renderer.accessibility?.div;
     if (overlay) {
       overlay.classList.add("pixi-accessibility");
@@ -201,6 +222,7 @@ export class GameRenderer {
     this._battleBackground = new Sprite({ texture: Texture.EMPTY, roundPixels: true });
     this._battleBackground.visible = false;
     this.layers.far.addChild(this._background, this._battleBackground);
+    this.layers.far.addChild(this._battleSceneLayer);
     this._fade = new Sprite(Texture.WHITE);
     this._fade.tint = 0x000000;
     this._fade.width = WIDTH;
@@ -283,6 +305,7 @@ export class GameRenderer {
 
   setEffectCatalog(catalog, json) {
     this.effectLibrary = new EffectLibrary(this.particles, catalog, json);
+    this.backgroundLibrary = new EffectLibrary(this.backgroundParticles, catalog, json);
   }
 
   _battleEffect(event, actor, target) {
@@ -376,6 +399,8 @@ export class GameRenderer {
     this.fieldAnimations.reset();
     this.battlePresentation.clear();
     this.particles.clear();
+    this.backgroundParticles.clear();
+    this._battleSceneBattle = null;
     this._previewClock = null;
     this._battleExit = null;
     this._shake = null;
@@ -798,13 +823,35 @@ export class GameRenderer {
       state.container.zIndex = fieldTileOrder(layer);
       state.container.visible = layer.visible !== false;
       state.container.alpha = layer.opacity ?? 1;
-      if (layer.sourceGroup === "WaterGroup" && layer.data?.some(Boolean))
-        this.diagnostics.record("water-material-unimplemented", {
-          entityId: `map-layer:${li}`,
-          resource: layer.name,
-          reason:
-            "PR WaterGroup control tiles are drawn directly; water/floor/reflection compositing is missing",
+      if (layer.sourceGroup === "WaterGroup") {
+        state.water ||= new WaterMaterial({
+          getTexture: (url, details) => this._texture(url, details),
+          collectAll: () => this.diagnostics.acceptance,
+          warn: (category, reason, details) =>
+            this.diagnostics.record(category, {
+              entityId: `map-layer:${li}`,
+              resource: details.layer || layer.name,
+              reason,
+              ...details,
+            }),
         });
+        const available = state.water.update(layer.waterMaterial, {
+          time: game.time || 0,
+          x: ox,
+          y: oy,
+          scale: this.world.scale.x,
+          layerName: layer.name,
+          mapId: game.mapId,
+          properties: this.fieldPresentation.water,
+        });
+        state.container.filters = available ? [state.water] : null;
+        // Missing material metadata must produce a diagnostic, never controller blue.
+        state.container.visible = state.container.visible && available;
+      } else if (state.water) {
+        state.container.filters = null;
+        state.water.destroy();
+        state.water = null;
+      }
       const plane = fieldTilePlane(layer);
       let count = 0;
       if (layer.data) {
@@ -844,10 +891,16 @@ export class GameRenderer {
             if (animation) {
               index = sampleFieldTile(animation, game.time, sx, sy, plane, tileRegions);
             }
-            const texture = this._crop(map.textures?.[set.image], index, set, tile, {
-              entityId: `tile:${li}:${sx},${sy}`,
-              tileset: set.image,
-            });
+            const texture = this._crop(
+              layer.waterMaterial?.controlTextures?.[set.image]?.url || map.textures?.[set.image],
+              index,
+              set,
+              tile,
+              {
+                entityId: `tile:${li}:${sx},${sy}`,
+                tileset: set.image,
+              },
+            );
             if (!texture) continue;
             const sprite = pooledSprite(state.sprites, state.container, count++);
             sprite.texture = texture;
@@ -874,8 +927,15 @@ export class GameRenderer {
       hideUnused(state.sprites, count);
       this._visibleTiles += count;
     }
-    for (let i = (map.layers || []).length; i < this._tileLayers.length; i++)
-      this._tileLayers[i].container.visible = false;
+    for (let i = (map.layers || []).length; i < this._tileLayers.length; i++) {
+      const state = this._tileLayers[i];
+      state.container.visible = false;
+      if (state.water) {
+        state.container.filters = null;
+        state.water.destroy();
+        state.water = null;
+      }
+    }
     let count = 0;
     const actors = [...(game.actors?.values() || []), game.player]
       .filter((actor) => actor && actor.visible !== false && actor !== game.camera)
@@ -942,27 +1002,80 @@ export class GameRenderer {
         record.reason = "outside-viewport";
         return;
       }
-      const parent = this._fieldActorLayers[fieldActorPlane(actor)];
-      const sprite = pooledSprite(this._fieldSprites, parent, count++);
-      if (sprite.parent !== parent) parent.addChild(sprite);
-      sprite.zIndex = actor.y * tile + order * 0.01;
-      sprite.texture = texture;
-      sprite.anchor.set(info.pivot?.[0] ?? 0.5, 1 - (info.pivot?.[1] ?? 0));
-      sprite.position.set(
-        Math.round(x - ox + (frame.offsetx || 0)),
-        Math.round(y - oy - offsetY - hideFeet - (frame.offsety || 0)),
-      );
-      sprite.scale.set(
-        ((frame.flip ? -1 : 1) * w) / texture.width,
-        (h - hideFeet) / texture.height,
-      );
-      sprite.alpha = frame.alpha ?? 1;
-      sprite.tint = frame.tint ?? 0xffffff;
-      sprite.visible = true;
+      const pivotY = info.pivot?.[1] ?? 0,
+        threshold = this.fieldPresentation.catalog?.maps[game.mapId]?.bodyThreshold,
+        segments = fieldBodySegments({
+          asset,
+          height: h - hideFeet,
+          pivotY,
+          threshold: world || fieldActorPlane(actor) === 0 ? undefined : threshold,
+          hideFeet,
+          vehicle: actor.vehicle,
+        });
+      record.segments = [];
+      if (segments.length > 1)
+        this.diagnostics.record("field-head-body-mask-approximate", {
+          entityId: actor.id,
+          asset,
+          resource: asset,
+          reason:
+            "PR Head/Body materials and explicit map body_threshold are preserved; cropped passes straddle the matching tile plane. Native one/two-upper-texture masking and depth offsets remain approximated. Maps without a declared threshold keep their existing full sprite.",
+        });
+      for (const segment of segments) {
+        const parent = (segment.name === "body" ? this._fieldBodyLayers : this._fieldActorLayers)[
+            fieldActorPlane(actor)
+          ],
+          sprite = pooledSprite(this._fieldSprites, parent, count++);
+        let partTexture = texture;
+        const sourceTop = Math.round((segment.top * texture.height) / (h - hideFeet)),
+          sourceHeight = Math.round((segment.height * texture.height) / (h - hideFeet));
+        if (sourceTop || sourceHeight !== texture.height) {
+          const key = `${info.file}:body-split:${sourceTop}:${sourceHeight}:${texture.frame.y}`;
+          partTexture = this._crops.get(key);
+          if (!partTexture) {
+            partTexture = new Texture({
+              source: texture.source,
+              frame: new Rectangle(
+                texture.frame.x,
+                texture.frame.y + sourceTop,
+                texture.width,
+                sourceHeight,
+              ),
+            });
+            this._crops.set(key, partTexture);
+          }
+        }
+        if (sprite.parent !== parent) parent.addChild(sprite);
+        sprite.zIndex = actor.y * tile + order * 0.01;
+        sprite.texture = partTexture;
+        sprite.anchor.set(info.pivot?.[0] ?? 0.5, 0);
+        sprite.position.set(
+          Math.round(x - ox + (frame.offsetx || 0)),
+          Math.round(
+            y -
+              oy -
+              offsetY -
+              hideFeet -
+              (frame.offsety || 0) -
+              (h - hideFeet) * (1 - pivotY) +
+              segment.top,
+          ),
+        );
+        sprite.scale.set(
+          ((frame.flip ? -1 : 1) * w) / partTexture.width,
+          segment.height / partTexture.height,
+        );
+        sprite.alpha = frame.alpha ?? 1;
+        sprite.tint = frame.tint ?? 0xffffff;
+        sprite.blendMode = "normal";
+        sprite.blendMode = this.fieldPresentation.actorBlendMode(asset, char);
+        sprite.visible = true;
+        record.segments.push({ ...segment, order: parent.zIndex });
+      }
       record.drawn = true;
       record.bounds = {
-        x: sprite.x - w / 2,
-        y: sprite.y - h + hideFeet,
+        x: x - ox + (frame.offsetx || 0) - w * (info.pivot?.[0] ?? 0.5),
+        y: y - oy - offsetY - hideFeet - (frame.offsety || 0) - (h - hideFeet) * (1 - pivotY),
         width: w,
         height: h - hideFeet,
       };
@@ -1002,9 +1115,44 @@ export class GameRenderer {
 
   _drawBattle(game, battleData) {
     const battle = game.battle;
+    const asset = this.backgroundLibrary?.catalog.backgrounds?.[battle.formation?.backgroundId];
+    const authored = asset && this.backgroundLibrary.catalog.files[asset];
+    this._battleSceneLayer.visible = !!authored;
+    if (this._battleSceneBattle !== battle) {
+      this.backgroundParticles.clear();
+      this._battleSceneBattle = battle;
+      if (authored) {
+        const context = { ...this.diagnostics.context };
+        const task = this.backgroundLibrary
+          .play(
+            asset,
+            {
+              x: this._width / 2,
+              y: this._height / 2,
+              duration: Infinity,
+              seed: battle.formation.backgroundId,
+            },
+            () => this._battleSceneBattle === battle,
+          )
+          .catch((error) =>
+            this.diagnostics.record(
+              "battle-background-prefab-failed",
+              {
+                entityId: "battle-background",
+                resource: asset,
+                reason: error.message,
+              },
+              context,
+            ),
+          );
+        this._effectTasks.add(task);
+        task.finally(() => this._effectTasks.delete(task));
+      }
+    }
     if (this._backgroundShader) {
       const final = [47, 48, 49, 50].includes(battle.formation?.backgroundId);
-      this._battleBackground.filters = final ? [this._backgroundShader] : null;
+      this._battleBackground.filters = final && !authored ? [this._backgroundShader] : null;
+      this._battleSceneLayer.filters = final && authored ? [this._backgroundShader] : null;
       if (final)
         this._backgroundShader.update(this._previewClock ?? performance.now() / 1000, {
           width: this._width,
@@ -1016,7 +1164,7 @@ export class GameRenderer {
       battleData?.backgrounds?.[battle.formation?.backgroundId]?.sprite?.url,
       { entityId: "battle-background", required: battle.formation?.backgroundId > 0 },
     );
-    this._battleBackground.visible = !!background;
+    this._battleBackground.visible = !!background && !authored;
     if (background) {
       const key = `battle-background:${background.uid}`;
       let texture = this._crops.get(key);
@@ -1121,6 +1269,11 @@ export class GameRenderer {
       hideUnused(this._fieldSprites, 0);
       this._drawBattle({ battle: displayedBattle }, battleData);
     } else {
+      this._battleSceneLayer.visible = false;
+      if (this._battleSceneBattle) {
+        this._battleSceneBattle = null;
+        this.backgroundParticles.clear();
+      }
       if (this.battlePresentation.battle) {
         this.battlePresentation.clear();
         this.particles.clear();
@@ -1131,15 +1284,14 @@ export class GameRenderer {
       this._drawMap(game || {}, data);
       this.fieldPresentation.project(this.app.renderer, this.layers, game);
     }
-    const fade = game?.fade;
-    const progress = fade
-      ? Math.max(0, Math.min(1, (game.time - fade.start) / (fade.duration || 0.000001)))
-      : 0;
-    this._fade.alpha = fade
-      ? Math.max(0, Math.min(1, fade.from + (fade.to - fade.from) * progress))
-      : 0;
+    this._fade.alpha = sceneFadeAlpha(game?.fade, game?.time || 0, inBattle);
     this._fade.visible = this._fade.alpha > 0;
     this._drawEffects(game);
+    const particleDelta =
+      this._previewClock == null
+        ? Math.min(0.1, Math.max(0, (start - (this._particleTime || start)) / 1000))
+        : 0;
+    this.backgroundParticles.update(particleDelta);
     if (this._previewClock == null)
       this.particles.update(
         Math.min(0.1, Math.max(0, (start - (this._particleTime || start)) / 1000)),
@@ -1149,6 +1301,14 @@ export class GameRenderer {
     this.layers.effects.setChildIndex(this._fade, this.layers.effects.children.length - 1);
     this.layers.effects.setChildIndex(this._flashSprite, this.layers.effects.children.length - 1);
     this.app.render();
+    this._renderedGame = game;
+    this._renderedFrame = {
+      mapId: game?.mapId ?? null,
+      time: game?.time ?? null,
+      inBattle,
+      fieldFadeAlpha: this._fade.alpha,
+      frame: this._frameCount,
+    };
     const overlay = this.app.renderer.accessibility?.div;
     if (overlay) {
       const rect = this.canvas.getBoundingClientRect();
@@ -1195,13 +1355,19 @@ export class GameRenderer {
       warnings: [...this._warnings],
       particles: this.particles.metrics(),
       field: this.fieldPresentation.metrics(),
+      waterLayers: this._tileLayers
+        .filter((state) => state.container.visible && state.water)
+        .map((state) => ({ ready: state.water.ready, warnings: [...state.water.warnings] })),
+      backgroundParticles: this.backgroundParticles.metrics(),
     };
   }
 
   destroy() {
     this.battlePresentation.clear();
     this.particles.destroy();
+    this.backgroundParticles.destroy();
     this.fieldPresentation.destroy();
+    for (const state of this._tileLayers) state.water?.destroy();
     this._backgroundShader?.destroy();
     this._resizeObserver?.disconnect();
     if (this._resize) window.removeEventListener("resize", this._resize);

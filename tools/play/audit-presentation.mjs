@@ -128,7 +128,7 @@ function references(value, prefix = "", rows = []) {
 
 function checkWaterLayers(log, map, scope, context) {
   for (const [index, layer] of (map.layers || []).entries())
-    if (layer.sourceGroup === "WaterGroup" && layer.data?.some(Boolean))
+    if (layer.sourceGroup === "WaterGroup" && layer.data?.some(Boolean) && !layer.waterMaterial)
       log.record(
         "water-material-unimplemented",
         {

@@ -29,6 +29,7 @@ function walkLayers(data, visit, pointer = "", inherited = {}) {
       opacity: (inherited.opacity ?? 1) * Number(layer.opacity ?? 1),
       visible: inherited.visible !== false && layer.visible !== false,
       group: layer.type === "group" ? layer.name : inherited.group,
+      properties: { ...(inherited.properties || {}), ...properties(layer) },
     };
     if (layer.layers) walkLayers(layer, visit, location, context);
     else visit(layer, location, context);
@@ -57,6 +58,38 @@ export function packageBinding(row, packages, assetIndex) {
         )
       : null;
   return { pack, declaration, prefix, assetPath, assetAt };
+}
+
+// Water tiles encode RGB controller channels, not final visible water colors.
+// Retain the complete authored group/layer controls and original shared maps.
+export function waterLayerMaterial(layer, context, media, source, warn = () => {}) {
+  if (context.group !== "WaterGroup") return null;
+  const textures = {};
+  for (const [key, name] of Object.entries({
+    noise: "water_fluctuation_noise",
+    normalSmall: "water_normal_small",
+    normalLarge: "water_normal_large",
+    pattern: "water_condensing_pattern",
+  })) {
+    const image = (media.textures || []).find(
+      (row) => row.name === name && row.url && row.source.file.includes("/map_common_assets"),
+    );
+    if (image)
+      textures[key] = {
+        name,
+        url: "/web-data/" + image.url,
+        width: image.width,
+        height: image.height,
+      };
+    else warn(`Water material ${layer.name}: missing PR map_common texture ${name}.`);
+  }
+  return {
+    shader: "Last/MapWaterOpaqueTileShader",
+    controlShader: "Last/MapWaterLayerShader",
+    properties: { ...context.properties },
+    textures,
+    source: { assetPath: source, group: context.group, layer: layer.name },
+  };
 }
 
 export function compileMap(row, binding, tables, media, messages) {
@@ -98,6 +131,18 @@ export function compileMap(row, binding, tables, media, messages) {
       data: layer.data,
       opacity: context.opacity,
       sourceGroup: context.group || "",
+      ...(context.group === "WaterGroup"
+        ? {
+            visible: context.visible,
+            waterMaterial: waterLayerMaterial(
+              layer,
+              context,
+              media,
+              assetPath(declaration.tilemap),
+              warn,
+            ),
+          }
+        : {}),
     });
   });
   walkLayers(assetAt(declaration.collision)?.data || {}, (layer) => {

@@ -35,6 +35,7 @@ import { PlayGame } from "../../src/play/game.js";
 import { advanceStory } from "../../src/play/story-route.js";
 import { storyChoice } from "../../src/play/story-plan.js";
 import { Battle } from "../../src/play/battle.js";
+import { decodeAcceptanceState } from "./acceptance-state.js";
 const canvas = document.getElementById("screen");
 const renderer = new GameRenderer(canvas);
 renderer.diagnostics.acceptance = new URLSearchParams(location.search).get("acceptance") === "1";
@@ -67,6 +68,7 @@ const saveLibrary = new SaveLibrary();
 const menuState = { page: "队伍" };
 const eventHistory = createEventHistory();
 let reportingBug = false;
+let acceptanceLoading = false;
 let extrasReturn;
 const extras = createExtras({
   ui,
@@ -110,7 +112,7 @@ function event(e) {
       choices: null,
     };
   if (e.kind === "battle-message-close" || e.kind === "battle-end") battleDialogue = null;
-  if (["battle-action", "battle-party", "battle-end"].includes(e.kind)) renderer.event(e);
+  if (["map", "battle-action", "battle-party", "battle-end"].includes(e.kind)) renderer.event(e);
   if ((e.kind === "bgm" || e.kind === "se") && !observingAudioInstruction(game)) {
     const engine = game?.battle?.events;
     const op = engine?.program?.ops?.[engine.pc - 1];
@@ -345,12 +347,12 @@ addEventListener("keydown", (e) => {
     return;
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Enter"].includes(e.key))
     e.preventDefault();
-  if (game?.battle && !battleDialogue && battleMenu.handleKey(e)) {
+  if (game?.battle && !battleDialogue && !game.dialogue && battleMenu.handleKey(e)) {
     e.preventDefault();
     return;
   }
   keys.add(e.key);
-  if (e.key === "Tab" && game?.battle && !battleDialogue) {
+  if (e.key === "Tab" && game?.battle && !battleDialogue && !game.dialogue) {
     e.preventDefault();
     battleMenu.cycle();
     return;
@@ -533,7 +535,7 @@ const battleMenu = createBattleMenu({
   createElement: createWidget,
 });
 renderer.canSelectBattleTarget = (side, index) =>
-  !paused && !battleDialogue && !auto && battleMenu.canSelectTarget(side, index);
+  !paused && !battleDialogue && !game?.dialogue && !auto && battleMenu.canSelectTarget(side, index);
 renderer.onBattleTarget = (side, index) => battleMenu.selectTarget(side, index);
 $("escape").onclick = () => game?.battle?.requestEscape();
 $("shop-close").onclick = () => {
@@ -628,7 +630,11 @@ $("formation-cancel").onclick = () => {
 function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  if (started && game) {
+  if (acceptanceLoading) {
+    requestAnimationFrame(loop);
+    return;
+  }
+  if (started && game && !acceptanceLoading) {
     if (!paused && !opera.busy && (!battleDialogue || auto)) {
       for (let n = 0; n < (auto ? (game.testBoost ? 16 : 4) : 1); n++) {
         game.tick(dt, { auto });
@@ -707,9 +713,9 @@ function loop(now) {
     renderShop();
     renderColosseum();
     renderVehicle();
-    $("battle").hidden = !game.battle || !!battleDialogue;
-    $("switch").hidden = !game.rts?.active;
     const dialogue = battleDialogue || game.dialogue;
+    $("battle").hidden = !game.battle || !!dialogue;
+    $("switch").hidden = !game.rts?.active;
     $("dialogue").hidden = !dialogue;
     if (dialogue) {
       const speaker = presentText(game, dialogue.speaker),
@@ -745,6 +751,133 @@ function loop(now) {
 await loadPresentation(new WebData(webIndexURL()), renderer, ui);
 renderer.diagnostics.mapNames = ui.presentation.mapNames || {};
 opera.fontFamily = ui.presentation.fontFamily || opera.fontFamily;
+if (new URLSearchParams(location.search).get("acceptance") === "1") {
+  // Explicit diagnostic host for static-package screenshot acceptance. This is
+  // not a playable save restore: VM/battle clocks stay frozen, including fades.
+  window.ffviAcceptance = {
+    async projection() {
+      const field = renderer.fieldPresentation;
+      if (!field.flight || !field.planeTexture) throw Error("No projected world map is displayed");
+      return {
+        plane: await renderer.app.renderer.extract.base64({ target: field.planeTexture }),
+        projected: await renderer.app.renderer.extract.base64({ target: field.flightSprite }),
+      };
+    },
+    async load(checkpoint) {
+      acceptanceLoading = true;
+      paused = true;
+      walking = auto = false;
+      opera.reset();
+      renderer.resetPresentation();
+      battleDialogue = null;
+      repository ||= new WebData(webIndexURL());
+      if (!repository.data) ({ data, battleData } = await repository.open());
+      const map = await repository.loadMap(checkpoint.metadata.mapId);
+      await repository.ensurePrograms(checkpoint.programIds || []);
+      renderer.setAssets(repository.index.assets.images, repository.baseURL);
+      await loadBattlePresentation(repository, renderer);
+      ui.setCharacters(battleData.characters);
+      const restored = decodeAcceptanceState(
+        checkpoint,
+        { data, battleData, map },
+        { Battle: Battle.prototype },
+      );
+      game = Object.assign(
+        new PresentationGame({
+          data,
+          battleData,
+          Battle,
+          loadMap: (id) => repository.loadMap(id),
+          onEvent: () => {},
+          onPresentation: () => {},
+        }),
+        restored.state,
+      );
+      window.ffvi = game;
+      game.onEvent = () => {};
+      started = !game.titleScreen;
+      autosavePending = titlePending = false;
+      for (const id of [
+        "title",
+        "menu",
+        "save",
+        "naming",
+        "over",
+        "dialogue",
+        "battle",
+        "shop",
+        "formation",
+        "colosseum",
+        "vehicle",
+      ])
+        if ($(id)) $(id).hidden = true;
+      $("title").hidden = !game.titleScreen;
+      if (game.over) {
+        $("over").hidden = false;
+        $("over-message").textContent = game.over.reason;
+      }
+      $("location").textContent =
+        `${checkpoint.metadata.sequence} · ${checkpoint.metadata.kind} · ${checkpoint.metadata.map} · ${checkpoint.metadata.script || ""}`;
+      $("mode").hidden = !game.testBoost;
+      eventHistory.clear();
+      for (const event of restored.recentEvents || []) eventHistory.record(event);
+      const visualEvents = restored.visualEvents || [];
+      // Earlier frozen frames omitted map events; their recorder manifest supplies
+      // the real event timeline. New frames retain exact observer ordering.
+      const commands = visualEvents.some((event) => event.kind === "map")
+        ? visualEvents
+        : [...(checkpoint.mapEvents || []), ...visualEvents].sort((a, b) => a.time - b.time);
+      for (const command of commands) {
+        renderer.fieldPresentation.prepare({ time: command.time }, false);
+        renderer.event(command);
+      }
+      renderer.fieldAnimations.restore(restored.field);
+      renderer._previewClock = game.time;
+      if (game.battle) {
+        renderer.battlePresentation.attach(game.battle, battleData);
+        for (const { unit, row } of restored.battleRows || []) {
+          if (!row) continue;
+          const side = game.battle.players.includes(unit) ? "player" : "enemy",
+            index = (side === "player" ? game.battle.players : game.battle.enemies).indexOf(unit);
+          Object.assign(renderer.battlePresentation.row(side, index), {
+            action: row.action,
+            hurtAt: row.hurtAt,
+          });
+        }
+      }
+      acceptanceLoading = false;
+      await new Promise(requestAnimationFrame);
+      await Promise.all([...renderer._effectTasks]);
+      ui.revealDialogue();
+      await document.fonts.ready;
+      for (let pass = 0; pass < 12; pass++) {
+        await new Promise(requestAnimationFrame);
+        const pending = [...renderer._textureSources.values()]
+          .filter((row) => row.pending)
+          .map((row) => row.promise);
+        if (pending.length) await Promise.all(pending);
+        else if (pass > 1) break;
+      }
+      await new Promise(requestAnimationFrame);
+      if (renderer._renderedGame !== game)
+        throw Error(
+          `The game render loop did not draw checkpoint ${checkpoint.metadata.sequence}; stale screenshots are forbidden`,
+        );
+      return {
+        metadata: checkpoint.metadata,
+        state: describeBugState(game, renderer, eventHistory.read(), ui.presentation.mapNames),
+        ui: {
+          ...ui.diagnostics(),
+          panels: Object.fromEntries(
+            ["battle", "dialogue"].map((id) => [id, { hidden: $(id).hidden }]),
+          ),
+        },
+        renderedFrame: renderer._renderedFrame,
+        metrics: renderer.metrics(),
+      };
+    },
+  };
+}
 if (import.meta.env.DEV) {
   // These isolated UI fixtures restore real regression checkpoints. They do not
   // write plot flags or count as story coverage, and are removed from production.

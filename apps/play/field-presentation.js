@@ -1,5 +1,6 @@
 import { Container, Filter, GlProgram, Rectangle, RenderTexture, Sprite, Texture } from "pixi.js";
 import { PRFilter, materialFromLayer } from "./pr-filters.js";
+import { screenEffectAmount, clearMapEffects } from "./field-screen-effects.js";
 
 const vertex = `
 in vec2 aPosition;
@@ -25,13 +26,12 @@ uniform vec4 uTone;
 uniform vec4 uEffects;
 void main() {
   vec2 uv = vTextureCoord;
-  if (uEffects.z > 0.0) {
-    vec2 stepSize = vec2(uEffects.z) * uInputSize.zw;
-    uv = floor(uv / stepSize) * stepSize + stepSize * 0.5;
-  }
   if (uEffects.w > 0.0) uv.x += sin(uv.y * 48.0 + uEffects.x * 6.0) * 0.005 * uEffects.w;
   vec4 c = texture(uTexture, clamp(uv, uInputClamp.xy, uInputClamp.zw));
   c.rgb = mix(c.rgb, vec3(dot(c.rgb, vec3(0.299,0.587,0.114))), uEffects.y);
+  float luma = dot(c.rgb,vec3(.299,.587,.114));
+  vec3 sepia = mix(vec3(.235294,.141177,.098039)*c.a,vec3(1.311606,1.119329,.817179)*c.a,luma);
+  c.rgb = mix(c.rgb,sepia,uEffects.z);
   c.rgb = mix(c.rgb, uTone.rgb * c.a, uTone.a);
   finalColor = c;
 }`;
@@ -42,6 +42,7 @@ out vec4 finalColor;
 uniform sampler2D uTexture;
 uniform vec4 uInputClamp;
 uniform vec4 uFlight;
+uniform sampler2D uWorldTexture;
 uniform vec4 uWaterBase;
 uniform vec4 uWaterAdd;
 void main() {
@@ -53,7 +54,7 @@ void main() {
   float cs = cos(uFlight.x), sn = sin(uFlight.x);
   p = mat2(cs,-sn,sn,cs) * p;
   vec2 sampleUV = (p + vec2(320.0)) / 640.0;
-  vec4 c = texture(uTexture, mix(uInputClamp.xy, uInputClamp.zw, clamp(sampleUV,vec2(0.001),vec2(0.999))));
+  vec4 c = texture(uWorldTexture, clamp(sampleUV,vec2(0.001),vec2(0.999)));
   vec3 water = uWaterBase.rgb + uWaterAdd.rgb * (0.5 + 0.5 * sin(p.y * 0.14 + p.x * 0.02 + uFlight.y));
   c = vec4(c.rgb + water * (1.0-c.a),1.0);
   float fog = pow(1.0-clamp((uv.y-horizon)/0.78,0.0,1.0), 4.0) * 0.7;
@@ -133,6 +134,7 @@ export class FieldPresentation {
       uWaterBase: { value: [0.1, 0.1, 0.25, 1], type: "vec4<f32>" },
       uWaterAdd: { value: [0.26, 0.09, 0.39, 1], type: "vec4<f32>" },
     });
+    this.flightFilter.resources.uWorldTexture = Texture.EMPTY.source;
     this.flightSprite.filters = [this.flightFilter];
     this.screenFilter = filter("pr-field-screen-effects", fragment, {
       uTone: { value: new Float32Array([1, 1, 1, 0]), type: "vec4<f32>" },
@@ -160,7 +162,7 @@ export class FieldPresentation {
     this.nearEnabled = null;
     this.gray = 0;
     this.tone = null;
-    this.effect = null;
+    this.screenEffects = {};
     this.water = {};
     this.view = null;
     this.clock = 0;
@@ -173,6 +175,13 @@ export class FieldPresentation {
   }
 
   event(event) {
+    if (event.kind === "map") {
+      // A source ChangeMap can reload the same map ID with a new camera.
+      // Reset the view/effect lifetime even when its numeric ID is unchanged.
+      this.mapId = null;
+      this._syncMap(event.mapId);
+      return;
+    }
     if (event.kind !== "presentation-command") return;
     const { name, i = [], r = [], s = [] } = event;
     this._syncMap(event.mapId);
@@ -187,14 +196,25 @@ export class FieldPresentation {
       };
     if (name === "BackdropColor") this.backdrop = tint(i.slice(0, 3).map((v) => v / 255));
     if (name === "ScreenEffect") {
-      this.effect = { type: i[0], value: i[1], time, duration: Math.abs(r[0] || 0) };
+      this.screenEffects[i[0]] = { value: i[1], time, duration: Math.abs(r[0] || 0) };
       this.warn(
         "field:screen-effect",
-        "ScreenEffect type 1 uses a pixel mosaic and type 3 a horizontal wave; native centers/strength ramps are approximated.",
+        "ScreenEffect preset1 uses a sepia approximation from the PR flashback context and shader colors, preset3 a horizontal wave. Native preset property bindings, centers and exact easing remain inferred; no mosaic property exists in the source screen shader.",
       );
     }
     if (name === "ChangeView") this.view = Boolean(i[0]);
-    if (name === "Water") this.water[s[0]] = { from: r[0], to: r[1], duration: r[2], time };
+    if (name === "Water") {
+      const layer = i[0] ?? -1;
+      this.water[`${layer}:${s[0]}`] = {
+        name: s[0],
+        layer,
+        from: r[0],
+        to: r[1],
+        duration: r[2],
+        time,
+        order: (this.waterOrder = (this.waterOrder || 0) + 1),
+      };
+    }
     if (name !== "SysCall") return;
     const selector = s[0] || "";
     if (/モノクロフィルター/.test(selector)) this.gray = selector.includes("はずす") ? 0 : 1;
@@ -225,13 +245,41 @@ export class FieldPresentation {
   }
 
   _syncMap(id) {
-    if (this.mapId === id) return;
-    this.mapId = id;
+    const oldTone = this.mapId !== id && this.tone;
+    if (!clearMapEffects(this, id)) return;
+    if (oldTone)
+      this.warn?.(
+        "field:camera-tone-lifecycle",
+        "ColorFade is treated as a field-camera overlay, reset on map-camera replacement and excluded from combat. Exact native carry-over and interpolation remain inferred; the prior implementation retained opaque black/white overlays across unrelated maps.",
+      );
     this.variant = null;
     this.farEnabled = true;
     this.nearEnabled = null;
     this.view = null;
     this.scroll = false;
+    this._farKey = null;
+    this.farTarget = this.previousFar = null;
+  }
+
+  actorBlendMode(asset, character) {
+    const shaderType = Number(
+      character?.animation?.data?.shader_type ??
+        this.catalog?.actorMaterials?.[asset]?.shaderType ??
+        0,
+    );
+    if (shaderType === 1) {
+      this.warn(
+        "field:actor-shader-type-1",
+        "PR field anim_info shader_type=1 is interpreted as additive blending: its three source waterfall/effect assets have opaque black backing. The enum-to-material binding is inferred; original RGB/alpha pixels remain unchanged.",
+      );
+      return "add";
+    }
+    if (shaderType !== 0)
+      this.warn(
+        `field:actor-shader-type-${shaderType}`,
+        `Unknown PR field anim_info shader_type=${shaderType} for ${asset}; using normal blending.`,
+      );
+    return "normal";
   }
 
   prepare(game, inBattle) {
@@ -250,16 +298,16 @@ export class FieldPresentation {
           lerp(tone.from[n], v, tone.duration ? (this.clock - tone.time) / tone.duration : 1),
         )
       : [1, 1, 1, 0];
-    this.screenFilter.resources.properties.uniforms.uTone = this.currentTone;
-    const e = this.effect;
-    const amount = e
-      ? lerp(0, e.value ? 0 : 1, e.duration ? (this.clock - e.time) / e.duration : 1)
-      : 0;
+    // ColorFade belongs to the field camera; battle events often begin after
+    // fading that camera to black. Keep its state for the return to the map.
+    this.screenFilter.resources.properties.uniforms.uTone = inBattle
+      ? [1, 1, 1, 0]
+      : this.currentTone;
     this.screenFilter.resources.properties.uniforms.uEffects = [
       this.clock,
       this.gray,
-      e?.type === 1 ? amount * 8 : 0,
-      e?.type === 3 ? amount : 0,
+      screenEffectAmount(this.screenEffects[1], this.clock),
+      screenEffectAmount(this.screenEffects[3], this.clock),
     ];
     return this.flight ? 640 : 320;
   }
@@ -322,7 +370,10 @@ export class FieldPresentation {
         entityId: "scene:water",
         animation: water.name,
       });
-      if (texture) this.waterPlane.texture = texture;
+      // A map/atlas reload can invalidate the previous view while this page is
+      // still loading. Never leave that destroyed texture on a visible plane.
+      this.waterPlane.texture = texture || Texture.EMPTY;
+      this.waterPlane.visible = !!texture;
       this.waterPlane.width = 320;
       this.waterPlane.height = 180;
       if (this._waterLayer !== water) {
@@ -342,9 +393,8 @@ export class FieldPresentation {
       ? binding.far.filter(
           (row) =>
             row !== water &&
-            row.visible &&
             (this.variant === null
-              ? row.properties.active !== false
+              ? row.visible !== false && row.properties.active !== false
               : row.name.endsWith(String(this.variant + 1))),
         )
       : [];
@@ -355,7 +405,10 @@ export class FieldPresentation {
       this.farChanged = this.clock;
       this._farKey = key;
     }
-    const t = Math.min(1, Math.max(0, (this.clock - this.farChanged) / 0.7));
+    // A new map has no previous scenery to crossfade from. Its field-camera
+    // FadeIn already controls entry visibility; a second clock at zero would
+    // keep restored/paused scenes black forever until game time advances.
+    const t = this.previousFar ? Math.min(1, Math.max(0, (this.clock - this.farChanged) / 0.7)) : 1;
     const images = [];
     if (this.previousFar && t < 1)
       images.push(...this.previousFar.map((row) => ({ ...row, alpha: 1 - t })));
@@ -498,6 +551,7 @@ export class FieldPresentation {
     layers.mapLayers.filterArea = previous;
     layers.mapLayers.visible = layers.actors.visible = false;
     this.flightSprite.texture = this.planeTexture;
+    this.flightFilter.resources.uWorldTexture = this.planeTexture.source;
     this.flightSprite.width = 320;
     this.flightSprite.height = 180;
     const direction = ["up", "right", "down", "left"].indexOf(game.player.direction);

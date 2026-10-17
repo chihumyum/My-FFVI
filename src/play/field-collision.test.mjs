@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { PlayGame } from "./game.js";
 import { executeInstruction } from "./instructions.js";
 import { pathTo } from "./m1-route.js";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import { openFieldDoor, setTileFrame } from "./field-collision.js";
 
 // Small input fixtures isolate collision bugs; they are not played checkpoints.
 function fixture(entities, grid = Array(36).fill(0)) {
@@ -255,6 +258,131 @@ test("door links cross visual layers and a source closed frame restores the body
   game.step({ program: "close", pc: 0, actor: "3", locals: [] });
   assert.equal(game.actors.get("1").opened, false);
   assert.equal(game.canMove(2, 1), false);
+});
+
+test("opening a wide visual door never releases its pillars or upper wall", () => {
+  const door = {
+      id: "1",
+      kind: 8,
+      x: 2,
+      y: 2,
+      layer: 1,
+      door: { actionId: 5, linkObjectId: 4, direction: 15 },
+    },
+    region = {
+      id: "2",
+      kind: 1,
+      objectId: 4,
+      x: 1,
+      y: 1,
+      width: 3,
+      height: 2,
+      layer: 1,
+      tileAnimation: { allLayers: true },
+    },
+    grid = Array(36).fill(0);
+  for (const x of [1, 3]) for (const y of [1, 2]) grid[y * 6 + x] = 1;
+  grid[2 * 6 + 2] = 1;
+  const game = fixture([door, region], grid);
+  Object.assign(game.player, { x: 2, y: 3, direction: "up" });
+  assert.equal(game.move("up"), true, "ordinary walking opens the actual door cell");
+  assert.equal(game.player.y, 2);
+  assert.equal(game.move("left"), false, "an open visual frame cannot turn its pillar into floor");
+  assert.equal(game.move("right"), false);
+  assert.equal(game.move("up"), true, "the source centre passage remains walkable");
+  assert.equal(game.canWalk(1, 1), false);
+  assert.equal(game.canWalk(3, 1), false);
+  game.map.collisions[0] = grid;
+  assert.equal(game.canWalk(1, 2, 0), false, "allLayers is visual, not a wall override");
+});
+
+test("all PR action5 doors preserve blocked source terrain outside their own body", async () => {
+  const directory = path.resolve(import.meta.dirname, "../../build/web-data/maps");
+  let doors = 0,
+    protectedCells = 0,
+    blockedApertures = 0;
+  for (const file of await readdir(directory)) {
+    if (!/^\d+\.json$/.test(file)) continue;
+    const map = JSON.parse(await readFile(path.join(directory, file))),
+      groups = [map.entities, ...Object.values(map.groups).map((group) => group.entities)],
+      seen = new Set();
+    for (const entities of groups) {
+      const active = [...new Map([...map.entities, ...entities].map((e) => [e.id, e])).values()];
+      for (const door of entities) {
+        if (door.kind !== 8 || door.door?.actionId !== 5) continue;
+        const key = JSON.stringify(door);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        doors++;
+        const game = new PlayGame({ data: { programs: {} } });
+        game.map = map;
+        game.entities = active;
+        game.player.direction =
+          ["up", "right", "down", "left"].find(
+            (_direction, index) => (door.door.direction ?? 15) & (1 << index),
+          ) || "down";
+        const regions = active.filter((e) => e.kind === 1 && e.objectId === door.door.linkObjectId);
+        if (door.script) {
+          // Geometry-only check, not quest coverage: scripted doors obtain this
+          // state from their source CueAnim instead of the ordinary action5.
+          for (const region of regions) setTileFrame(game, region, 1);
+        } else assert.equal(openFieldDoor(game, door), true, `source door ${map.id}/${door.id}`);
+        const grid = map.collisions[door.layer] || map.collisions[0],
+          cells = new Set();
+        for (const region of regions)
+          for (let y = region.y; y < region.y + region.height; y++)
+            for (let x = region.x; x < region.x + region.width; x++) {
+              if (grid?.[y * map.width + x] !== 1 || cells.has(`${x},${y}`)) continue;
+              cells.add(`${x},${y}`);
+              const aperture =
+                x >= door.x && x < door.x + door.width && y >= door.y && y < door.y + door.height;
+              if (aperture) blockedApertures++;
+              else protectedCells++;
+              assert.equal(
+                game.canWalk(x, y, door.layer),
+                aperture,
+                `door ${map.id}/${door.id} cell ${x},${y}: preserve source walls outside body`,
+              );
+            }
+      }
+    }
+  }
+  assert.equal(doors, 453);
+  assert.ok(protectedCells > 300, "the real wide/pillar cases must be exercised");
+  assert.ok(blockedApertures > 0, "source-blocked door apertures still need a local override");
+});
+
+test("real PR map103 string-key door opens by ordinary confirmation and its portal remains usable", async () => {
+  const directory = path.resolve(import.meta.dirname, "../../build/web-data"),
+    data = JSON.parse(await readFile(path.join(directory, "data.json"))),
+    game = new PlayGame({
+      data,
+      loadMap: async (id) => JSON.parse(await readFile(path.join(directory, `maps/${id}.json`))),
+    });
+  // Source-map unit fixture, not a claimed played checkpoint or quest route.
+  await game.enter(103, 1);
+  game.tick(0.1);
+  assert.equal(game.actor(0), game.camera);
+  assert.equal(game.actor(-1001), game.player);
+  assert.equal(game.actor(-1).id, -1, "negative role selectors retain their original meaning");
+  const door = game.entities.find((e) => e.kind === 8),
+    actor = game.actor(door.id);
+  assert.equal(door.id, "entity_default:0:8");
+  assert.equal(actor.kind, 8);
+  assert.equal(actor.x, 12);
+  assert.equal(actor.y, 5);
+  assert.equal(actor.visible, true);
+  for (let n = 0; n < 5; n++) assert.equal(game.move("up"), true);
+  assert.deepEqual([game.player.x, game.player.y], [12, 6]);
+  assert.equal(game.confirm(), true);
+  assert.equal(actor.opened, true);
+  assert.equal(actor.visible, false);
+  assert.equal(game.actor("entity_default:0:9").kind, 1);
+  assert.equal(game.actor("entity_default:0:9").tileNormalized, 1);
+  assert.equal(game.canWalk(12, 4), false, "the upper visual panel remains a source wall");
+  assert.equal(game.move("up"), true);
+  if (game.loading) await game.pending;
+  assert.equal(game.mapId, 104);
 });
 
 test("a touch encounter is a route boundary but still physically blocks ordinary movement", () => {

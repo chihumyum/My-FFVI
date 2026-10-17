@@ -83,7 +83,7 @@ export async function compileParticles(out) {
     ),
   );
   const sources = index.files.filter(
-    (row) => /\/ef_ff[01456]_/.test(row.file) && row.objectsOutput,
+    (row) => /\/(?:ef_ff[01456]_|bg_ff6_)/.test(row.file) && row.objectsOutput,
   );
   const mediaById = new Map(
     [...media.textures, ...media.sprites].map((row) => [objectKey(row.source), row]),
@@ -111,7 +111,7 @@ export async function compileParticles(out) {
   for (const source of sources) {
     const bundle = await read(path.join(out, source.objectsOutput));
     const name = path.basename(source.file).split("_assets_")[0];
-    const family = name.match(/^ef_ff\d+/)[0];
+    const family = name.match(/^(?:ef_ff\d+|bg_ff6)/)[0];
     familyCounts[family] = (familyCounts[family] || 0) + 1;
     const objects = new Map(bundle.objects.map((row) => [objectKey(row.source), row]));
     const keyFor = (owner, ref) => {
@@ -145,13 +145,15 @@ export async function compileParticles(out) {
     const warning = (system, module, reason) =>
       warnings.push({ effect: name, system, module, reason });
     const roots = bundle.objects.filter(
-      (row) => row.type === "GameObject" && row.name === "EffectPrefab",
+      (row) =>
+        row.type === "GameObject" &&
+        row.name === (family === "bg_ff6" ? "BgPrefab" : "EffectPrefab"),
     );
     if (roots.length !== 1)
       warning(
         null,
         "hierarchy",
-        `${roots.length} EffectPrefab roots; the first available authored root is used.`,
+        `${roots.length} authored prefab roots; the first available root is used.`,
       );
     const root = roots[0];
     function addNode(transform, parent = null) {
@@ -515,6 +517,12 @@ export async function compileParticles(out) {
     abilities: mapping("ability"),
     weapons: mapping("weapon"),
     items: mapping("item"),
+    backgrounds: Object.fromEntries(
+      (tables["battle_background_asset.csv"] || []).map((row) => [
+        row.id.trim(),
+        row.asset_name.trim().toLowerCase(),
+      ]),
+    ),
     warnings,
     summary,
   };
