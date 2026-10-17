@@ -4,6 +4,19 @@ import { abilityMpCost } from "./progression.js";
 import { isRevival, throwableCommands } from "./ability-effects.js";
 const unique = (values) => [...new Set(values)];
 const learned = (unit) => (unit.abilities ?? []).map((a) => (typeof a === "object" ? a.id : a));
+const equipmentCommandEffects = (data, unit) =>
+  unit.equipmentEffects ??
+  (unit.equipment ?? []).flatMap((id) => {
+    const c = data.contents?.[id],
+      item = c?.type_id === 2 ? data.weapons?.[c.type_value] : data.armors?.[c?.type_value];
+    const f = data.functions?.[item?.wear_function_group_id];
+    return f
+      ? [1, 2, 3].map((n) => ({
+          id: f[`function${n}_id`],
+          values: [1, 2, 3].map((k) => f[`function${n}_value${k}`]),
+        }))
+      : [];
+  });
 export const blitzInputs = {
   132: ["←", "→", "←"],
   133: ["↓", "↙", "←"],
@@ -47,20 +60,7 @@ export function effectiveCommandIds(data, unit) {
           ? [7]
           : [],
     );
-  const wear =
-    unit.equipmentEffects ??
-    (unit.equipment ?? []).flatMap((id) => {
-      const c = data.contents?.[id],
-        item = c?.type_id === 2 ? data.weapons?.[c.type_value] : data.armors?.[c?.type_value];
-      const f = data.functions?.[item?.wear_function_group_id];
-      return f
-        ? [1, 2, 3].map((n) => ({
-            id: f[`function${n}_id`],
-            values: [1, 2, 3].map((k) => f[`function${n}_value${k}`]),
-          }))
-        : [];
-    });
-  for (const effect of wear)
+  for (const effect of equipmentCommandEffects(data, unit))
     if (effect.id === 61) ids = ids.map((id) => (id === effect.values[0] ? effect.values[1] : id));
   return unique([...ids, 2, 5, 6]);
 }
@@ -119,18 +119,24 @@ export function commandMenu(battle, index) {
       data.commands?.[7]?.abilityTypes?.includes(data.abilities?.[id]?.typeId) ||
       (!data.commands?.[7]?.abilityTypes?.length && id >= 31 && id <= 84),
   );
-  const ids = effectiveCommandIds(data, unit);
+  const ids = effectiveCommandIds(data, unit),
+    summon = data.magicStones?.[unit.magicite]?.summonAbilityId;
   // Magic is unlocked by learned spells/espers, not forcibly put on Gau/Umaro.
   if (
     !unit.magitek &&
     !unit.magicOnly &&
     unit.id !== 14 &&
-    spellIds.length &&
+    (spellIds.length || data.abilities?.[summon]) &&
     !ids.includes(7) &&
     !ids.includes(31)
-  )
-    ids.splice(Math.max(0, ids.length - 2), 0, 7);
-  const summon = data.magicStones?.[unit.magicite]?.summonAbilityId;
+  ) {
+    // An unlocked Magic slot still follows the PR relic replacement (e.g.
+    // Soul of Thamasa7->31), even when no authored job slot contained Magic.
+    let unlocked = 7;
+    for (const effect of equipmentCommandEffects(data, unit))
+      if (effect.id === 61 && effect.values[0] === unlocked) unlocked = effect.values[1];
+    ids.splice(Math.max(0, ids.length - 2), 0, unlocked);
+  }
   return ids.map((commandId) => {
     const row = data.commands?.[commandId] ?? {
       id: commandId,
