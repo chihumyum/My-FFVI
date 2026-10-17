@@ -10,7 +10,7 @@
   "scripts": {
     "export": "node tools/export/index.mjs",
     "dev": "vite --config vite.config.mjs",
-    "test": "node --test src/play/*.test.mjs apps/play/*.test.mjs",
+    "test": "node --test src/play/*.test.mjs apps/play/*.test.mjs tools/export/*.test.mjs",
     "play:through": "node tools/play/playthrough.mjs",
     "play:optional-inventory": "node tools/play/optional-inventory.mjs",
     "play:optional": "node tools/play/optional-run.mjs",

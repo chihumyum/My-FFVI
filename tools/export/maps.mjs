@@ -182,6 +182,15 @@ export function compileMap(row, binding, tables, media, messages) {
             reverse: Boolean(p.reverse),
             allLayers: Boolean(p.all_layers),
           };
+        if (kind === 14 && (object.polyline || object.polygon))
+          entity.polyline = {
+            closed: Boolean(object.polygon),
+            // PR path vertices mark cell centers; actors use cell indices.
+            points: (object.polyline || object.polygon).map((point) => ({
+              x: entity.x + Number(point.x || 0) / tileSize - 0.5,
+              y: entity.y + Number(point.y || 0) / tileSize - 0.5,
+            })),
+          };
         if (kind === 8)
           entity.door = {
             linkObjectId: Number(p.link_object_id || 0),

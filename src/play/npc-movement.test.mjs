@@ -53,6 +53,66 @@ test("PR autonomous NPCs move inside their linked MoveArea and reserve body dest
   assert.match(game.warnings[0].message, /interval durations are inferred/);
 });
 
+test("PR type3 NPCs patrol their authored polyline instead of chasing the player", () => {
+  const { game, actor } = fixture({ moveType: 3, moveSpeedId: 0 });
+  game.map.entities.push({
+    id: "path",
+    kind: 14,
+    objectId: 7,
+    layer: 1,
+    polyline: {
+      closed: false,
+      points: [
+        { x: 4, y: 2 },
+        { x: 5, y: 2 },
+      ],
+    },
+  });
+  game.refreshActors();
+  const positions = new Set();
+  for (let tick = 0; tick < 40; tick++) {
+    game.tick(0.1);
+    assert(actor.x >= 4 && actor.x <= 5);
+    assert.equal(actor.y, 2);
+    positions.add(Math.round(actor.x));
+  }
+  assert.deepEqual([...positions].sort(), [4, 5]);
+  assert.equal(game.player.x, 0);
+});
+
+test("polyline patrols preserve corners, stop at bodies and trigger source contact", () => {
+  const { game, npc, actor } = fixture({ moveType: 3, moveStep: 3, moveSpeedId: 0 });
+  game.map.entities.push({
+    id: "path",
+    kind: 14,
+    objectId: 7,
+    layer: 1,
+    polyline: {
+      closed: false,
+      points: [
+        { x: 4, y: 2 },
+        { x: 5, y: 2 },
+        { x: 5, y: 3 },
+      ],
+    },
+  });
+  Object.assign(game.player, { x: 5, y: 3 });
+  game.refreshActors();
+  for (let tick = 0; tick < 12; tick++) {
+    game.tick(0.1);
+    assert.equal(actor.y, 2, "neither the corner nor the player body is crossed");
+  }
+  assert.equal(actor.x, 5);
+  npc.script = actor.script = "contact";
+  npc.npc.interaction = { actionId: 9 };
+  npc.npc.acceptDirection = 15;
+  const scripts = [];
+  game.startScript = (script) => scripts.push(script);
+  for (let tick = 0; tick < 12; tick++) game.tick(0.1);
+  assert.deepEqual(scripts, ["contact"]);
+  assert.equal(actor.y, 2);
+});
+
 test("autonomous movement cannot cross players, closed chests or terrain", () => {
   for (const obstacle of ["player", "chest", "wall"]) {
     const { game, actor } = fixture();
