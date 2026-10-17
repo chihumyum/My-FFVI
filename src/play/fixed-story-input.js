@@ -1,5 +1,6 @@
 // Named regression inputs, recorded from real manual play. These are deliberately
 // fixed routes: no NPC chasing, path search, game-flag edits or script dispatch.
+import { pendingEventInput } from "./event-systems.js";
 const trenchRoutes = [
   [379, false, [44, 20, 1], "U5 L1 U7"],
   [380, false, [25, 19, 1], "U2 L1 U1 L9 U10"],
@@ -53,6 +54,10 @@ function recordedWalk(game, x, y, layer, directions, route) {
 }
 
 export function fixedStoryInput(game, objective) {
+  if (objective.id === "approach-continent" && game.mapId === 119) {
+    const waiting = pendingEventInput(game);
+    if (waiting) return { ...waiting, route: "blackjack-interception" };
+  }
   if (objective.id === "flame-eater") {
     const route = burningHouseRoutes.find(([map]) => map === game.mapId);
     if (route) return recordedWalk(game, ...route[1], expand(route[2]), "thamasa-burning-house");
