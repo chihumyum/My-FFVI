@@ -312,6 +312,9 @@ export const storyChapters = [
       objective("vector-ally", "在威克托找接应者，答应他的计划后潜入工厂", [373], seen(373), {
         choices: [{ script: scene(373), index: 0 }],
       }),
+      objective("factory-crates", "从接应者旁的箱子攀上工厂通道", [374], f3(11), {
+        maps: [143],
+      }),
       objective("factory-esper-abuse", "深入魔导工厂，目睹凯夫卡抛弃幻兽", [393], flag(183)),
       objective("ifrit-shiva", "下到废弃区，迎战伊弗利特与希瓦", [394], flag(184)),
       objective("ifrit-words", "与伊弗利特交谈", [395], flag(185)),

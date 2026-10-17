@@ -12,7 +12,7 @@ Goal: port FF6 Pixel Remaster to the Web, playable from a new game to the ending
 ## Don't
 - Don't open external Chrome/Safari during development or acceptance. Use the ChatGPT in-app browser; record external-browser compatibility as pending unless the user explicitly asks to run it again.
 - Don't read legacy/ or reconnect archived builders, scripts or generated products.
-- Don't add game-strategy intelligence to the automatic player. Freeze existing policy; no new shopping, grinding, supplies, MP budgets or counter-cost prediction. Diagnose genuine game bugs and fix them; use explicit boosted mode for strategy failures.
+- Don't add game-strategy intelligence to the automatic player: no new shopping, grinding, supplies, MP budgets or counter-cost prediction. Fixed, named story routes and ordinary inputs are allowed to repair regression blockers (for example, talk to the child before delivering cider); don't build smarter pathfinding for moving NPCs. Diagnose genuine game bugs and fix them; use explicit boosted mode for strategy failures.
 - Don't add source hashes, evidence levels or "verified" flags to objects.
 - Don't write a doc per feature. Maintain only README.md (how to run it) and STATUS.md (how far it plays, known issues, list of guessed implementations).
 - Don't rebuild all 649 maps on every change; rebuild only what's affected. Don't copy the whole workspace to integrate.
@@ -21,6 +21,8 @@ Goal: port FF6 Pixel Remaster to the Web, playable from a new game to the ending
 - Don't run multiple parallel sub-agents in "integration waves". Two genuinely independent pieces (e.g. battle formulas and map instructions) may run in parallel and merge directly when done.
 
 ## Reporting
+Current priority: restore a complete boosted fresh-new-game-to-ending regression before new feature work, then rerun the 39 optional-content cases. Complete the remaining four dragons and the same-save Crusader reward to finish stage 5. Pause individual NPC-dialogue acceptance; the remaining conversations are for the user's manual play. Then proceed directly to stage 6 (bestiary, gallery, reference library and music player).
+
 Implement in order: battle commands/effects, foundation adjustment (format only; independent PR export; Opus/Web Audio; Pixi/WebGL; Vite static bundle), PR UI, battle presentation, field/audio, optional content, peripheral systems. At each stage, run boosted fresh-new-game-to-ending regression, update a one-screen STATUS.md, report browser screenshots/new guesses/issues/elapsed time, and continue without asking for acceptance. Ordinary failures must be classified before choosing a fix or a boosted continuation. Report how far it plays, the mode and checkpoint transition, new guessed implementations, known bugs and time spent. No percentages. A strategy failure does not block story migration; boosted completion is not normal battle-balance acceptance.
 
 Foundation steps are sequential and separately committed. Every step must pass boosted fresh-new-game-to-ending regression and add a result line to STATUS.md. No game-logic changes in this phase; src/play must never import a renderer. Audio work moves from field presentation into foundation. Never deploy original assets publicly or commit them to Git.

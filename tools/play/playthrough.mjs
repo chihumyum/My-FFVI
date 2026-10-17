@@ -1,6 +1,7 @@
 import { WebData } from "../../apps/play/data.js";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { resolve as resolvePath } from "node:path";
+import { setImmediate as yieldRuntime } from "node:timers/promises";
 import { withPresentation } from "../../apps/play/presentation-events.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { PlayGame } from "../../src/play/game.js";
@@ -144,6 +145,9 @@ function recordBattle(battle) {
   });
 }
 for (let tick = 0; tick < Number(process.env.TICKS || 120000); tick++) {
+  // Let operator stop signals save the current state even during a CPU-only
+  // route loop. Game time and inputs still advance by the same fixed ticks.
+  if (tick % 100 === 0) await yieldRuntime();
   if (interrupted) {
     stop = "interrupted";
     break;

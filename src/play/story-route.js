@@ -5,6 +5,7 @@ import { pendingEventInput } from "./event-systems.js";
 import { cooperativeStoryInput } from "./cooperative-input.js";
 import { prepareFieldInput, prepareBattleReadiness } from "./field-preparation.js";
 import { nextStoryObjective, storyChapters, storyCondition } from "./story-plan.js";
+import { fixedStoryInput } from "./fixed-story-input.js";
 export const findStoryTarget = (game, objective) => routeToStory(game, objective, pathTo);
 export function followTarget(game, input) {
   if (input.status === "wait-npc") return input;
@@ -50,6 +51,8 @@ export function advanceStory(game, { through = "all" } = {}) {
   const objective = nextStoryObjective(game);
   game.storyObjective = objective;
   if (!objective) return { status: "plan-end" };
+  const fixed = fixedStoryInput(game, objective);
+  if (fixed) return { ...fixed, objective: objective.id, chapter: objective.chapter };
   // Cid's initial recovery timer only advances outside field dialogue. Let
   // its real source callback run rather than continually restarting a talk.
   if (objective.navigation === "fish-and-feed") {
