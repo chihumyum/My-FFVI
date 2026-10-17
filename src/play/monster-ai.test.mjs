@@ -3,12 +3,7 @@ import assert from "node:assert/strict";
 import { Battle } from "./battle.js";
 import { MonsterAI } from "./monster-ai.js";
 
-const op = (name, ints = [], reals = [], strings = []) => [
-  name,
-  ints,
-  reals,
-  strings,
-];
+const op = (name, ints = [], reals = [], strings = []) => [name, ints, reals, strings];
 function interpreter(ops) {
   const unit = { id: 1, hp: 100, mp: 50, side: "enemy", conditions: [] },
     actions = [];
@@ -86,32 +81,44 @@ test("timer wake follows a PR time branch without waiting for another ATB turn",
   );
 });
 
-test('a scene pause freezes AI timers and hidden bodies do not initiate timer actions', () => {
+test("a scene pause freezes AI timers and hidden bodies do not initiate timer actions", () => {
   const { ai, battle, actions, unit } = interpreter([
-    op('SyncAI'), op('IsTimerJump', [4], [2]), op('JumpBattleAI', [0]), op('Exit'),
-    op('Act', [15], [100]), op('JumpBattleAI', [0]),
+    op("SyncAI"),
+    op("IsTimerJump", [4], [2]),
+    op("JumpBattleAI", [0]),
+    op("Exit"),
+    op("Act", [15], [100]),
+    op("JumpBattleAI", [0]),
   ]);
   battle.events = { paused: true };
-  battle.elapsed = 2; ai.tick();
+  battle.elapsed = 2;
+  ai.tick();
   assert.equal(actions.length, 0);
   battle.events.paused = false;
-  battle.elapsed = 3; ai.tick();
+  battle.elapsed = 3;
+  ai.tick();
   assert.equal(actions.length, 0);
-  battle.elapsed = 4; ai.tick();
+  battle.elapsed = 4;
+  ai.tick();
   assert.equal(actions.length, 1);
   unit.hidden = true;
-  battle.elapsed = 20; ai.tick();
+  battle.elapsed = 20;
+  ai.tick();
   assert.equal(actions.length, 1);
 });
 
-test('IsEnemyAttackJump advances the acting monster turn counter, not an enemy-hit counter', () => {
+test("IsEnemyAttackJump advances the acting monster turn counter, not an enemy-hit counter", () => {
   const { ai, unit } = interpreter([
-    op('SyncAI'), op('IsEnemyAttackJump', [4]), op('JumpBattleAI', [0]), op('Exit'),
-    op('ValueCalc', [10, 1], [], ['＋']), op('JumpBattleAI', [0]),
+    op("SyncAI"),
+    op("IsEnemyAttackJump", [4]),
+    op("JumpBattleAI", [0]),
+    op("Exit"),
+    op("ValueCalc", [10, 1], [], ["＋"]),
+    op("JumpBattleAI", [0]),
   ]);
-  ai.wake('normal');
+  ai.wake("normal");
   assert.equal(ai.vars[10], 1);
-  ai.wake('reaction', { actor: { side: 'enemy' }, target: unit, hit: true, amount: 1 });
+  ai.wake("reaction", { actor: { side: "enemy" }, target: unit, hit: true, amount: 1 });
   assert.equal(ai.vars[10], 1);
 });
 
@@ -144,10 +151,7 @@ function fixture(ops, extra = {}) {
     },
     parties: {
       1: {
-        members: [
-          { monsterId: 1, slot: 0 },
-          ...(extra.second ? [{ monsterId: 1, slot: 1 }] : []),
-        ],
+        members: [{ monsterId: 1, slot: 0 }, ...(extra.second ? [{ monsterId: 1, slot: 1 }] : [])],
       },
     },
     ...extra.data,
@@ -165,31 +169,26 @@ function fixture(ops, extra = {}) {
 
 test("an unsupported AI-selected effect logs its source and executes Fight", () => {
   for (const functionId of [999]) {
-  const { battle, warnings } = fixture(
-    [op("SyncAI"), op("Act", [777], [100]), op("JumpBattleAI", [0])],
-    {
-      abilities: {
-        777: { id: 777, range: 3, functions: [{ id: functionId, values: [] }] },
+    const { battle, warnings } = fixture(
+      [op("SyncAI"), op("Act", [777], [100]), op("JumpBattleAI", [0])],
+      {
+        abilities: {
+          777: { id: 777, range: 3, functions: [{ id: functionId, values: [] }] },
+        },
       },
-    },
-  );
-  const player = battle.players[0],
-    before = player.hp;
-  battle.enemyTurn(battle.enemies[0]);
-  assert.ok(player.hp < before);
-  assert.equal(battle.lastAction.ability.id, 1);
-  assert.match(warnings.join("\n"), /AI fixture:1: ability 777.*using Fight/);
+    );
+    const player = battle.players[0],
+      before = player.hp;
+    battle.enemyTurn(battle.enemies[0]);
+    assert.ok(player.hp < before);
+    assert.equal(battle.lastAction.ability.id, 1);
+    assert.match(warnings.join("\n"), /AI fixture:1: ability 777.*using Fight/);
   }
 });
 
 test("a monster does not counter its own self-targeted Nothing action", () => {
   const { battle } = fixture(
-    [
-      op("SyncAI"),
-      op("Act", [696], [100]),
-      op("CounterAct", [1], [100]),
-      op("JumpBattleAI", [0]),
-    ],
+    [op("SyncAI"), op("Act", [696], [100]), op("CounterAct", [1], [100]), op("JumpBattleAI", [0])],
     {
       abilities: {
         696: { id: 696, range: 5, functions: [{ id: 23, values: [] }] },
@@ -214,10 +213,10 @@ test("item-sensitive AI receives its own item hit and does not observe an ally's
     ],
     {
       data: {
-        functions: { 1: { function1_id:1, function1_value1:1, function1_value2:2 } },
+        functions: { 1: { function1_id: 1, function1_value1: 1, function1_value2: 2 } },
         contents: { 2: { type_id: 1, type_value: 1 } },
         items: {
-          1: { id: 1, battle_function_group_id: 1, battle_renge_id:7, standard_value: 50 },
+          1: { id: 1, battle_function_group_id: 1, battle_renge_id: 7, standard_value: 50 },
         },
       },
     },
@@ -226,22 +225,25 @@ test("item-sensitive AI receives its own item hit and does not observe an ally's
   battle.players[0].ready = true;
   assert.equal(battle.useItem(0, 2, 0), true);
   assert.equal(battle.enemies[0].aiState.mode, 0);
-  battle.notifyAction({ actor: battle.players[0], target: battle.enemies[0], hit: true,
-    item: { itemId: 2, contentId: 1 } });
+  battle.notifyAction({
+    actor: battle.players[0],
+    target: battle.enemies[0],
+    hit: true,
+    item: { itemId: 2, contentId: 1 },
+  });
   assert.equal(battle.enemies[0].aiState.mode, 0);
-  battle.notifyAction({ actor: battle.players[0], target: battle.enemies[0], hit: true,
-    item: { itemId: 1, contentId: 2 } });
+  battle.notifyAction({
+    actor: battle.players[0],
+    target: battle.enemies[0],
+    hit: true,
+    item: { itemId: 1, contentId: 2 },
+  });
   assert.equal(battle.enemies[0].aiState.mode, 1);
 });
 
 test("deferred counter chains retain their depth across Blank and yield safely", () => {
   const { battle, warnings } = fixture(
-    [
-      op("SyncAI"),
-      op("Blank"),
-      op("CounterAct", [1], [100]),
-      op("JumpBattleAI", [0]),
-    ],
+    [op("SyncAI"), op("Blank"), op("CounterAct", [1], [100]), op("JumpBattleAI", [0])],
     { second: true },
   );
   battle.perform(battle.enemies[0], battle.enemies[1], fight);

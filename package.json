@@ -214,13 +214,16 @@
     "play:build": "node scripts/build-play.mjs && node scripts/build-play-battle.mjs && node scripts/build-play-navigation.mjs",
     "play:through": "node scripts/playthrough.mjs",
     "play:ai-smoke": "node scripts/smoke-monster-ai.mjs",
-    "play:events-smoke": "node scripts/smoke-battle-events.mjs"
+    "play:events-smoke": "node scripts/smoke-battle-events.mjs",
+    "format": "prettier --write \"{src/play,apps/play,tools/export}/**/*.{js,mjs,json,html,css}\" \"scripts/{build-play*,playthrough,serve-play,smoke-monster-ai,smoke-battle-events,audit-play-abilities,check-play-commands}.mjs\" package.json",
+    "format:check": "prettier --check \"{src/play,apps/play,tools/export}/**/*.{js,mjs,json,html,css}\" \"scripts/{build-play*,playthrough,serve-play,smoke-monster-ai,smoke-battle-events,audit-play-abilities,check-play-commands}.mjs\" package.json"
   },
   "dependencies": {
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "22.19.0",
+    "prettier": "3.9.10",
     "typescript": "5.9.3"
   }
 }

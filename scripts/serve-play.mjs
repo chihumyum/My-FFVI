@@ -1,5 +1,60 @@
-import http from 'node:http';import{readFile,stat}from'node:fs/promises';import{resolve,extname,sep}from'node:path';import{preparePlayMap}from'./build-play.mjs';
-const root=resolve(import.meta.dirname,'..');const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.png':'image/png','.flac':'audio/flac','.ogg':'audio/ogg'};
-http.createServer(async(req,res)=>{try{const url=new URL(req.url,'http://localhost'),p=decodeURIComponent(url.pathname);if(p.startsWith('/play-data/maps/')){const id=Number(p.split('/').pop().replace('.json',''));if(Number.isInteger(id))await preparePlayMap(id);}
-let base,rel;if(p==='/'||p==='/game/'||p==='/play/'){base='apps/play';rel='index.html';}else if(p.startsWith('/play-data/')){base='build/play';rel=p.slice(11);}else if(p.startsWith('/play-runtime/')){base='src/play';rel=p.slice(14);}else if(p.startsWith('/source-media/')){base='build/source-sprite-media';rel=p.slice(14);}else if(p.startsWith('/game/')||p.startsWith('/play/')){base='apps/play';rel=p.slice(p.startsWith('/game/')?6:6);}else{base='build';rel=p.slice(1).replace(/^imports\//,'import/');}
-const folder=resolve(root,base),file=resolve(folder,rel);if(!file.startsWith(folder+sep))throw Error('Invalid path');const bytes=await readFile(file);res.writeHead(200,{'Content-Type':types[extname(file)]||'application/octet-stream','Cache-Control':'no-store'});res.end(bytes);}catch(error){res.writeHead(404,{'Content-Type':'text/plain'});res.end(error.message);}}).listen(Number(process.env.PORT||4173),'127.0.0.1',()=>console.log('FFVI Play http://127.0.0.1:4173/game/'));
+import http from "node:http";
+import { readFile, stat } from "node:fs/promises";
+import { resolve, extname, sep } from "node:path";
+import { preparePlayMap } from "./build-play.mjs";
+const root = resolve(import.meta.dirname, "..");
+const types = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".flac": "audio/flac",
+  ".ogg": "audio/ogg",
+};
+http
+  .createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url, "http://localhost"),
+        p = decodeURIComponent(url.pathname);
+      if (p.startsWith("/play-data/maps/")) {
+        const id = Number(p.split("/").pop().replace(".json", ""));
+        if (Number.isInteger(id)) await preparePlayMap(id);
+      }
+      let base, rel;
+      if (p === "/" || p === "/game/" || p === "/play/") {
+        base = "apps/play";
+        rel = "index.html";
+      } else if (p.startsWith("/play-data/")) {
+        base = "build/play";
+        rel = p.slice(11);
+      } else if (p.startsWith("/play-runtime/")) {
+        base = "src/play";
+        rel = p.slice(14);
+      } else if (p.startsWith("/source-media/")) {
+        base = "build/source-sprite-media";
+        rel = p.slice(14);
+      } else if (p.startsWith("/game/") || p.startsWith("/play/")) {
+        base = "apps/play";
+        rel = p.slice(p.startsWith("/game/") ? 6 : 6);
+      } else {
+        base = "build";
+        rel = p.slice(1).replace(/^imports\//, "import/");
+      }
+      const folder = resolve(root, base),
+        file = resolve(folder, rel);
+      if (!file.startsWith(folder + sep)) throw Error("Invalid path");
+      const bytes = await readFile(file);
+      res.writeHead(200, {
+        "Content-Type": types[extname(file)] || "application/octet-stream",
+        "Cache-Control": "no-store",
+      });
+      res.end(bytes);
+    } catch (error) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end(error.message);
+    }
+  })
+  .listen(Number(process.env.PORT || 4173), "127.0.0.1", () =>
+    console.log("FFVI Play http://127.0.0.1:4173/game/"),
+  );

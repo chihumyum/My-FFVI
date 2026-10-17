@@ -4,9 +4,7 @@ import { Battle } from "../src/play/battle.js";
 
 // Independent boosted battle fixtures using the exported PR programs and
 // formations. This is neither a normal-new-game playthrough nor balance acceptance.
-const data = JSON.parse(
-  await fs.readFile(process.argv[2] ?? "build/play/battle.json", "utf8"),
-);
+const data = JSON.parse(await fs.readFile(process.argv[2] ?? "build/play/battle.json", "utf8"));
 const start = performance.now(),
   simulatedLimit = 240,
   wallLimit = 30_000,
@@ -90,15 +88,8 @@ function run(encounterId, partyIds = [1, 2, 5, 6]) {
     log: battle.log.slice(-5),
   });
   assert.equal(battle.phase, "victory", diagnostic);
-  assert.ok(
-    battle.events.done,
-    `PR event program did not finish: ${diagnostic}`,
-  );
-  assert.equal(
-    ended,
-    1,
-    `Battle completion was not delivered once: ${diagnostic}`,
-  );
+  assert.ok(battle.events.done, `PR event program did not finish: ${diagnostic}`);
+  assert.equal(ended, 1, `Battle completion was not delivered once: ${diagnostic}`);
   assert.ok(battle.elapsed <= simulatedLimit, diagnostic);
   for (const unit of [...battle.players, ...battle.enemies]) {
     assert.ok(
@@ -116,16 +107,10 @@ assert.equal(
 );
 const formations = Object.values(data.parties);
 const linked = Object.keys(data.eventPrograms).flatMap((name) => {
-  const formation = formations.find(
-    (formation) => data.scriptNames[formation.script] === name,
-  );
+  const formation = formations.find((formation) => data.scriptNames[formation.script] === name);
   return formation ? [{ name, encounterId: formation.id }] : [];
 });
-assert.equal(
-  linked.length,
-  42,
-  "Expected 42 PR event programs with a direct formation binding",
-);
+assert.equal(linked.length, 42, "Expected 42 PR event programs with a direct formation binding");
 for (const { name, encounterId } of linked) {
   const { battle } = run(encounterId);
   assert.equal(
@@ -163,17 +148,12 @@ assert.ok(
   vargas.battle.observedActions
     .filter(
       (action) =>
-        action.actorSide === "player" &&
-        action.monsterId === 260 &&
-        action.abilityId !== 132,
+        action.actorSide === "player" && action.monsterId === 260 && action.abilityId !== 132,
     )
     .every((action) => action.targetHp > 0),
   "An ordinary player attack killed Vargas before the event defeat condition",
 );
-assert.equal(
-  vargas.battle.enemies.find((unit) => unit.monsterId === 260).aiState.mode,
-  3,
-);
+assert.equal(vargas.battle.enemies.find((unit) => unit.monsterId === 260).aiState.mode, 3);
 assert.equal(vargas.battle.events.locals[1], 4);
 assert.deepEqual(vargas.battle.events.forcedOutcome, {
   outcome: "victory",
@@ -205,27 +185,19 @@ assert.ok(
   "The merchant did not execute his source escape action",
 );
 assert.equal(clothes.battle.enemies[0].hp, clothes.battle.enemies[0].maxHp);
-assert.equal(
-  locke.hp,
-  locke.maxHp,
-  "Presentation-only change-of-clothes actions damaged Locke",
-);
+assert.equal(locke.hp, locke.maxHp, "Presentation-only change-of-clothes actions damaged Locke");
 
 const finale = run(472);
 assert.deepEqual(
   [
     472,
-    ...finale.events
-      .filter((event) => event.kind === "battle-party")
-      .map((event) => event.partyId),
+    ...finale.events.filter((event) => event.kind === "battle-party").map((event) => event.partyId),
   ],
   [472, 513, 514, 515],
   "The final battle skipped or repeated a PR enemy-party stage",
 );
 for (const partyId of [472, 513, 514, 515]) {
-  const enemyIds = new Set(
-    data.parties[partyId].members.map((member) => member.monsterId),
-  );
+  const enemyIds = new Set(data.parties[partyId].members.map((member) => member.monsterId));
   assert.ok(
     finale.battle.observedActions.some(
       (action) =>

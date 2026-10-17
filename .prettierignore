@@ -1,0 +1,5 @@
+build/
+dist/
+legacy/
+node_modules/
+.venv/

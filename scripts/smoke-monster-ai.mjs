@@ -16,9 +16,7 @@ const start = performance.now(),
   warnings = new Set();
 for (const program of programs) {
   assert.ok(performance.now() - start < 30_000, "AI smoke exceeded 30 seconds");
-  const base = Object.values(data.monsters).find(
-      (m) => m.aiName === program.name,
-    ),
+  const base = Object.values(data.monsters).find((m) => m.aiName === program.name),
     monsterId = base?.id ?? 90000;
   const monster = {
     ...(base || data.monsters[1]),
@@ -41,8 +39,7 @@ for (const program of programs) {
     maxMp: 9999,
   }));
   let seed = 347;
-  const random = () =>
-    (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
+  const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
   const b = new Battle({
       data: fixture,
       party,
@@ -59,9 +56,7 @@ for (const program of programs) {
     b.phase = "active";
     enemy.hp = Math.max(
       1,
-      Math.floor(
-        enemy.maxHp * (turn % 3 === 0 ? 1 : turn % 3 === 1 ? 0.5 : 0.05),
-      ),
+      Math.floor(enemy.maxHp * (turn % 3 === 0 ? 1 : turn % 3 === 1 ? 0.5 : 0.05)),
     );
     enemy.removed = false;
     enemy.escaped = false;

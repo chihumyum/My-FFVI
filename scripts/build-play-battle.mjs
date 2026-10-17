@@ -6,13 +6,10 @@ const numberRow = (row) =>
   Object.fromEntries(
     Object.entries(row).map(([key, value]) => [
       key,
-      typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value)
-        ? Number(value)
-        : value,
+      typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value) ? Number(value) : value,
     ]),
   );
-const dictionary = (rows) =>
-  Object.fromEntries(rows.map((row) => [row.id, row]));
+const dictionary = (rows) => Object.fromEntries(rows.map((row) => [row.id, row]));
 
 export async function buildPlayBattle({
   input = "build/import/tables.json",
@@ -22,10 +19,19 @@ export async function buildPlayBattle({
   const tables = JSON.parse(await fs.readFile(input, "utf8"));
   // These PR dictionaries were already extracted in the original source
   // catalog. Reuse only their integer values, never its old admission gates.
-  const catalog = await fs.readFile('build/game/source-catalog.json', 'utf8').then(JSON.parse).catch(() => ({}));
-  const extra = JSON.parse(await fs.readFile('build/corpus/bundles/battleextradata_assets_all_1295049eaf8a1a34aca99fdc338e0a02.json','utf8'))[0].data;
+  const catalog = await fs
+    .readFile("build/game/source-catalog.json", "utf8")
+    .then(JSON.parse)
+    .catch(() => ({}));
+  const extra = JSON.parse(
+    await fs.readFile(
+      "build/corpus/bundles/battleextradata_assets_all_1295049eaf8a1a34aca99fdc338e0a02.json",
+      "utf8",
+    ),
+  )[0].data;
   const dictionaries = catalog.gameState?.magicStones?.stones ?? {};
-  const cleanName = value => typeof value === 'string' ? value.replace(/<[^>]+>/g, '').trim() : '';
+  const cleanName = (value) =>
+    typeof value === "string" ? value.replace(/<[^>]+>/g, "").trim() : "";
   const localizedAbilities = catalog.common?.abilities ?? {};
   const media = JSON.parse(await fs.readFile(battleInput, "utf8"));
   const play = JSON.parse(await fs.readFile("build/play/data.json", "utf8"));
@@ -49,9 +55,7 @@ export async function buildPlayBattle({
     aiNames = byId("monster_ai_script");
   const spriteEntries = Object.entries(media.sprites ?? {});
   const sprite = (suffix) => {
-    const entry = spriteEntries.find(([name]) =>
-      name.toLowerCase().endsWith(suffix.toLowerCase()),
-    );
+    const entry = spriteEntries.find(([name]) => name.toLowerCase().endsWith(suffix.toLowerCase()));
     return entry
       ? {
           url: `/battle/${entry[1].file}`,
@@ -132,13 +136,14 @@ export async function buildPlayBattle({
         (c) => c.type_id === 4 && c.type_value === row.id,
       );
       const physical =
-        row.id === 1 ||
-        row.process_prog?.toLowerCase() === "multiply" ||
-        fn.function1_id === 2;
-      const healing = [1,32,34].includes(fn.function1_id) || [1,2,3].some(n=>fn[`function${n}_id`]===34);
+        row.id === 1 || row.process_prog?.toLowerCase() === "multiply" || fn.function1_id === 2;
+      const healing =
+        [1, 32, 34].includes(fn.function1_id) ||
+        [1, 2, 3].some((n) => fn[`function${n}_id`] === 34);
       return {
         id: row.id,
-        name: cleanName(localizedAbilities[row.id]?.name) || abilityNames[row.id] || `技能 ${row.id}`,
+        name:
+          cleanName(localizedAbilities[row.id]?.name) || abilityNames[row.id] || `技能 ${row.id}`,
         nameKey: content?.mes_id_name,
         power: row.standard_value,
         mp: row.use_value,
@@ -149,22 +154,25 @@ export async function buildPlayBattle({
           id: fn[`function${k + 1}_id`],
           values: [1, 2, 3].map((n) => fn[`function${k + 1}_value${n}`]),
         })).filter((f) => f.id),
-        kind:
-          row.id === 2
-            ? "defend"
-            : healing
-              ? "heal"
-              : physical
-                ? "physical"
-                : "magic",
-        target: healing || [1,2,5,12].includes(row.battle_renge_id) ||
-          [6,7,8,9,20].includes(row.battle_renge_id) && [1,2,4].includes(row.system_id) ? "ally" : "enemy",
+        kind: row.id === 2 ? "defend" : healing ? "heal" : physical ? "physical" : "magic",
+        target:
+          healing ||
+          [1, 2, 5, 12].includes(row.battle_renge_id) ||
+          ([6, 7, 8, 9, 20].includes(row.battle_renge_id) && [1, 2, 4].includes(row.system_id))
+            ? "ally"
+            : "enemy",
         all: [2, 4, 8, 9, 16, 20, 21].includes(row.battle_renge_id),
         flags: flags(row.content_flag_group_id),
-        elements: [...new Set([...(row.attribute_id ? [row.attribute_id] : []), ...rows("attribute_group").filter(g => g.group_id === row.attribute_group_id).map(g => g.attribute_id)])],
+        elements: [
+          ...new Set([
+            ...(row.attribute_id ? [row.attribute_id] : []),
+            ...rows("attribute_group")
+              .filter((g) => g.group_id === row.attribute_group_id)
+              .map((g) => g.attribute_id),
+          ]),
+        ],
         process: row.process_prog,
-        multiplier:
-          row.process_prog?.toLowerCase() === "multiply" ? row.data_a / 100 : 1,
+        multiplier: row.process_prog?.toLowerCase() === "multiply" ? row.data_a / 100 : 1,
         functionId: fn.function1_id ?? 0,
         groupId: row.ability_group_id,
         range: row.battle_renge_id,
@@ -174,7 +182,9 @@ export async function buildPlayBattle({
         attackCount: row.attack_count,
         invalidBoss: Boolean(row.invalid_boss),
         invalidReflection: Boolean(row.invalid_reflection),
-        forbiddenConditions: rows("condition_group").filter(g => g.group_id === row.condition_group_id).map(g => g.condition_id),
+        forbiddenConditions: rows("condition_group")
+          .filter((g) => g.group_id === row.condition_group_id)
+          .map((g) => g.condition_id),
         abilityWait: row.ability_wait,
         condition:
           fn.function1_id === 9 && conditions[fn.function1_value1]
@@ -194,32 +204,26 @@ export async function buildPlayBattle({
     monsterAssets = byId("monster_asset");
   const characters = dictionary(
     rows("character_status").map((row) => {
-      const curve = rows('intermediate_growth_curve').find(g => g.character_id === row.id && g.job_id === row.job_id);
+      const curve = rows("intermediate_growth_curve").find(
+        (g) => g.character_id === row.id && g.job_id === row.job_id,
+      );
       const equipment = Array.from(
         { length: 6 },
         (_, index) => contents[row[`content_id${index + 1}`]],
       )
         .filter(Boolean)
         .map((c) =>
-          c.type_id === 2
-            ? weapons[c.type_value]
-            : c.type_id === 3
-              ? armors[c.type_value]
-              : null,
+          c.type_id === 2 ? weapons[c.type_value] : c.type_id === 3 ? armors[c.type_value] : null,
         )
         .filter(Boolean);
-      const sum = (key) =>
-        equipment.reduce((total, item) => total + (item[key] ?? 0), 0);
+      const sum = (key) => equipment.reduce((total, item) => total + (item[key] ?? 0), 0);
       const growth = rows("growth_curve").filter(
         (g) => g.group_id === row.growth_curve_group_id && g.lv <= row.lv,
       );
       const weapon = equipment.find((item) => item.attack > 0);
       const asset = characterAssets[row.character_asset_id]?.asset_name;
       const learned = rows("learning")
-        .filter(
-          (l) =>
-            l.job_id === row.job_id && l.type_id === 1 && l.value1 <= row.lv,
-        )
+        .filter((l) => l.job_id === row.job_id && l.type_id === 1 && l.value1 <= row.lv)
         .map((l) => contents[l.content_id])
         .filter((c) => c?.type_id === 4)
         .map((c) => c.type_value);
@@ -227,16 +231,22 @@ export async function buildPlayBattle({
         id: row.id,
         name:
           names[row.id] ??
-          (row.id >= 19 && row.id <= 28
-            ? `莫古 ${row.id - 18}`
-            : `角色 ${row.id}`),
+          (row.id >= 19 && row.id <= 28 ? `莫古 ${row.id - 18}` : `角色 ${row.id}`),
         level: row.lv,
         jobId: row.job_id,
         growthGroup: curve?.growth_curve_group_id ?? row.growth_curve_group_id,
         expGroup: curve?.exp_table_group_id ?? 1,
-        baseStats: { strength: row.strength, vitality: row.vitality, magic: row.magic, speed: row.agility,
-          attack: row.attack, defense: row.defense, magicDefense: row.ability_defense,
-          evasion: row.evasion_rate, magicEvasion: row.magic_evasion_rate },
+        baseStats: {
+          strength: row.strength,
+          vitality: row.vitality,
+          magic: row.magic,
+          speed: row.agility,
+          attack: row.attack,
+          defense: row.defense,
+          magicDefense: row.ability_defense,
+          evasion: row.evasion_rate,
+          magicEvasion: row.magic_evasion_rate,
+        },
         baseHp: row.hp,
         baseMp: row.mp,
         maxHp: row.hp + growth.reduce((sum, level) => sum + level.hp_value1, 0),
@@ -258,11 +268,7 @@ export async function buildPlayBattle({
           ...new Set([
             1,
             2,
-            ...(row.id === 1
-              ? [31, ...(row.lv >= 3 ? [40] : [])]
-              : row.id === 7
-                ? [41]
-                : []),
+            ...(row.id === 1 ? [31, ...(row.lv >= 3 ? [40] : [])] : row.id === 7 ? [41] : []),
             ...learned,
             ...(row.id === 2 ? [8] : row.id === 6 ? [132] : []),
           ]),
@@ -276,14 +282,10 @@ export async function buildPlayBattle({
           .filter((l) => l.abilityId),
         sprite: asset ? sprite(`/${asset}/Default_00.png`) : null,
         magitekSprite: sprite("/BC_FF6_P019/Default_00.png"),
-        equipment: Array.from(
-          { length: 6 },
-          (_, index) => row[`content_id${index + 1}`],
+        equipment: Array.from({ length: 6 }, (_, index) => row[`content_id${index + 1}`]),
+        commands: Array.from({ length: 6 }, (_, index) => row[`command_id${index + 1}`]).filter(
+          Boolean,
         ),
-        commands: Array.from(
-          { length: 6 },
-          (_, index) => row[`command_id${index + 1}`],
-        ).filter(Boolean),
       };
     }),
   );
@@ -317,9 +319,8 @@ export async function buildPlayBattle({
             ? "尤弥尔（壳）"
             : role === "ymir-head"
               ? "尤弥尔"
-              : aiName
-                  .replace(/^sc_ai_[^_]+_/, "")
-                  .replace(/([a-z])([A-Z])/g, "$1 $2") || `怪物 ${row.id}`,
+              : aiName.replace(/^sc_ai_[^_]+_/, "").replace(/([a-z])([A-Z])/g, "$1 $2") ||
+                `怪物 ${row.id}`,
         nameKey: row.mes_id_name,
         species: row.species,
         undead: row.species === 1,
@@ -342,12 +343,15 @@ export async function buildPlayBattle({
         exp: row.exp,
         gil: row.gill,
         boss: Boolean(row.boss),
-        diesAtZeroMp: rows('monster_flag_group').some(flag =>
-          flag.group_id === row.monster_flag_group_id && flag.monster_flag_id === 4),
-        initialConditions: rows('condition_group').filter(condition =>
-          condition.group_id === row.initial_condition).map(condition => condition.condition_id),
-        conditionImmunities: rows('condition_group').filter(condition =>
-          condition.group_id === row.resistance_condition).map(condition => condition.condition_id),
+        diesAtZeroMp: rows("monster_flag_group").some(
+          (flag) => flag.group_id === row.monster_flag_group_id && flag.monster_flag_id === 4,
+        ),
+        initialConditions: rows("condition_group")
+          .filter((condition) => condition.group_id === row.initial_condition)
+          .map((condition) => condition.condition_id),
+        conditionImmunities: rows("condition_group")
+          .filter((condition) => condition.group_id === row.resistance_condition)
+          .map((condition) => condition.condition_id),
         elementResistances: attrs(row.resistance_attribute),
         role,
         aiName,
@@ -366,9 +370,7 @@ export async function buildPlayBattle({
         })).filter((d) => d.id > 0 && d.count > 0),
         dropRate: row.drop_rate,
         sprite: asset
-          ? sprite(
-              `/${asset.group_name}/${asset.group_name}_${asset.asset_name}.png`,
-            )
+          ? sprite(`/${asset.group_name}/${asset.group_name}_${asset.asset_name}.png`)
           : null,
       };
     }),
@@ -384,7 +386,7 @@ export async function buildPlayBattle({
       id: row.id,
       backgroundId: row.battle_background_asset_id,
       bgmId: row.battle_bgm_asset_id,
-      battlePatterns: Array.from({length:6}, (_,n) => row[`battle_pattern${n+1}`]),
+      battlePatterns: Array.from({ length: 6 }, (_, n) => row[`battle_pattern${n + 1}`]),
       // FFVI magic learning points use get_value. get_ap is a separate
       // cross-title field and is zero throughout this PR table.
       ap: row.get_value,
@@ -412,60 +414,134 @@ export async function buildPlayBattle({
     commandGroups: rows("command_group"),
     monsterExchangeWeights: extra.monster_exchange_weight,
     abilityGroups: rows("ability_group"),
-    itemNames: Object.fromEntries(rows("item").map(row => {
-      const content = Object.values(contents).find(c => c.type_id === 1 && c.type_value === row.id);
-      const item = catalog.gameState?.items?.[content?.id] ?? catalog.common?.items?.[content?.id];
-      return [row.id, cleanName(item?.name) || `道具 ${row.id}`];
-    })),
+    itemNames: Object.fromEntries(
+      rows("item").map((row) => {
+        const content = Object.values(contents).find(
+          (c) => c.type_id === 1 && c.type_value === row.id,
+        );
+        const item =
+          catalog.gameState?.items?.[content?.id] ?? catalog.common?.items?.[content?.id];
+        return [row.id, cleanName(item?.name) || `道具 ${row.id}`];
+      }),
+    ),
     functions,
     monsters,
     parties,
     abilities,
     characters,
-    commands: Object.fromEntries(rows('command').map(row => {
-      const old = catalog.common?.commands?.[row.id];
-      const types = rows('ability_group').filter(g => g.group_id === row.ability_group_id)
-        .map(g => byId('chanting')[g.type_id]?.ability_type_id);
-      return [row.id, {...row, name: old?.name || cleanName(localizedAbilities[row.ability_id]?.name) ||
-        ({8:'幻化',11:'夺取',13:'投掷',18:'素描',19:'操纵',20:'老虎机',21:'扔钱',28:'激震',30:'跳跃',31:'连续魔'})[row.id] || `指令 ${row.id}`,
-        abilityTypes:types, forbiddenConditions: rows('condition_group').filter(g=>g.group_id===row.condition_group_id).map(g=>g.condition_id)}];
-    })),
+    commands: Object.fromEntries(
+      rows("command").map((row) => {
+        const old = catalog.common?.commands?.[row.id];
+        const types = rows("ability_group")
+          .filter((g) => g.group_id === row.ability_group_id)
+          .map((g) => byId("chanting")[g.type_id]?.ability_type_id);
+        return [
+          row.id,
+          {
+            ...row,
+            name:
+              old?.name ||
+              cleanName(localizedAbilities[row.ability_id]?.name) ||
+              {
+                8: "幻化",
+                11: "夺取",
+                13: "投掷",
+                18: "素描",
+                19: "操纵",
+                20: "老虎机",
+                21: "扔钱",
+                28: "激震",
+                30: "跳跃",
+                31: "连续魔",
+              }[row.id] ||
+              `指令 ${row.id}`,
+            abilityTypes: types,
+            forbiddenConditions: rows("condition_group")
+              .filter((g) => g.group_id === row.condition_group_id)
+              .map((g) => g.condition_id),
+          },
+        ];
+      }),
+    ),
     items: byId("item"),
     contents,
-    contentNames: Object.fromEntries(Object.values(contents).map(content => [content.id,
-      cleanName(catalog.gameState?.items?.[content.id]?.name || catalog.gameState?.equipmentSystem?.catalog?.definitions?.[content.id]?.name ||
-        dictionaries[content.id]?.name || localizedAbilities[content.type_id === 4 ? content.type_value : 0]?.name) || `物品 ${content.id}`])),
+    contentNames: Object.fromEntries(
+      Object.values(contents).map((content) => [
+        content.id,
+        cleanName(
+          catalog.gameState?.items?.[content.id]?.name ||
+            catalog.gameState?.equipmentSystem?.catalog?.definitions?.[content.id]?.name ||
+            dictionaries[content.id]?.name ||
+            localizedAbilities[content.type_id === 4 ? content.type_value : 0]?.name,
+        ) || `物品 ${content.id}`,
+      ]),
+    ),
     weapons,
-    weaponAdditionalAbilities: catalog.gameState?.equipmentSystem?.catalog?.ordinaryWeaponEffects?.additionalAbilities || [],
+    weaponAdditionalAbilities:
+      catalog.gameState?.equipmentSystem?.catalog?.ordinaryWeaponEffects?.additionalAbilities || [],
     armors,
-    jobGroups: byId('job_group'),
-    partsGroups: byId('parts_group'),
-    attributeGroups: rows('attribute_group'),
-    learning: rows('learning'),
-    limits: Object.fromEntries(rows('game_constant_int').map(row => [row.key_name, row.value1])),
-    magicStones: Object.fromEntries(Object.values(contents).filter(content => content.type_id === 9).map(content => {
-      const saved = dictionaries[content.id];
-      return [content.id, { contentId: content.id, name: saved?.name ?? `魔石 ${content.id}`,
-        summonAbilityId: saved?.summonAbilityId ?? 0, bonus: saved?.bonus ?? { parameter: 0, value: 0 },
-        learning: rows('learning').filter(row => row.type_id === 2 && row.value1 === content.id).map(row =>
-          ({ abilityId: contents[row.content_id]?.type_value, contentId: row.content_id, rate: row.value2 })) }];
-    })),
+    jobGroups: byId("job_group"),
+    partsGroups: byId("parts_group"),
+    attributeGroups: rows("attribute_group"),
+    learning: rows("learning"),
+    limits: Object.fromEntries(rows("game_constant_int").map((row) => [row.key_name, row.value1])),
+    magicStones: Object.fromEntries(
+      Object.values(contents)
+        .filter((content) => content.type_id === 9)
+        .map((content) => {
+          const saved = dictionaries[content.id];
+          return [
+            content.id,
+            {
+              contentId: content.id,
+              name: saved?.name ?? `魔石 ${content.id}`,
+              summonAbilityId: saved?.summonAbilityId ?? 0,
+              bonus: saved?.bonus ?? { parameter: 0, value: 0 },
+              learning: rows("learning")
+                .filter((row) => row.type_id === 2 && row.value1 === content.id)
+                .map((row) => ({
+                  abilityId: contents[row.content_id]?.type_value,
+                  contentId: row.content_id,
+                  rate: row.value2,
+                })),
+            },
+          ];
+        }),
+    ),
     backgrounds,
     sprites,
     growth: rows("growth_curve"),
     expTable: rows("exp_table"),
     encounters: {
-      maps: dictionary(rows("map").map((row) => ({ id: row.id,
-        set: row.monster_set_id, grid: row.encount_area_grid_id,
-        min: row.required_steps_min, max: row.required_steps_max,
-        subtract: row.subtract_steps }))),
-      sets: dictionary(rows("monster_set").map((row) => ({ id: row.id,
-        choices: Array.from({ length: 16 }, (_, n) => ({
-          id: row[`monster_set${n + 1}`], weight: row[`monster_set${n + 1}_rate`],
-        })) }))),
+      maps: dictionary(
+        rows("map").map((row) => ({
+          id: row.id,
+          set: row.monster_set_id,
+          grid: row.encount_area_grid_id,
+          min: row.required_steps_min,
+          max: row.required_steps_max,
+          subtract: row.subtract_steps,
+        })),
+      ),
+      sets: dictionary(
+        rows("monster_set").map((row) => ({
+          id: row.id,
+          choices: Array.from({ length: 16 }, (_, n) => ({
+            id: row[`monster_set${n + 1}`],
+            weight: row[`monster_set${n + 1}_rate`],
+          })),
+        })),
+      ),
       grids: byId("encount_area_grid"),
-      areas: Object.fromEntries(rows("encount_area").map((row) => [row.encount_area_grid_number,
-        Array.from({ length: 32 }, (_, n) => row[`foot${String(n + 1).padStart(2, "0")}_monster_set`])])),
+      areas: Object.fromEntries(
+        rows("encount_area").map((row) => [
+          row.encount_area_grid_number,
+          Array.from(
+            { length: 32 },
+            (_, n) => row[`foot${String(n + 1).padStart(2, "0")}_monster_set`],
+          ),
+        ]),
+      ),
     },
     warnings: [
       "PR MonsterAI programs execute directly; uncertain selector and timing details warn with script and instruction index.",
@@ -480,10 +556,7 @@ export async function buildPlayBattle({
   return result;
 }
 
-if (
-  process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const result = await buildPlayBattle({
     output: process.argv[2] ?? "build/play/battle.json",
   });

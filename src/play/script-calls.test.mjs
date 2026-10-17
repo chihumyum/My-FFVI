@@ -2,12 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PlayGame } from "./game.js";
 
-const op = (name, ints = [], reals = [], strings = []) => [
-  name,
-  ints,
-  reals,
-  strings,
-];
+const op = (name, ints = [], reals = [], strings = []) => [name, ints, reals, strings];
 function game(programs) {
   const value = new PlayGame({
     data: {
