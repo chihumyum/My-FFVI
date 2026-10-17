@@ -65,6 +65,15 @@ function recordedWalk(game, x, y, layer, directions, route) {
 }
 
 export function fixedStoryInput(game, objective) {
+  if (objective.id === "figaro-engine-approach" && game.mapId === 454)
+    return recordedWalk(
+      game,
+      32,
+      44,
+      1,
+      expand("R1 D1 R1 D3 R2 D1 R1 D4 L3 D1 L11 D1 L2 D2"),
+      "figaro-engine-passage",
+    );
   if (
     objective.id === "cid-care" &&
     game.mapId === 191 &&
