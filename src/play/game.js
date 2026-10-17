@@ -276,14 +276,21 @@ export class PlayGame {
     this.afterInit = "";
     if (next) this.startScript(next);
   }
-  refreshActors() {
+  refreshActors({ preserveMissing = false } = {}) {
     const entities = [...this.map.entities.filter((e) => !e.group || e.group === "entity_default")];
     for (const g of this.groups)
       if (g !== "entity_default") entities.push(...(this.map.groups?.[g]?.entities || []));
     this.entities = entities;
-    for (const e of entities)
-      if ([6, 7, 10, 14, 17].includes(e.kind) && !this.actors.has(String(e.id)))
+    for (const e of entities) {
+      const actor = this.actors.get(String(e.id));
+      // A puppet may mention an unpublished entity (Vector's crate trigger60).
+      // Its missing-entity placeholder is not the later PR group's real body.
+      if (
+        ([6, 7, 10, 14, 17].includes(e.kind) && !actor && !preserveMissing) ||
+        (Number(e.id) > 0 && actor && actor.kind == null)
+      )
         this.actors.set(String(e.id), { ...e, visible: true, animation: "Default", motion: null });
+    }
     this.actorEntitySource = entities;
   }
   actor(selector) {
@@ -1401,9 +1408,9 @@ export class PlayGame {
     });
     Object.assign(this.player, saved.player);
     this.groups = new Set(saved.groups);
-    this.refreshActors();
     if (saved.actors) this.actors = new Map(saved.actors);
-    else this.startScript(this.map.initializer, { init: true });
+    this.refreshActors({ preserveMissing: !!saved.actors });
+    if (!saved.actors) this.startScript(this.map.initializer, { init: true });
     for (const cursor of saved.assignedRoutes || []) {
       executeInstruction(this, { pc: 0 }, "AssignMoveRoute", [
         cursor.actor,

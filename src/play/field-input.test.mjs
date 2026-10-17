@@ -2,6 +2,42 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PlayGame } from "./game.js";
 
+test("publishing a PR group replaces missing-entity placeholders with its actual touch trigger", () => {
+  const started = [];
+  const game = new PlayGame({
+    data: { programs: { publish: { ops: [["SetEntities", [], [], ["crates"]]] } } },
+  });
+  game.mapId = 143;
+  game.triggered = new Set();
+  game.map = {
+    width: 6,
+    height: 6,
+    entities: [],
+    collisions: { 1: Array(36).fill(0) },
+    groups: {
+      crates: {
+        entities: [{ id: "60", kind: 2, x: 2, y: 1, layer: 1, script: "climb-crates" }],
+      },
+    },
+  };
+  Object.assign(game.player, { x: 1, y: 1, layer: 1 });
+  game.refreshActors();
+  // Map initialization mentions60 before source373 publishes group0374.
+  const missing = game.actor(60);
+  missing.visible = false;
+  assert.equal(missing.kind, undefined);
+  game.step({ program: "publish", pc: 0, actor: null, locals: [], stack: [] });
+  assert.equal(game.actors.get("60").kind, 2);
+  assert.equal(game.actors.get("60").x, 2);
+  assert.equal(game.actors.get("60").visible, true);
+  game.startScript = (name) => started.push(name);
+  assert.equal(game.move("right"), true);
+  assert.deepEqual(started, ["climb-crates"]);
+  game.actors.get("60").visible = false;
+  game.refreshActors();
+  assert.equal(game.actors.get("60").visible, false, "published actors retain source Hide state");
+});
+
 test("a confirm action opens the source door instead of invoking an overlapping touch warp", () => {
   const started = [];
   const game = new PlayGame({ data: { init: [], programs: {} } });
