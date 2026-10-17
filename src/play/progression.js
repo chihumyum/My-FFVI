@@ -179,8 +179,10 @@ export function applyTestBoost(unit) {
     mp: 999,
     maxMp: 999,
     strength: 255,
-    magic: 255,
-    attack: 255,
+    // Explicit story regression mode bypasses combat strategy, including
+    // high-defense optional bosses. Ordinary character stats are unchanged.
+    magic: 999999,
+    attack: 999999,
     defense: 250,
     magicDefense: 250,
     speed: 255,

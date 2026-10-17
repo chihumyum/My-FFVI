@@ -44,6 +44,29 @@ export function treasureOpened(game, entity) {
     ? Boolean(game.banks?.[ref.category]?.[ref.index])
     : Boolean(game.banks?.PlaySystems?.openedTreasure?.[`${game.mapId}:${entity.id}`]);
 }
+export function resetTreasureGroup(game, contentId) {
+  const reset = [];
+  for (const entity of game.entities || []) {
+    const definition = entity.kind === 7 && entity.treasure;
+    if (!definition) continue;
+    const program =
+        definition.scriptName && game.data.programs?.[game.resolve(definition.scriptName)],
+      grantsContent =
+        definition.reward?.id === contentId ||
+        program?.ops.some(([op, i]) => op === "GetItem" && i[0] === contentId);
+    if (!grantsContent) continue;
+    const ref = treasureFlag(definition);
+    if (ref) (game.banks[ref.category] ??= {})[ref.index] = 0;
+    const opened = game.banks.PlaySystems?.openedTreasure;
+    if (opened) delete opened[`${game.mapId}:${entity.id}`];
+    const actor = game.actor(entity.id);
+    actor.opened = false;
+    if (definition.presentation?.pickUp) actor.visible = true;
+    reset.push(entity.id);
+  }
+  game.event("treasure-reset", { contentId, entityIds: reset });
+  return reset.length;
+}
 export function openTreasure(game, entity, { after = false, message = true, task = null } = {}) {
   const definition = entity?.treasure;
   if (!definition) return false;

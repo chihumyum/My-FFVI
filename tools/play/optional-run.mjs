@@ -14,6 +14,7 @@ import { optionalCases as recruitmentCases } from "./optional-cases.mjs";
 import { extraOptionalCases } from "./optional-extra-cases.mjs";
 import { recruitOptionalCases } from "./optional-recruit-cases.mjs";
 import { esperOptionalCases } from "./optional-esper-cases.mjs";
+import { questOptionalCases } from "./optional-quest-cases.mjs";
 import {
   selectColosseumWager,
   selectColosseumChallenger,
@@ -25,8 +26,17 @@ const optionalCases = [
   ...extraOptionalCases,
   ...recruitOptionalCases,
   ...esperOptionalCases,
+  ...questOptionalCases,
 ];
 function condition(game, test) {
+  if (test?.learnedAbility) {
+    const [id, ability] = test.learnedAbility;
+    return game.roster[id]?.abilities?.includes(ability) || false;
+  }
+  if (test?.variableAtLeast) {
+    const [bank, index, minimum] = test.variableAtLeast;
+    return Number(game.banks?.[bank]?.[index] || 0) >= minimum;
+  }
   if (test?.memberAvailable)
     return partyInputMembers(game).some((u) => u.id === test.memberAvailable);
   if (test?.all) return test.all.every((c) => condition(game, c));
@@ -345,7 +355,7 @@ for (const test of cases) {
     game.storyObjective = current;
     const cooperative = cooperativeStoryInput(game, current, {
       condition,
-      findTarget: findStoryTarget,
+      findTarget: (host, objective) => objectiveTarget(host, objective, fixedRoutes),
       followTarget,
     });
     let input = cooperative;

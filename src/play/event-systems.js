@@ -1,6 +1,6 @@
 import { isVeldt } from "./encounters.js";
 import { equipmentDefinition, emptyEquipment, recalculateEquipment } from "./progression.js";
-import { optimizeEquipment } from "./resources.js";
+import { optimizeEquipment, resetTreasureGroup } from "./resources.js";
 import { openColosseum } from "./colosseum.js";
 import { executeFlightEncounterSyscall } from "./flight-encounters.js";
 const bank = (game, name) => (game.banks[name] ??= {});
@@ -339,6 +339,16 @@ export function shopScriptsForContent(game, contentId) {
 }
 
 export function executeEventSystem(game, task, name, i, r, { characterSelectors, names, warn }) {
+  if (name === "宝箱リセット：サンゴのかけら") {
+    // PR's five coral scripts grant content47 themselves after TreasureBox.
+    // Reset their source flags, rather than granting coral or changing the
+    // source ScenarioVariable[7] collection/feeding counter.
+    resetTreasureGroup(game, 47);
+    warn(
+      "PR coral chest reset selects the current map's serialized item47 reward scripts; the native group lookup is inferred.",
+    );
+    return true;
+  }
   if (executeFlightEncounterSyscall(game, task, name, i, r)) return true;
   const state = systems(game),
     subject = name.split(/[：:]/).slice(1).join("：");
@@ -610,17 +620,20 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
     const id = subject === "夢幻闘舞" ? 6 : subject === "必殺剣" ? 3 : null;
     if (!id) return false;
     const unit = game.unit(id);
-    const learned = rows(game, "learning")
+    let learned = rows(game, "learning")
       .filter((row) => Number(row.job_id) === id)
       .map((row) => ({ row, content: game.battleData.contents?.[row.content_id] }))
       .filter((entry) => entry.content?.type_id === 4);
+    if (id === 6) {
+      // Duncan teaches only the final Blitz (SNES give_blitz semantics),
+      // using PR's highest learning tier for its actual content/ability ID.
+      const finalLevel = Math.max(...learned.map(({ row }) => Number(row.value1)));
+      learned = learned.filter(({ row }) => Number(row.value1) === finalLevel);
+    }
     unit.abilities = [
       ...new Set([...(unit.abilities ?? []), ...learned.map((entry) => entry.content.type_value)]),
     ];
     game.event("learned", { id, ability: subject });
-    warn(
-      "Special training currently unlocks the character PR learning rows; command-menu presentation is simplified.",
-    );
     return true;
   }
   if (

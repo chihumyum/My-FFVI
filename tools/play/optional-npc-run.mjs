@@ -1,5 +1,6 @@
 import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { homedir } from "node:os";
 import { parseArgs } from "node:util";
 import { PlayGame } from "../../src/play/game.js";
 import { Battle } from "../../src/play/battle.js";
@@ -20,13 +21,18 @@ const { values } = parseArgs({
     seconds: { type: "string", default: "8" },
     "wall-seconds": { type: "string", default: "180" },
     starts: { type: "string", default: "3" },
+    previous: { type: "string", default: "build/play/optional-npc-summary.json" },
+    "original-saves": {
+      type: "string",
+      default: path.join(homedir(), "Documents", "FFVI_PR_存档切换"),
+    },
     "same-map": { type: "boolean", default: false },
     help: { type: "boolean" },
   },
 });
 if (values.help) {
   console.log(
-    "node tools/play/optional-npc-run.mjs [--areas 7,8] [--maps 3,21] [--limit 100] [--same-map] [--starts 3] [--seconds 8] [--wall-seconds 180] [--out REPORT.json]\n" +
+    "node tools/play/optional-npc-run.mjs [--areas 7,8] [--maps 3,21] [--limit 100] [--same-map] [--starts 3] [--seconds 8] [--wall-seconds 180] [--previous REPORT_OR_SUMMARY.json] [--out REPORT.json]\n" +
       "Reads actual stage1 checkpoints and optional stop=passed saves; uses only ordinary movement/confirmation.\n" +
       "Classifies every inventory NPC, runs selected pure-message candidates, and writes JSON plus CSV.\n" +
       "A successful row proves one map/group/entity interaction in one real state, never all dialogue branches.",
@@ -65,6 +71,26 @@ async function sourceMap(id) {
 }
 const resolve = (name, mapId) => data.byMap[mapId]?.[name] ?? data.global[name];
 
+function dedicatedCategories(reasons) {
+  const text = reasons.join("|"),
+    result = [];
+  for (const [category, pattern] of [
+    ["source-missing", /missing script|dynamic\/empty/],
+    ["commerce-or-payment", /shop\/product|ショップ|Gil/],
+    ["choice-or-menu", /Select|名前入力|パーティ編成|コロシアム/],
+    ["battle", /Encount/],
+    ["source-state-change", /Flag|Calc|SetRandomValue|SetEntities|GetItem|RemoveItem/],
+    ["party-or-equipment", /加入|控え|離脱|装備|PartySlot/],
+    ["timer-or-special-system", /Timer|タイマー|SysCall/],
+    [
+      "movement-or-presentation",
+      /Move|Lerp|SetPos|Route|Hide|Show|Fade|BGM|ChangeMap|Screen|Color|Shake|Flash/,
+    ],
+  ])
+    if (pattern.test(text)) result.push(category);
+  return result.length ? result : ["other-source-operation"];
+}
+
 // Conservative across every static branch. A payment/menu/plot write on even
 // one branch defers the whole interaction, rather than guessing a safe choice.
 const harmless = new Set([
@@ -96,7 +122,11 @@ const harmless = new Set([
 const classificationCache = new Map();
 function classify(npc) {
   if (npc.interaction?.actionId === 8 || npc.interaction?.productGroup > 0)
-    return { kind: "dedicated-case", reasons: ["shop/product service"] };
+    return {
+      kind: "dedicated-case",
+      reasons: ["shop/product service"],
+      categories: ["commerce-or-payment"],
+    };
   if (!npc.script && npc.interaction?.kind === "talk")
     return {
       kind: "pure-message",
@@ -136,13 +166,15 @@ function classify(npc) {
     programs: [...seen],
     messageKeys: [...messages],
     reasons: [...reasons],
+    categories: reasons.size ? dedicatedCategories([...reasons]) : [],
   };
   classificationCache.set(key, result);
   return result;
 }
 
 const startStates = [],
-  skippedStarts = [];
+  skippedStarts = [],
+  startBanks = new Map();
 async function addStart(file, provenance, expectedMap) {
   let saved;
   try {
@@ -208,6 +240,7 @@ async function addStart(file, provenance, expectedMap) {
     phase: Number(saved.banks.ScenarioFlag2?.[41] || 0),
     testBoost: Boolean(saved.testBoost),
   });
+  startBanks.set(relative(file), saved.banks);
 }
 for (const name of (await readdir(values.checkpoints))
   .filter((name) => name.endsWith(".json"))
@@ -245,24 +278,77 @@ for (const name of (await readdir(values.optional))
   );
 }
 
+function guardState(npc, start) {
+  if (start.mapId === npc.mapId)
+    return {
+      compatible: npc.group === "entity_default" || start.groups.includes(npc.group),
+      basis: "actual saved active groups",
+    };
+  if (npc.group === "entity_default") return { compatible: true, basis: "default source group" };
+  const selectors = npc.groupSelectors || [];
+  if (!selectors.length) return { compatible: null, basis: "no source selector guards exported" };
+  const compare = (a, op, b) => {
+    if (["＝", "=", "=="].includes(op)) return a === b;
+    if (["≠", "!=", "<>"].includes(op)) return a !== b;
+    if (["＞", ">"].includes(op)) return a > b;
+    if (["＜", "<"].includes(op)) return a < b;
+    if (["≧", ">="].includes(op)) return a >= b;
+    if (["≦", "<="].includes(op)) return a <= b;
+    if (["＆", "&"].includes(op)) return Boolean(a & b);
+    return null;
+  };
+  const banks = startBanks.get(start.file),
+    statuses = selectors.map((selector) => {
+      let unknown = false;
+      for (const branch of selector.requiredBranches || []) {
+        if (
+          !/^Scenario|^Treasure/.test(branch.bank) ||
+          (branch.compareBank !== "imm" && !/^Scenario|^Treasure/.test(branch.compareBank))
+        ) {
+          unknown = true;
+          continue;
+        }
+        const left = Number(banks[branch.bank]?.[branch.index] || 0),
+          right =
+            branch.compareBank === "imm"
+              ? Number(branch.value)
+              : Number(banks[branch.compareBank]?.[branch.value] || 0),
+          result = compare(left, branch.operator, right);
+        if (result === null) unknown = true;
+        else if (result !== branch.taken) return false;
+      }
+      return unknown ? null : true;
+    });
+  return {
+    compatible: statuses.includes(true) ? true : statuses.includes(null) ? null : false,
+    basis: "necessary initializer guards only; local banks are unknown, visibility not inferred",
+  };
+}
 function rankStarts(npc) {
-  return startStates
+  const evaluated = startStates
     .filter((start) => !values["same-map"] || start.mapId === npc.mapId)
-    .map((start) => ({
-      start,
-      score:
-        (start.mapId === npc.mapId ? 1000 : 0) +
-        (start.mapId === npc.mapId &&
-        (npc.group === "entity_default" || start.groups.includes(npc.group))
-          ? 300
-          : 0) +
-        (start.visited.includes(npc.mapId) ? 40 : 0) +
-        (start.areaId === npc.areaId ? 20 : 0) +
-        (npc.sourcePhases?.includes(start.phase) ? 10 : 0),
-    }))
-    .sort((a, b) => b.score - a.score || a.start.time - b.start.time)
-    .slice(0, maxStarts)
-    .map(({ start }) => start);
+    .map((start) => ({ start, guard: guardState(npc, start) }));
+  return {
+    rejected: evaluated.filter(({ guard }) => guard.compatible === false).length,
+    candidates: evaluated
+      .filter(({ guard }) => guard.compatible !== false)
+      .map(({ start, guard }) => ({
+        start,
+        score:
+          (start.mapId === npc.mapId ? 1000 : 0) +
+          (guard.compatible === true ? 200 : 0) +
+          (start.mapId === npc.mapId &&
+          (npc.group === "entity_default" || start.groups.includes(npc.group))
+            ? 300
+            : 0) +
+          (start.visited.includes(npc.mapId) ? 40 : 0) +
+          (start.areaId === npc.areaId ? 20 : 0) +
+          (npc.sourcePhases?.includes(start.phase) ? 200 : 0),
+      }))
+      .sort((a, b) => b.score - a.score || a.start.time - b.start.time)
+      .slice(0, maxStarts)
+      .map(({ start }) => start),
+  };
 }
 function sourceEntity(game, npc) {
   if (game.mapId !== npc.mapId) return { reason: "not-on-target-map" };
@@ -612,6 +698,119 @@ async function attempt(npc, classification, start) {
   };
 }
 
+// Original native saves are inspected read-only. The switcher only copies
+// banks; binary payloads must never be passed to PlayGame.restore as snapshots.
+async function auditOriginalSaves() {
+  const root = values["original-saves"],
+    config = await optionalRead(path.join(root, "分组配置.json"));
+  if (!config)
+    return {
+      root,
+      importAvailable: false,
+      reason: "switcher configuration not found",
+      candidates: [],
+    };
+  const candidates = [];
+  for (const group of ["01", "02", "03"]) {
+    const bank = config.banks?.[group];
+    if (!bank) continue;
+    for (const entry of bank.entries || []) {
+      const file = path.join(root, bank.folder, config.slot_files?.[entry.slot] || "missing-slot");
+      const evidence = {
+        group,
+        displayId: entry.displayId,
+        slot: entry.slot,
+        region: entry.region,
+        file,
+        tier: entry.tier,
+        status: "skipped",
+      };
+      if (entry.tier !== "candidate") evidence.reason = "original save status is abnormal/unknown";
+      else {
+        try {
+          const bytes = await readFile(file),
+            text = bytes
+              .toString("utf8")
+              .replace(/^\uFEFF/, "")
+              .trim();
+          evidence.bytes = bytes.length;
+          evidence.utf8Bom = bytes.subarray(0, 3).equals(Buffer.from([239, 187, 191]));
+          evidence.base64 = text.length % 4 === 0 && /^[A-Za-z0-9+/=\r\n]+$/.test(text);
+          const decoded = evidence.base64 ? Buffer.from(text, "base64") : bytes;
+          evidence.decodedBytes = decoded.length;
+          try {
+            JSON.parse(decoded.toString("utf8"));
+            evidence.reason =
+              "native JSON is not a Web snapshot; no validated native-to-Web importer exists";
+          } catch {
+            evidence.reason =
+              "base64 decodes to binary, not JSON; no native save decoder/importer exists in current tools";
+          }
+        } catch (error) {
+          evidence.reason = error.message;
+        }
+      }
+      candidates.push(evidence);
+    }
+  }
+  return {
+    root,
+    importAvailable: false,
+    switcher: "切换存档.py only copies save files; it does not decode their contents",
+    candidates,
+    excludedGroups: Object.entries(config.banks || {})
+      .filter(([id]) => ["04", "05", "06", "07", "08"].includes(id))
+      .map(([id, bank]) => ({
+        id,
+        name: bank.name,
+        reason: "explicitly abnormal or uncertain; never used",
+      })),
+    fallback: "unaltered actual stage1 checkpoints and stop=passed optional saves",
+  };
+}
+const originalSaves = await auditOriginalSaves(),
+  previousEvidence = new Map(),
+  previousReceipts = new Set();
+const previous = await optionalRead(values.previous);
+const previousFiles = previous?.batches || (previous?.npcs ? [values.previous] : []);
+for (const file of unique(previousFiles)) {
+  const report = await optionalRead(file);
+  for (const npc of report?.npcs || []) {
+    const key = `${npc.mapId}:${npc.group}:${npc.entityId}`;
+    const accepted = [...(npc.attempts || []), ...(npc.previousAttempts || [])].filter(
+      (attempt) =>
+        attempt.status === "message-confirmed" &&
+        attempt.exactDispatch &&
+        attempt.messages?.length &&
+        attempt.confirmPose?.mapId === npc.mapId &&
+        attempt.targetIdentity?.mapId === npc.mapId &&
+        attempt.targetIdentity?.group === npc.group &&
+        String(attempt.targetIdentity?.entityId) === String(npc.entityId),
+    );
+    const distinct = accepted.filter((attempt) => {
+      const receipt = JSON.stringify([
+        key,
+        attempt.batch || file,
+        npc.script,
+        attempt.startSave,
+        attempt.confirmPose,
+        attempt.messages.map((message) => message.key),
+      ]);
+      if (previousReceipts.has(receipt)) return false;
+      previousReceipts.add(receipt);
+      return true;
+    });
+    if (distinct.length)
+      previousEvidence.set(key, [
+        ...(previousEvidence.get(key) || []),
+        ...distinct.map((attempt) => ({
+          batch: attempt.batch || file,
+          sourceScript: npc.script,
+          ...attempt,
+        })),
+      ]);
+  }
+}
 const began = performance.now(),
   records = [];
 let attempted = 0;
@@ -633,17 +832,31 @@ for (const npc of inventory.npcInteractions) {
     classification,
     status: classification.kind === "pure-message" ? "not-run" : classification.kind,
     attempts: [],
+    previousAttempts: (
+      previousEvidence.get(`${npc.mapId}:${npc.group}:${npc.entityId}`) || []
+    ).filter((attempt) => attempt.sourceScript === npc.script),
     scope:
       "one specific declared NPC entity in one source state; all dialogue/quest branches not assessed",
   };
+  if (record.previousAttempts.length && classification.kind === "pure-message")
+    record.status = "message-confirmed";
   records.push(record);
   if (!selected || classification.kind !== "pure-message") continue;
-  if (attempted >= limit || (performance.now() - began) / 1000 > numberOption("wall-seconds"))
+  if (record.status === "message-confirmed") continue;
+  if (attempted >= limit) {
+    record.status = "not-run-limit";
     continue;
+  }
+  if ((performance.now() - began) / 1000 > numberOption("wall-seconds")) {
+    record.status = "not-run-time-budget";
+    continue;
+  }
   attempted++;
-  const candidates = rankStarts(npc);
+  const { candidates, rejected } = rankStarts(npc);
+  record.stateRejectedStarts = rejected;
+  record.sourceGroupSelectors = npc.groupSelectors || [];
   if (!candidates.length) {
-    record.status = "no-trusted-start";
+    record.status = rejected ? "no-compatible-start-in-catalog" : "no-trusted-start";
     continue;
   }
   for (const start of candidates) {
@@ -691,13 +904,14 @@ const areas = inventory.areas.map((area) => {
   };
 });
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   createdAt: new Date().toISOString(),
   inputs: {
     inventory: relative(values.inventory),
     data: relative(values.data),
     checkpoints: relative(values.checkpoints),
     optional: relative(values.optional),
+    previousReports: previousFiles,
   },
   policy: {
     mode: "boosted-regression-npc",
@@ -710,7 +924,7 @@ const report = {
     acceptance:
       "exact active map/group/entity confirmation dispatch, actual source dialogue and returned control, with no plot/resource/roster changes during that conversation",
     limitation:
-      "Pure-message classification conservatively considers all static branches. A pass covers this entity in this state, never all NPC content or optional quest completion.",
+      "Pure-message classification conservatively considers all static branches. Dedicated cases are deferred, not failed. Previous and current confirmations remain separate. Necessary initializer guards select candidate snapshots only; actual availability and dialogue must still be observed. A pass covers this entity in this state, never all NPC content or optional quest completion.",
   },
   summary: {
     declaredNPCs: records.length,
@@ -719,12 +933,29 @@ const report = {
     scheduledNPCs: attempted,
     attemptedNPCs: records.filter((row) => row.attempts.length).length,
     actualAttempts: records.reduce((sum, row) => sum + row.attempts.length, 0),
+    previouslyConfirmedNPCs: records.filter((row) => row.previousAttempts.length).length,
+    newlyConfirmedNPCs: records.filter((row) =>
+      row.attempts.some((attempt) => attempt.status === "message-confirmed"),
+    ).length,
+    dedicatedCategories: count(
+      records
+        .filter((row) => row.classification.kind === "dedicated-case")
+        .flatMap((row) => row.classification.categories.map((category) => ({ category }))),
+      (row) => row.category,
+    ),
+    failureReasons: count(
+      records.flatMap((row) =>
+        row.attempts.filter((attempt) => attempt.status !== "message-confirmed"),
+      ),
+      (attempt) => attempt.reason || attempt.status,
+    ),
     classifications: count(records, (row) => row.classification.kind),
     results: count(records, (row) => row.status),
     elapsedSeconds: (performance.now() - began) / 1000,
   },
   starts: startStates,
   skippedStarts,
+  originalSaves,
   areas,
   npcs: records,
 };
@@ -742,6 +973,7 @@ const csv = [
     "classification",
     "result",
     "start",
+    "previousEvidence",
     "messageKeys",
     "blockers",
   ],
@@ -757,6 +989,7 @@ for (const row of records)
     row.classification.kind,
     row.status,
     row.attempts.map((attempt) => attempt.startSave).join("|"),
+    row.previousAttempts.map((attempt) => attempt.batch).join("|"),
     unique(
       row.attempts.flatMap((attempt) => (attempt.messages || []).map((message) => message.key)),
     ).join("|"),

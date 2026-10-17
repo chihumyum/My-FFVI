@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { PlayGame } from "./game.js";
 import { activeSavePoint } from "./resources.js";
 import { applyBattleRewards } from "./progression.js";
+import { executeSyscall } from "./syscalls.js";
 
 const read = (path) => JSON.parse(readFileSync(new URL(`../../${path}`, import.meta.url), "utf8"));
 const data = read("build/web-data/data.json"),
@@ -18,6 +19,37 @@ function sourceGame(mapId = 232) {
   game.refreshActors();
   return game;
 }
+
+test("the source coral reset reopens its PR chest group without granting items or resetting unrelated treasure", () => {
+  const game = sourceGame(541),
+    chests = game.entities.filter((entity) => entity.kind === 7);
+  game.banks.TreasureFlag1 = { 5: 1 };
+  for (const chest of chests) {
+    game.banks.TreasureFlag1[chest.treasure.flagId] = 1;
+    game.actor(chest.id).opened = true;
+  }
+  const inventory = structuredClone(game.inventory);
+  (game.banks.ScenarioVariable ??= {})[7] = 19;
+  executeSyscall(game, { locals: [] }, "宝箱リセット：サンゴのかけら");
+  assert.equal(chests.length, 5);
+  for (const chest of chests) {
+    assert.equal(game.banks.TreasureFlag1[chest.treasure.flagId], 0);
+    assert.equal(game.actor(chest.id).opened, false);
+  }
+  assert.equal(game.banks.TreasureFlag1[5], 1);
+  assert.deepEqual(game.inventory, inventory);
+  assert.equal(game.banks.ScenarioVariable[7], 19);
+});
+
+test("Duncan teaches the final PR Blitz without unlocking intermediate level-gated abilities", () => {
+  const game = sourceGame(),
+    sabin = game.unit(6);
+  sabin.abilities = [132];
+  const level = sabin.level;
+  executeSyscall(game, { locals: [] }, "アビリティ習得：夢幻闘舞");
+  assert.deepEqual(sabin.abilities, [132, 139]);
+  assert.equal(sabin.level, level);
+});
 
 test("PR save-point camping requires the live source group, exact occupied cell, layer and visibility", () => {
   const game = sourceGame(19);
