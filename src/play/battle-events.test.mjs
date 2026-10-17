@@ -1,6 +1,48 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { BattleEvents } from "./battle-events.js";
+import { Battle } from "./battle.js";
+import { createCharacter } from "./progression.js";
+import { effectiveCommandIds } from "./battle-commands.js";
+import { readFileSync } from "node:fs";
+
+test("the real Cultists Tower event replaces special commands and its restriction does not leak into the next battle", () => {
+  const source = JSON.parse(
+      readFileSync(new URL("../../build/web-data/battle.json", import.meta.url)),
+    ),
+    data = { ...source, aiPrograms: {} },
+    edgar = createCharacter(data, 5, true);
+  edgar.abilities.push(31);
+  const battle = new Battle({ data, party: [edgar], encounterId: 355, random: () => 0.35 });
+  assert.equal(battle.events.program.name, "sc_b_2024");
+  assert.equal(edgar.magicOnly, true);
+  const ids = battle.commandsFor(0).map((menu) => menu.commandId);
+  assert(ids.includes(7) && ids.includes(3));
+  assert(!ids.includes(1) && !ids.includes(14));
+  edgar.ready = true;
+  assert.equal(battle.choose(0, 1), false);
+  assert.equal(battle.choose(0, "tool:61"), false);
+  assert.equal(battle.choose(0, 31, { side: "enemy", index: 0 }), true);
+  assert(effectiveCommandIds(data, { id: 12, commands: [23, 7, 3], magicOnly: true }).includes(7));
+  assert.deepEqual(
+    effectiveCommandIds(data, { id: 13, customCommands: [1, 14, 3], magicOnly: true }),
+    [25, 7, 3, 2, 5, 6],
+  );
+  assert(
+    effectiveCommandIds(data, {
+      ...edgar,
+      equipmentEffects: [{ id: 61, values: [7, 31, 0] }],
+    }).includes(31),
+  );
+  battle.enemies[0].hp = 0;
+  for (let n = 0; n < 5 && battle.phase === "active"; n++) battle.tick(0.1);
+  assert.equal(battle.phase, "victory");
+  assert.equal(edgar.magicOnly, undefined);
+  edgar.magicOnly = true; // A stale field in an old save must also be cleared.
+  const next = new Battle({ data, party: [edgar], encounterId: 1, random: () => 0.35 });
+  assert.equal(edgar.magicOnly, false);
+  assert(next.commandsFor(0).some((menu) => menu.commandId === 14));
+});
 
 function host(program, enemies = []) {
   const player = { id: 2, side: "player", hp: 100, maxHp: 100, mp: 20, conditions: [] };

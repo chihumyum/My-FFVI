@@ -5,6 +5,9 @@ export function initRole(battle, unit) {
   unit.rageMonster = null;
   unit.danceAbility = null;
   unit.controlledEnemyIndex = null;
+  // This field belongs to the current battle, not the persistent roster.
+  // New arrivals inherit its active event; a new ordinary battle clears it.
+  unit.magicOnly = Boolean(battle.events?.state.magicOnly);
   unit.tranceGauge ??= 255;
   if (unit.id === 8 && !unit.loreAbilities) {
     unit.loreAbilities = [143, 147, 160];
@@ -230,6 +233,7 @@ export function finishRoles(battle, outcome) {
     unit.danceAbility = null;
     unit.controlledEnemyIndex = null;
     unit.tranceSeconds = 0;
+    delete unit.magicOnly;
   }
 }
 

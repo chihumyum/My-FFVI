@@ -6,12 +6,20 @@ import { PlayGame } from "../../src/play/game.js";
 import { Battle } from "../../src/play/battle.js";
 import { findStoryTarget, followTarget } from "../../src/play/story-route.js";
 import { pathTo } from "../../src/play/m1-route.js";
+import {
+  loadNPCReports,
+  mergeNPCReports,
+  npcKey,
+  exactNPCConfirmation,
+  startContextKey,
+} from "./optional-npc-summary.mjs";
 
 const { values } = parseArgs({
   options: {
     data: { type: "string", default: "build/web-data" },
     inventory: { type: "string", default: "build/play/optional-inventory.json" },
     checkpoints: { type: "string", default: "build/play/stage1-checkpoints" },
+    "extra-checkpoints": { type: "string", multiple: true },
     optional: { type: "string", default: "build/play/optional" },
     out: { type: "string", default: "build/play/optional-npc-report.json" },
     areas: { type: "string", default: "all" },
@@ -21,6 +29,8 @@ const { values } = parseArgs({
     seconds: { type: "string", default: "8" },
     "wall-seconds": { type: "string", default: "180" },
     starts: { type: "string", default: "3" },
+    "retry-known": { type: "boolean", default: false },
+    "audit-original-saves": { type: "boolean", default: false },
     previous: { type: "string", default: "build/play/optional-npc-summary.json" },
     "original-saves": {
       type: "string",
@@ -32,7 +42,7 @@ const { values } = parseArgs({
 });
 if (values.help) {
   console.log(
-    "node tools/play/optional-npc-run.mjs [--areas 7,8] [--maps 3,21] [--limit 100] [--same-map] [--starts 3] [--seconds 8] [--wall-seconds 180] [--previous REPORT_OR_SUMMARY.json] [--out REPORT.json]\n" +
+    "node tools/play/optional-npc-run.mjs [--areas 7,8] [--maps 3,21] [--limit 100] [--same-map] [--starts 3] [--seconds 8] [--wall-seconds 180] [--previous REPORT_OR_SUMMARY.json] [--extra-checkpoints DIR] [--out REPORT.json]\n" +
       "Reads actual stage1 checkpoints and optional stop=passed saves; uses only ordinary movement/confirmation.\n" +
       "Classifies every inventory NPC, runs selected pure-message candidates, and writes JSON plus CSV.\n" +
       "A successful row proves one map/group/entity interaction in one real state, never all dialogue branches.",
@@ -174,8 +184,9 @@ function classify(npc) {
 
 const startStates = [],
   skippedStarts = [],
-  startBanks = new Map();
-async function addStart(file, provenance, expectedMap) {
+  startBanks = new Map(),
+  inputBoundaryManifests = [];
+async function addStart(file, provenance, expectedMap, expectedContext = null) {
   let saved;
   try {
     const doc = await read(file);
@@ -214,6 +225,18 @@ async function addStart(file, provenance, expectedMap) {
                     : null;
   if (reason) {
     skippedStarts.push({ file: relative(file), reason });
+    return;
+  }
+  if (
+    expectedContext &&
+    (saved.time !== expectedContext.time ||
+      JSON.stringify([...(saved.groups || [])].sort()) !==
+        JSON.stringify([...(expectedContext.groups || [])].sort()))
+  ) {
+    skippedStarts.push({
+      file: relative(file),
+      reason: "actual snapshot and input-boundary manifest state differ",
+    });
     return;
   }
   const map = await sourceMap(Number(saved.mapId));
@@ -277,6 +300,71 @@ for (const name of (await readdir(values.optional))
     report.endMap,
   );
 }
+
+// Only completed-case manifests authorize the new ordinary-input snapshots.
+// Loose JSON files, partial runs and failed cases are not candidate starts.
+async function addExtraDirectory(directory) {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    skippedStarts.push({ file: relative(directory), reason: error.message });
+    return;
+  }
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.isDirectory()) {
+      await addExtraDirectory(path.join(directory, entry.name));
+      continue;
+    }
+    if (!entry.name.endsWith(".manifest.json")) continue;
+    const file = path.join(directory, entry.name);
+    let manifest, report;
+    try {
+      manifest = await optionalRead(file);
+      report = manifest?.report ? await optionalRead(manifest.report) : null;
+    } catch (error) {
+      skippedStarts.push({
+        file: relative(file),
+        reason: `input-boundary manifest/report is being written or unreadable: ${error.message}`,
+      });
+      continue;
+    }
+    if (
+      manifest?.mode !== "boosted-regression" ||
+      manifest.stop !== "passed" ||
+      !manifest.startSave ||
+      !Array.isArray(manifest.checkpoints) ||
+      report?.stop !== "passed" ||
+      report.mode !== manifest.mode ||
+      report.content !== manifest.caseId ||
+      report.startSave !== manifest.startSave ||
+      !report.executedPrograms?.length
+    ) {
+      skippedStarts.push({
+        file: relative(file),
+        reason: "input-boundary manifest and actual passed optional report are absent/inconsistent",
+      });
+      continue;
+    }
+    const before = startStates.length;
+    for (const checkpoint of manifest.checkpoints)
+      await addStart(
+        checkpoint.file,
+        `actual ordinary-input boundary from passed ${manifest.caseId}; ${relative(file)}`,
+        checkpoint.mapId,
+        checkpoint,
+      );
+    inputBoundaryManifests.push({
+      file: relative(file),
+      caseId: manifest.caseId,
+      stop: manifest.stop,
+      discoveredAt: new Date().toISOString(),
+      declaredCheckpoints: manifest.checkpoints.length,
+      acceptedStarts: startStates.length - before,
+    });
+  }
+}
+for (const directory of values["extra-checkpoints"] || []) await addExtraDirectory(directory);
 
 function guardState(npc, start) {
   if (start.mapId === npc.mapId)
@@ -346,7 +434,6 @@ function rankStarts(npc) {
           (npc.sourcePhases?.includes(start.phase) ? 200 : 0),
       }))
       .sort((a, b) => b.score - a.score || a.start.time - b.start.time)
-      .slice(0, maxStarts)
       .map(({ start }) => start),
   };
 }
@@ -546,8 +633,29 @@ async function attempt(npc, classification, start) {
     },
   });
   observations.set(game, observation);
-  const doc = await read(start.file);
-  await game.restore(structuredClone(doc.snapshot || doc), { testBoost: true });
+  const doc = await read(start.file),
+    saved = doc.snapshot || doc;
+  if (
+    startContextKey({
+      file: start.file,
+      mapId: Number(saved.mapId),
+      time: saved.time,
+      groups: saved.groups,
+    }) !== startContextKey(start) ||
+    JSON.stringify(saved.banks) !== JSON.stringify(startBanks.get(start.file))
+  )
+    return {
+      startSave: start.file,
+      startContext: {
+        file: start.file,
+        mapId: start.mapId,
+        time: start.time,
+        groups: start.groups,
+      },
+      status: "source-start-changed",
+      reason: "real snapshot changed after candidate discovery; not restored or credited",
+    };
+  await game.restore(structuredClone(saved), { testBoost: true });
   observation.phase = "route";
   const baselineBattles = game.battles.length,
     routeEvents = [],
@@ -672,6 +780,7 @@ async function attempt(npc, classification, start) {
   }
   return {
     startSave: start.file,
+    startContext: { file: start.file, mapId: start.mapId, time: start.time, groups: start.groups },
     provenance: start.provenance,
     mode: "boosted-regression-npc",
     status,
@@ -768,53 +877,22 @@ async function auditOriginalSaves() {
     fallback: "unaltered actual stage1 checkpoints and stop=passed optional saves",
   };
 }
-const originalSaves = await auditOriginalSaves(),
-  previousEvidence = new Map(),
-  previousReceipts = new Set();
-const previous = await optionalRead(values.previous);
-const previousFiles = previous?.batches || (previous?.npcs ? [values.previous] : []);
-for (const file of unique(previousFiles)) {
-  const report = await optionalRead(file);
-  for (const npc of report?.npcs || []) {
-    const key = `${npc.mapId}:${npc.group}:${npc.entityId}`;
-    const accepted = [...(npc.attempts || []), ...(npc.previousAttempts || [])].filter(
-      (attempt) =>
-        attempt.status === "message-confirmed" &&
-        attempt.exactDispatch &&
-        attempt.messages?.length &&
-        attempt.confirmPose?.mapId === npc.mapId &&
-        attempt.targetIdentity?.mapId === npc.mapId &&
-        attempt.targetIdentity?.group === npc.group &&
-        String(attempt.targetIdentity?.entityId) === String(npc.entityId),
-    );
-    const distinct = accepted.filter((attempt) => {
-      const receipt = JSON.stringify([
-        key,
-        attempt.batch || file,
-        npc.script,
-        attempt.startSave,
-        attempt.confirmPose,
-        attempt.messages.map((message) => message.key),
-      ]);
-      if (previousReceipts.has(receipt)) return false;
-      previousReceipts.add(receipt);
-      return true;
-    });
-    if (distinct.length)
-      previousEvidence.set(key, [
-        ...(previousEvidence.get(key) || []),
-        ...distinct.map((attempt) => ({
-          batch: attempt.batch || file,
-          sourceScript: npc.script,
-          ...attempt,
-        })),
-      ]);
-  }
-}
+const history = await loadNPCReports([values.previous]),
+  historicalRows = mergeNPCReports(history.reports),
+  historyByNPC = new Map(historicalRows.map((row) => [npcKey(row), row])),
+  previousFiles = history.reports.map(({ file }) => file),
+  originalSaves = values["audit-original-saves"]
+    ? await auditOriginalSaves()
+    : history.reports.at(-1)?.report.originalSaves || null;
+const workOrder = [...inventory.npcInteractions].sort(
+  (a, b) =>
+    Number(Boolean(historyByNPC.get(npcKey(a))?.attemptCount)) -
+    Number(Boolean(historyByNPC.get(npcKey(b))?.attemptCount)),
+);
 const began = performance.now(),
   records = [];
 let attempted = 0;
-for (const npc of inventory.npcInteractions) {
+for (const npc of workOrder) {
   const classification = classify(npc),
     area = areaNames.get(npc.areaId) || null;
   const selected =
@@ -832,9 +910,10 @@ for (const npc of inventory.npcInteractions) {
     classification,
     status: classification.kind === "pure-message" ? "not-run" : classification.kind,
     attempts: [],
-    previousAttempts: (
-      previousEvidence.get(`${npc.mapId}:${npc.group}:${npc.entityId}`) || []
-    ).filter((attempt) => attempt.sourceScript === npc.script),
+    previousAttempts: (historyByNPC.get(npcKey(npc))?.evidence || []).filter((attempt) =>
+      exactNPCConfirmation(npc, attempt),
+    ),
+    historicalAttemptCount: historyByNPC.get(npcKey(npc))?.attemptCount || 0,
     scope:
       "one specific declared NPC entity in one source state; all dialogue/quest branches not assessed",
   };
@@ -852,16 +931,47 @@ for (const npc of inventory.npcInteractions) {
     continue;
   }
   attempted++;
-  const { candidates, rejected } = rankStarts(npc);
+  const { candidates: ranked, rejected } = rankStarts(npc),
+    priorAttempts = historyByNPC.get(npcKey(npc))?.evidence || [],
+    triedContexts = new Set(
+      priorAttempts
+        .filter((attempt) => attempt.startContext)
+        .map((attempt) => startContextKey(attempt.startContext)),
+    ),
+    unknownContextFiles = new Set(
+      priorAttempts.filter((attempt) => !attempt.startContext).map((attempt) => attempt.startSave),
+    ),
+    candidates = ranked
+      .filter(
+        (start) =>
+          values["retry-known"] ||
+          (!triedContexts.has(startContextKey(start)) && !unknownContextFiles.has(start.file)),
+      )
+      .slice(0, maxStarts);
   record.stateRejectedStarts = rejected;
+  record.previouslyTriedStarts =
+    ranked.length -
+    ranked.filter(
+      (start) => !triedContexts.has(startContextKey(start)) && !unknownContextFiles.has(start.file),
+    ).length;
   record.sourceGroupSelectors = npc.groupSelectors || [];
   if (!candidates.length) {
-    record.status = rejected ? "no-compatible-start-in-catalog" : "no-trusted-start";
+    record.status = ranked.length
+      ? "no-untried-start-in-catalog"
+      : rejected
+        ? "no-compatible-start-in-catalog"
+        : "no-trusted-start";
     continue;
   }
   for (const start of candidates) {
     const result = await attempt(npc, classification, start).catch((error) => ({
       startSave: start.file,
+      startContext: {
+        file: start.file,
+        mapId: start.mapId,
+        time: start.time,
+        groups: start.groups,
+      },
       status: "host-error",
       reason: error.stack || error.message,
     }));
@@ -910,6 +1020,7 @@ const report = {
     inventory: relative(values.inventory),
     data: relative(values.data),
     checkpoints: relative(values.checkpoints),
+    extraCheckpoints: (values["extra-checkpoints"] || []).map(relative),
     optional: relative(values.optional),
     previousReports: previousFiles,
   },
@@ -917,8 +1028,13 @@ const report = {
     mode: "boosted-regression-npc",
     filters: { areas: values.areas, maps: values.maps },
     limit,
+    scheduling:
+      "never-attempted entities first; previously tried real start contexts are skipped unless --retry-known is explicit",
     startSelection:
-      "actual stage1 snapshots or actual passed optional -save files; no original/abnormal/unknown import, no invented map or bank changes",
+      "actual stage1 snapshots, actual passed optional -save files or passed-case ordinary-input boundary manifests; no original/abnormal/unknown import, no invented map or bank changes",
+    nativeSaveInspection: values["audit-original-saves"]
+      ? "explicit read-only format audit"
+      : "not performed; any originalSaves metadata is inherited from historical reports",
     controls:
       "ordinary navigation, movement, confirmation and existing frozen battle auto-input; no direct NPC script calls",
     acceptance:
@@ -931,6 +1047,11 @@ const report = {
     trustedStarts: startStates.length,
     skippedStarts: skippedStarts.length,
     scheduledNPCs: attempted,
+    scheduledPreviouslyUnattemptedNPCs: records.filter(
+      (row) => !row.historicalAttemptCount && row.stateRejectedStarts !== undefined,
+    ).length,
+    newlyAttemptedNPCs: records.filter((row) => !row.historicalAttemptCount && row.attempts.length)
+      .length,
     attemptedNPCs: records.filter((row) => row.attempts.length).length,
     actualAttempts: records.reduce((sum, row) => sum + row.attempts.length, 0),
     previouslyConfirmedNPCs: records.filter((row) => row.previousAttempts.length).length,
@@ -955,7 +1076,9 @@ const report = {
   },
   starts: startStates,
   skippedStarts,
+  inputBoundaryManifests,
   originalSaves,
+  missingHistoricalReports: history.missingFiles,
   areas,
   npcs: records,
 };

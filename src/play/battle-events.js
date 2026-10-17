@@ -902,7 +902,7 @@ export class BattleEvents {
       state.magicOnly = true;
       for (const unit of b.players) unit.magicOnly = true;
       this.warning(
-        "Cultists Tower automatic commands choose an actually learned damaging spell; manual command restriction is simplified.",
+        "Cultists Tower command replacement follows SNES InitCmdList with PR command/relic rows; exact native Gogo custom-slot behavior is inferred.",
       );
       return;
     }

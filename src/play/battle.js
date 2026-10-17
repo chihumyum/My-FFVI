@@ -175,6 +175,19 @@ export function calculateDamage(
         percent > 0 ? Math.floor((Math.max(0, room) * 100) / percent) : 0,
       );
   }
+  // Explicit story-test mode skips damage/element strategy. Keep real command
+  // availability, MP costs, misses, source event guards and ordinary formulas;
+  // this override affects only a boosted player's damaging HP hit on enemies.
+  if (
+    actor.testBoost &&
+    actor.side === "player" &&
+    target.side === "enemy" &&
+    !healing &&
+    (physical || power > 0) &&
+    resource === "hp" &&
+    !drain
+  )
+    amount = 9999;
   return finalizeWeaponDamage(weaponPlan, {
     amount: clamp(Math.trunc(amount), -9999, 9999),
     missed: false,

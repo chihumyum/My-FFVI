@@ -36,6 +36,17 @@ export function effectiveCommandIds(data, unit) {
   if (unit.id === 14) return [];
   if (unit.trance) ids = ids.map((id) => (id === 8 ? 9 : id));
   else ids = ids.filter((id) => id !== 9);
+  if (unit.magicOnly)
+    // SNES InitCmdList: Fight becomes Magic, Gau's Rage follows Fight,
+    // Item/Mimic remain, and other authored slots disappear. Apply PR relic
+    // replacements afterwards, so Soul of Thamasa still supplies Dualcast.
+    ids = ids.flatMap((id) =>
+      [3, 25].includes(id)
+        ? [id]
+        : [1, 26].includes(id) || (unit.id === 12 && id === 23)
+          ? [7]
+          : [],
+    );
   const wear =
     unit.equipmentEffects ??
     (unit.equipment ?? []).flatMap((id) => {
@@ -110,7 +121,14 @@ export function commandMenu(battle, index) {
   );
   const ids = effectiveCommandIds(data, unit);
   // Magic is unlocked by learned spells/espers, not forcibly put on Gau/Umaro.
-  if (!unit.magitek && unit.id !== 14 && spellIds.length && !ids.includes(7) && !ids.includes(31))
+  if (
+    !unit.magitek &&
+    !unit.magicOnly &&
+    unit.id !== 14 &&
+    spellIds.length &&
+    !ids.includes(7) &&
+    !ids.includes(31)
+  )
     ids.splice(Math.max(0, ids.length - 2), 0, 7);
   const summon = data.magicStones?.[unit.magicite]?.summonAbilityId;
   return ids.map((commandId) => {

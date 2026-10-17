@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { Battle } from "../../src/play/battle.js";
+import { applyTestBoost, learnNaturalAbilities } from "../../src/play/progression.js";
 
 // Independent boosted battle fixtures using the exported PR programs and
 // formations. This is neither a normal-new-game playthrough nor balance acceptance.
@@ -29,36 +30,40 @@ class ObservedBattle extends Battle {
   }
 }
 
-function run(encounterId, partyIds = [1, 2, 5, 6], expectedOutcome = "victory") {
+// Umaro's actual uncontrolled attacks can resolve permanent Reflect formations
+// under magic-only rules. This fixed smoke roster is not a story-party claim;
+// story routes and Vargas's join boundary are exercised separately below.
+function run(encounterId, partyIds = [1, 2, 5, 14], expectedOutcome = "victory") {
   assert.ok(data.parties[encounterId], `Missing PR formation ${encounterId}`);
   const units = {},
     events = [],
     banks = {};
-  const character = (id) =>
-    (units[id] ??= {
-      ...structuredClone(data.characters[id]),
-      id,
-      level: 99,
-      hp: 9999,
-      maxHp: 9999,
-      mp: 999,
-      maxMp: 999,
-      strength: 255,
-      magic: 255,
-      attack: 255,
-      defense: 250,
-      magicDefense: 250,
-      speed: 255,
-      accuracy: 255,
-    });
+  const character = (id) => {
+    if (!units[id]) {
+      const unit = { ...structuredClone(data.characters[id]), id };
+      applyTestBoost(unit);
+      // This fixture runs at the explicit boosted level. Use PR's natural
+      // learning rows, rather than letting illegal Tools carry magic-only fights.
+      learnNaturalAbilities(unit);
+      units[id] = unit;
+    }
+    return units[id];
+  };
   let ended = 0;
+  let randomState = 1;
+  const random = () => {
+    randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+    return randomState / 4294967296;
+  };
   const battle = new ObservedBattle({
     data,
     encounterId,
     party: partyIds.map(character),
     character,
     banks,
-    random: () => 0.35,
+    // A fixed scalar made high-evasion enemies miss forever. Use the same
+    // reproducible PR-host input stream as the real story regression.
+    random,
     warn: (message) => warnings.add(message),
     onEnd: () => ended++,
     event: (kind, payload) => events.push({ kind, ...payload }),

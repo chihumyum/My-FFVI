@@ -52,6 +52,9 @@ const startFile = path.resolve(
   option("--start", path.join(root, "build/play/stage1-checkpoints/kefka-tower.json")),
 );
 const out = path.resolve(option("--out", path.join(root, "build/play/optional")));
+const mapCheckpointDir = args.includes("--map-checkpoints")
+  ? path.resolve(option("--map-checkpoints"))
+  : null;
 const selected = option("--cases", "all").split(","),
   summarizeOnly = args.includes("--summarize-only"),
   cases = summarizeOnly
@@ -66,6 +69,7 @@ const [data, battleData, saved] = await Promise.all([
 ]);
 data.navigation = await json(path.join(dataRoot, "navigation.json"));
 await mkdir(out, { recursive: true });
+if (mapCheckpointDir) await mkdir(mapCheckpointDir, { recursive: true });
 const maxTicks = Number(option("--ticks", "40000")),
   maxSeconds = Number(option("--seconds", "90"));
 const results = [];
@@ -275,6 +279,36 @@ for (const test of cases) {
   await game.restore(structuredClone(caseSaved.snapshot || caseSaved), { testBoost: true });
   const initialBattles = game.battles.length,
     initialHistory = game.history.length;
+  const checkpointStates = new Set(),
+    checkpointFiles = [];
+  async function recordMapCheckpoint() {
+    if (!mapCheckpointDir || game.busy || game.over || !game.mapId) return;
+    // Capture real stable field states, not source script entry points. The
+    // checkpoint itself is an unmodified normal snapshot. No tasks, flags,
+    // positions or available characters are supplied by this recorder.
+    const groups = [...game.groups],
+      key = JSON.stringify([
+        game.mapId,
+        groups,
+        game.banks.ScenarioFlag1,
+        game.banks.ScenarioFlag2,
+        game.banks.ScenarioFlag3,
+      ]);
+    if (checkpointStates.has(key)) return;
+    checkpointStates.add(key);
+    const file = path.join(
+      mapCheckpointDir,
+      `${test.id}-${String(checkpointFiles.length + 1).padStart(3, "0")}-map${game.mapId}.json`,
+    );
+    await writeFile(file, JSON.stringify(game.snapshot()));
+    checkpointFiles.push({
+      file: path.relative(root, file),
+      mapId: game.mapId,
+      groups,
+      time: game.time,
+      objective: current?.id || null,
+    });
+  }
   game.autoChoice = (host) =>
     storyChoice(host, 0, [
       { id: test.id, title: test.title, objectives: current ? [current] : [] },
@@ -303,6 +337,7 @@ for (const test of cases) {
     }
   };
   recordCompletions(true);
+  await recordMapCheckpoint();
   let stop = "tick-limit",
     lastInput = null,
     ticks = 0;
@@ -346,6 +381,7 @@ for (const test of cases) {
           inputs["fixed-quest-battle-input"] = (inputs["fixed-quest-battle-input"] || 0) + 1;
     if (game.loading) await game.pending;
     recordCompletions();
+    await recordMapCheckpoint();
     if (game.busy) continue;
     current = nextObjective();
     if (!current) {
@@ -440,6 +476,24 @@ for (const test of cases) {
   };
   await writeFile(path.join(out, `${test.id}.json`), JSON.stringify(result, null, 2));
   await writeFile(path.join(out, `${test.id}-save.json`), JSON.stringify(game.snapshot()));
+  if (mapCheckpointDir)
+    await writeFile(
+      path.join(mapCheckpointDir, `${test.id}.manifest.json`),
+      JSON.stringify(
+        {
+          caseId: test.id,
+          startSave: result.startSave,
+          report: path.relative(root, path.join(out, `${test.id}.json`)),
+          stop,
+          mode: "boosted-regression",
+          method:
+            "Unmodified PlayGame snapshots captured only after pending map loads settle and game.busy is false. No flag, position or event-task writes. Each map/groups/persistent ScenarioFlag state is captured once; these are ordinary-input boundaries, not mid-scene saves.",
+          checkpoints: checkpointFiles,
+        },
+        null,
+        2,
+      ),
+    );
   results.push(result);
   console.log(
     JSON.stringify({

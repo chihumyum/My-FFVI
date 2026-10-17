@@ -60,7 +60,7 @@ PR 界面使用原版蓝色窗口与九宫格边框、手形光标、71 个图�
 
 历史渲染对照工具仅在开发服务器的 `/render-lab.html` 提供：`node tools/play/render-fixtures.mjs` 从真实回归检查点生成五个用例，同时需要已忽略的 `build/play/reference-canvas.js` 旧参考。它不属于新游戏或静态包；现有对照截图为 `build/play/ui/foundation-pixi/`。新旧可见内容相同，视野从旧 480×320 改为 PR 的 320×180；战斗原画改为 1:1 并中心裁切背景，去掉原先拉伸。Shake 的幅度/方向、前后图层分类和 ScreenEffect 的马赛克/波动参数仍为日志近似。
 
-「剧情测试」使用 Lv99、999999 HP、攻击和魔力均为 999999 的明确强化队伍，以快速越过高防御或即死战；存档与普通模式分开，普通属性不受影响。「自动行走」只做回归，不增加购物、练级、补给、MP 预算等策略。普通跑法打不过时只修真正的游戏 bug；策略问题由强化模式继续，平衡交给实玩。
+「剧情测试」使用 Lv99、999999 HP、攻击和魔力均为 999999 的明确强化队伍；一般物理/魔法的敌方 HP 伤害公式结果设为 9999，跳过防御和属性克制策略，特殊武器、固定/比例与吸收类效果仍按原逻辑。指令、耗魔、未命中和剧情战结束条件仍生效。存档与普通模式分开，普通公式不受影响。「自动行走」只做回归，不增加购物、练级、补给、MP 预算等策略。普通跑法打不过时只修真正的游戏 bug；策略问题由强化模式继续，平衡交给实玩。
 
 强化新游戏到结局回归：
 
@@ -74,7 +74,11 @@ PLAY_TEST_BOOST=1 npm run play:through
 
 `npm run play:optional -- --cases all` 从真实 Falcon 检查点独立跑各项强化支线；`--start` 可指定另一个真实存档，`--cases mog,cyan,gogo` 可筛选。结果表在 `build/play/optional/results.csv`，每项只保存最新报告和存档；`--summarize-only` 只重新汇总已有证据，验收目标变动后旧结果不会自动算通过。影忍用源剧情仍允许等待生还的真实崩坏前存档连续推进，不切换到已死亡的崩坏后存档；依赖洛克的支线使用真正的不死鸟洞窟完成存档。测试只使用普通移动、对话、组队和固定剧情交互，不写剧情旗标或直接调用剧情脚本，不增加购物、练级或补给策略。吞空巨虫用实际 PR 遇敌格触发，固定防御等待源 AI 吸入；全员被吞后由原版 `sc_e_0832` 进入虫体，随后通过原剧情招募格格。世界地图遇敌按原版逐格 `encount_grid`，不再用规则矩形近似岛屿等特殊区域。开发服务器可用 `?checkpoint=gogo-save&checkpointSet=optional` 查看真实支线结果存档；这个界面入口不计剧情覆盖。
 
+加 `--map-checkpoints build/play/optional-map-checkpoints` 会在真实游玩返回空闲输入时，按地图、活动组和剧情旗标状态保存原样快照及每项支线的清单，跳过过场、战斗和加载过程；无需为每个 NPC 单独搭起点。
+
 `npm run play:optional-npcs -- --limit 573 --same-map` 从真实检查点和已通过支线存档，批量走到纯消息 NPC 身前交谈，输出 `build/play/optional-npc-report.json` 与地区 CSV；去掉 `--same-map` 可尝试普通跨图移动。按实际地图、活动组和实体分别记录确认，付费、菜单、剧情状态写入及不可达路线另列，不能用同名脚本覆盖替代。固定验收路线只在 `tools/play` 描述现有门口、停放载具和原版选择，不改变自动跑法策略。
+
+NPC 批次可加 `--extra-checkpoints build/play/optional-map-checkpoints` 读取已通过支线清单中的真实空闲存档。`npm run play:optional-npc-summary` 重建汇总、逐实体 CSV 和地区剩余清单；新增批次用 `-- --report <批次.json>` 指定，可重复传入，历史尝试会保留并去重。
 
 ```sh
 npm test

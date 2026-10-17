@@ -33,6 +33,22 @@ test("PR beam power is used with SNES magic scaling and elemental priority", () 
   );
 });
 
+test("explicit story-test damage bypasses affinity strategy while ordinary absorption and healing remain intact", () => {
+  const enemy = { ...target, side: "enemy", elementResistances: { 1: 4 } };
+  assert.equal(calculateDamage(actor, enemy, fire, () => 0.5).amount, -169);
+  assert.equal(calculateDamage({ ...actor, testBoost: true }, enemy, fire, () => 0.5).amount, 9999);
+  assert.equal(
+    calculateDamage({ ...actor, testBoost: true }, { ...enemy, side: "player" }, fire, () => 0.5)
+      .amount,
+    -169,
+  );
+  const cure = { ...fire, kind: "heal", elements: [] };
+  assert.equal(
+    calculateDamage({ ...actor, testBoost: true }, enemy, cure, () => 0.5).amount,
+    calculateDamage(actor, enemy, cure, () => 0.5).amount,
+  );
+});
+
 test("PR initial status providers apply to monsters and Float supplies its Earth immunity", () => {
   const data = {
     parties: { 1: { members: [{ monsterId: 1 }] } },
