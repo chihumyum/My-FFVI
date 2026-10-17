@@ -4,6 +4,7 @@ import { SaveLibrary, renderSaveSlots } from "./saves.js";
 import { GameRenderer } from "./renderer.js";
 import { GameUI, createWidget } from "./ui.js";
 import { WebAudioPlayer } from "./audio.js";
+import { OperaHost } from "./opera-host.js";
 import {
   withPresentation,
   observingAudioInstruction,
@@ -43,6 +44,7 @@ let data,
   autosavePending = false,
   titlePending = false;
 const audio = new WebAudioPlayer();
+const opera = new OperaHost(renderer, audio);
 renderer.onBattleSound = (id) =>
   audio
     .command({ name: "PlaySE", i: [id], r: [], s: [] })
@@ -57,10 +59,11 @@ function presentation(command) {
     renderer.event(command);
     return;
   }
-  const result = audio.command(command);
+  const result = opera.command(command);
   result?.catch?.((error) => audio.warn(error.message));
 }
 function event(e) {
+  if (e.kind === "opera" && !auto && !walking) opera.play(e.stage);
   if (e.kind === "battle-message")
     battleDialogue = {
       text: presentText(game, e.text)
@@ -76,7 +79,7 @@ function event(e) {
     const op = engine?.program?.ops?.[engine.pc - 1];
     if (op && isAudioInstruction(op[0]))
       presentation({ name: op[0], i: op[1], r: op[2], s: op[3] });
-    else audio.event(e)?.catch?.((error) => audio.warn(error.message));
+    else opera.event(e)?.catch?.((error) => audio.warn(error.message));
   }
   if (e.kind === "battle-effect") {
     if (isAudioInstruction(e.name)) presentation(e);
@@ -93,12 +96,14 @@ function event(e) {
   }
 }
 async function start(saved = null, testBoost = false) {
+  opera.reset();
   renderer.resetPresentation();
   battleDialogue = null;
   $("new").disabled = true;
   try {
     repository = new WebData(webIndexURL());
     ({ data, battleData } = await repository.open(saved));
+    opera.setRepository(repository);
     renderer.setAssets(repository.index.assets.images, repository.baseURL);
     await loadBattlePresentation(repository, renderer);
     audio.setAssets(repository.index.assets.audio, repository.baseURL);
@@ -235,6 +240,7 @@ $("close").onclick = () => {
 };
 const keys = new Set();
 addEventListener("keydown", (e) => {
+  if (opera.handleKey(e)) return;
   if (ui.handleKey(e)) return;
   if (game?.nameInput) {
     if (e.key === "Enter") $("name-confirm").click();
@@ -483,9 +489,13 @@ function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   if (started && game) {
-    if (!paused && (!battleDialogue || auto)) {
+    if (!paused && !opera.busy && (!battleDialogue || auto)) {
       for (let n = 0; n < (auto ? (game.testBoost ? 16 : 4) : 1); n++) {
         game.tick(dt, { auto });
+        if (opera.busy) {
+          keys.clear();
+          break;
+        }
         if (walking) {
           walkClock += dt;
           if (walkClock >= 0.1) {
@@ -581,10 +591,12 @@ function loop(now) {
     } else ui.setDialogue(null);
   }
   ui.render();
+  opera.update(dt);
   renderer.render(started ? game : null, data, battleData);
   requestAnimationFrame(loop);
 }
 await loadPresentation(new WebData(webIndexURL()), renderer, ui);
+opera.fontFamily = ui.presentation.fontFamily || opera.fontFamily;
 if (import.meta.env.DEV) {
   // These isolated UI fixtures restore real regression checkpoints. They do not
   // write plot flags or count as story coverage, and are removed from production.
@@ -613,7 +625,14 @@ if (import.meta.env.DEV) {
         );
       game.dialogue = { text: game.text(key), speaker: data.speakers[key] || speaker, elapsed: 0 };
     } else if (panel === "shop") openShop(game, Number(params.get("shop")) || 1);
-    else if (panel === "battle")
+    else if (panel === "opera") {
+      const script = params.get("script") || "sc_e_0318_1";
+      if (["sc_e_0315_1", "sc_e_0315_3", "sc_e_0318_1", "sc_e_0330_1"].includes(script)) {
+        const id = data.byMap[game.mapId]?.[script] ?? data.global[script];
+        await repository.ensurePrograms([String(id)]);
+        game.startScript(script);
+      }
+    } else if (panel === "battle")
       game.encounter(Number(params.get("formation")) || 1, null, { waitFor: null }, {});
     $("location").textContent = `界面用例 · ${checkpoint} · ${panel || "地图"}（不计剧情覆盖）`;
   }

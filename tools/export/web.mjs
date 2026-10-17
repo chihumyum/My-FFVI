@@ -19,6 +19,7 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
   const particles = await read(path.join(dataRoot, "particles.json"));
   const fieldPresentation = await read(path.join(dataRoot, "field-presentation.json"));
   const shaders = await read(path.join(dataRoot, "shaders.json"));
+  const opera = await read(path.join(dataRoot, "opera.json"));
   const shaderMaterials = Object.fromEntries(
     Object.entries(shaders.materials).filter(
       ([, material]) => material.shader !== "Last/LastEffectMaster",
@@ -127,6 +128,7 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
     presentation: await payload(presentation, "presentation"),
     battlePresentation: await payload(battlePresentation, "battle-presentation"),
     fieldPresentation: await payload(fieldPresentation, "field-presentation"),
+    opera: await payload(opera, "opera"),
     shaders: await payload(
       {
         ...shaders,

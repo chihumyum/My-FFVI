@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" />
+  <title>FFVI · 歌剧演出验收</title>
+  <style>
+    body {
+      background: #080e1b;
+      color: white;
+      font: 14px system-ui;
+      margin: 10px;
+    }
+    button,
+    input {
+      padding: 6px;
+      margin: 4px;
+    }
+    #surface {
+      max-width: 1280px;
+    }
+    canvas {
+      image-rendering: pixelated;
+    }
+    pre {
+      white-space: pre-wrap;
+      font-size: 12px;
+    }
+  </style>
+  <h1>FFVI · PR 歌剧演出</h1>
+  <p>原始 Timeline / 相机 / 舞台网格 / 演员纹理；这是独立表现预览，不计剧情覆盖。</p>
+  <div id="stages"></div>
+  <label>片段内秒数 <input id="time" type="number" value="30" min="0" step="1" /></label>
+  <button id="sample">显示源时间点</button>
+  <button id="play">完整播放（原曲）</button>
+  <button id="pause">暂停 / 继续</button>
+  <button id="skip">跳过</button>
+  <p id="status">正在载入…</p>
+  <div id="surface"><canvas id="screen"></canvas></div>
+  <pre id="metrics"></pre>
+  <script type="module" src="./opera-lab.js"></script>
+</html>

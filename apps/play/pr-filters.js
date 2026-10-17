@@ -584,8 +584,15 @@ export class PRFilter extends Filter {
       ["_GradientTex", "uGradientTexture", "uGradientRect"],
       ["_RampTex", "uRampTexture", "uRampRect"],
       [u.uMode === 8 ? "_SubTex" : "_MainTex2", "uSecondTexture", "uSecondRect"],
-    ])
+    ]) {
       if (needed[name]) ready = this._texture(name, resource, rect) && ready;
+      else {
+        // WebGL still binds active sampler uniforms when a feature flag is off.
+        // Do not retain an atlas source that the shared LRU may have evicted.
+        this.resources[resource] = Texture.WHITE.source;
+        u[rect].set([0, 0, 1, 1]);
+      }
+    }
     if (Object.keys(f).some((name) => /^_Override|^_TargetSkin|^_HollowOut/.test(name) && f[name]))
       this._warning(
         "palette",

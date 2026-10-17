@@ -8,6 +8,7 @@ import { compileBattlePresentation } from "./battle-presentation.mjs";
 import { compileParticles } from "./particles.mjs";
 import { compileFieldPresentation } from "./field-presentation.mjs";
 import { compileShaders } from "./shaders.mjs";
+import { compileOpera } from "./opera.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
 const args = process.argv.slice(2),
   option = (name) => {
@@ -55,6 +56,7 @@ const battlePresentationCounts = await compileBattlePresentation(out);
 const { summary: particleCounts } = await compileParticles(out);
 const fieldCounts = await compileFieldPresentation(out);
 const { summary: shaderCounts } = await compileShaders(out, { game: source });
+const { summary: operaCounts } = await compileOpera(out, { game: source, python });
 await prepareWeb({ dataRoot: out });
 const categories = {};
 async function scan(directory, prefix = "") {
@@ -118,6 +120,7 @@ const manifest = {
     particles: { ...particleCounts, bytes: (await stat(path.join(out, "particles.json"))).size },
     field: { ...fieldCounts, bytes: (await stat(path.join(out, "field-presentation.json"))).size },
     shaders: { ...shaderCounts, bytes: (await stat(path.join(out, "shaders.json"))).size },
+    opera: { ...operaCounts, bytes: (await stat(path.join(out, "opera.json"))).size },
   },
   totalBytes: Object.values(categories).reduce((sum, row) => sum + row.bytes, 0),
   seconds: (Date.now() - start) / 1000,
