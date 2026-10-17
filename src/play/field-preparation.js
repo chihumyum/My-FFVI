@@ -2,8 +2,9 @@ import { prepareBattleReadiness as prepareTrainingInput } from './training-input
 import { routeToStory, encountersForInput } from './navigation.js';
 import { shopStock } from './event-systems.js';
 import { canEquip, equipmentScore, treasureOpened } from './resources.js';
-import { equipmentDefinition } from './progression.js';
+import { equipmentDefinition, abilityMpCost } from './progression.js';
 import { functionsFor, conditionIdsForGroup } from './ability-effects.js';
+import { observePreparationTravel, preparationRoute } from './preparation-route.js';
 
 // A player policy, not a game mechanic: all preparation goes through ordinary
 // equipment, magic, item and shop inputs and spends the same finite resources.
@@ -16,8 +17,30 @@ const inventoryItems = game => Object.entries(game.inventory).filter(([, count])
 const pickupOperations = new Set(['Nop', 'Blank', 'Exit', 'Return', 'Call', 'Jump', 'Branch', 'Wait', 'PlaySE', 'Msg',
   'MsgClose', 'MsgFinishWait', 'MsgFinishWaitAll', 'GetItem', 'SetFlag', 'SetEntities', 'SetPuppet', 'ExecPuppet', 'FinishPuppet', 'Hide', 'Show']);
 const healingSpells = (game, unit) => [...new Set([...(unit.abilities || []), ...(unit.equipmentAbilities || [])])]
-  .map(id => game.battleData.abilities?.[id]).filter(ability => ability?.kind === 'heal' && ability.power > 0 && ability.mp <= unit.mp)
-  .sort((a, b) => a.mp - b.mp);
+  .map(id => game.battleData.abilities?.[id]).filter(ability => ability?.kind === 'heal' && ability.power > 0 && abilityMpCost(unit, ability) <= unit.mp)
+  .sort((a, b) => abilityMpCost(unit, a) - abilityMpCost(unit, b));
+const spellsFor = (game, unit) => [...new Set([...(unit.abilities || []), ...(unit.equipmentAbilities || [])])]
+  .map(id => game.battleData.abilities?.[id]).filter(ability => ability && abilityMpCost(unit, ability) > 0);
+function magicNeeds(game, preparation = null) {
+  const battles = Math.min(6, Math.max(1, preparation?.encounterCount || 1));
+  return game.party.map(unit => {
+    const spells = spellsFor(game, unit);
+    if (!spells.length || !(unit.maxMp > 0)) return null;
+    const costs = spells.filter(ability => ability.power > 0 || ability.kind === 'heal')
+      .map(ability => abilityMpCost(unit, ability)).sort((a, b) => a - b);
+    const cost = costs.length ? costs[Math.floor(costs.length / 2)] : Math.min(...spells.map(ability => abilityMpCost(unit, ability)));
+    // These are bounded player reserves, not game balance changes. Expensive
+    // learned spells and source battle chains need more than one 50 MP Ether.
+    const floor = Math.min(unit.maxMp, Math.ceil(Math.max(unit.maxMp * (preparation ? Math.min(.9, .65 + battles * .1) : .35),
+      cost * (preparation ? 6 + battles * 2 : 4))));
+    const reserve = Math.max(unit.maxMp * (preparation ? Math.min(.8, .25 + battles * .15) : .25), cost * (4 + battles * 2));
+    return { unit, floor, reserve, healer: spells.some(ability => ability.kind === 'heal' && ability.power > 0) };
+  }).filter(Boolean);
+}
+const currentPreparation = game => game.bossPreparation?.objective === game.storyObjective?.id ? game.bossPreparation : null;
+const mpRecovery = (game, item) => functionsFor(game.battleData, item.menu_function_group_id)
+  .some(fn => fn.id === 1 && fn.values[1] === 3) ? item.standard_value : 0;
+const escapeItem = (game, item) => functionsFor(game.battleData, item.battle_function_group_id).some(fn => fn.id === 16);
 
 function nearbyShopGroups(game) {
   const maps = game.data.navigation?.maps || {};
@@ -55,7 +78,7 @@ export function preparationPurchases(game, stock = game.shop?.stock || []) {
   }
   const size = Math.max(1, game.party.length), wanted = [], products = stock.filter(product => product.price > 0);
   const hp = game.party.reduce((sum, unit) => sum + unit.maxHp, 0) / size;
-  const casters = game.party.filter(unit => (unit.abilities || []).some(id => (game.battleData.abilities?.[id]?.mp || 0) > 0));
+  const magic = magicNeeds(game, preparation);
   const required = game.storyObjective?.buy;
   const requiredItem = required && (itemOf(game, required.contentId) || equipmentDefinition(game.battleData, required.contentId));
   const reserved = required ? Math.max(0, (required.count || 1) - (game.inventory[required.contentId] || 0)) *
@@ -82,11 +105,22 @@ export function preparationPurchases(game, stock = game.shop?.stock || []) {
   const healing = healingProducts.sort((a, b) => a.price / Math.min(hp * .65, a.item.standard_value) -
     b.price / Math.min(hp * .65, b.item.standard_value))[0];
   add(healing, Math.max(4, size * (preparation ? 4 : 2)));
-  const lowMagic = casters.some(unit => unit.mp < unit.maxMp * .35);
+  const escapes = itemProducts.filter(product => escapeItem(game, product.item)).sort((a, b) => a.price - b.price);
+  const heldEscapes = inventoryItems(game).filter(({ item }) => escapeItem(game, item))
+    .reduce((sum, { contentId }) => sum + game.inventory[contentId], 0);
+  if (escapes[0]) add(escapes[0], (game.inventory[escapes[0].id] || 0) + Math.max(0, (preparation ? 4 : 2) - heldEscapes));
+  const lowMagic = magic.some(({ unit, floor }) => unit.mp < floor);
   const tent = itemProducts.filter(product => product.item.menu_function_group_id === 11).sort((a, b) => a.price - b.price)[0];
-  if (casters.length && tent && (lowMagic || budget >= tent.price * 3)) add(tent, 1, lowMagic ? 200 : budget * .5);
-  const ether = itemProducts.filter(product => product.item.menu_function_group_id === 3).sort((a, b) => a.price - b.price)[0];
-  if (casters.length && (lowMagic || budget >= 6000)) add(ether, 1, Math.max(500, budget * .35));
+  if (magic.length && tent && (lowMagic || budget >= tent.price * 3)) add(tent, 1, lowMagic ? 200 : budget * .5);
+  const ether = itemProducts.filter(product => product.item.menu_function_group_id === 3 && mpRecovery(game, product.item) > 0)
+    .sort((a, b) => a.price / mpRecovery(game, a.item) - b.price / mpRecovery(game, b.item))[0];
+  if (magic.length && ether && (lowMagic || budget >= 6000)) {
+    const heldRecovery = inventoryItems(game).filter(({ item }) => item.menu_function_group_id === 3)
+      .reduce((sum, { contentId, item }) => sum + game.inventory[contentId] * mpRecovery(game, item), 0);
+    const wantedRecovery = magic.reduce((sum, need) => sum + need.reserve, 0);
+    const target = (game.inventory[ether.id] || 0) + Math.ceil(Math.max(0, wantedRecovery - heldRecovery) / mpRecovery(game, ether.item));
+    add(ether, Math.min(32, target), Math.max(500, budget * .25));
+  }
   const requiredCopies = new Map();
   for (const unit of game.party) for (let slot = 0; slot < 4; slot++) {
     const old = equipmentScore(game.battleData, unit.equipment?.[slot], slot);
@@ -115,10 +149,11 @@ export function prepareBattleReadiness(game, objective, input, pathTo) {
   if (game.bossPreparation?.objective !== objective.id) game.bossPreparation = null;
   let preparation = game.bossPreparation;
   if (!preparation) {
-    const bosses = encountersForInput(game, input).flatMap(id => game.battleData.parties?.[id]?.members || [])
+    const encounters = encountersForInput(game, input);
+    const bosses = encounters.flatMap(id => game.battleData.parties?.[id]?.members || [])
       .map(member => game.battleData.monsters?.[member.monsterId]).filter(enemy => enemy?.boss);
     if (!bosses.length) return null;
-    preparation = game.bossPreparation = { objective: objective.id, visitedShops: [],
+    preparation = game.bossPreparation = { objective: objective.id, visitedShops: [], encounterCount: encounters.length,
       shopGroups: nearbyShopGroups(game), gilReserve: Math.floor(game.gil * .2) };
   }
   if (preparation.finished) return null;
@@ -142,7 +177,8 @@ export function prepareBattleReadiness(game, objective, input, pathTo) {
   for (const shops of [supplyGroups, equipmentVisits < 2 ? equipmentGroups : []]) {
     if (!shops.length) continue;
     const route = routeToStory(game, { shops }, pathTo);
-    if (!['no-route', 'no-input'].includes(route.status)) return { ...route, training: true, preparation: 'shopping' };
+    const guarded = preparationRoute(game, route, 'shopping', objective.id);
+    if (guarded) return { ...guarded, training: true, preparation: 'shopping' };
   }
   preparation.finished = true;
   return null;
@@ -151,6 +187,7 @@ export function prepareBattleReadiness(game, objective, input, pathTo) {
 export function prepareFieldInput(game, pathTo) {
   game.autoPurchase ??= preparationPurchases;
   if (game.busy || game.testBoost || !game.control || !game.party.length) return null;
+  observePreparationTravel(game);
   const signature = JSON.stringify([game.party.map(unit => unit.id), game.battles.length, game.inventory]);
   if (signature !== game.preparedInventory) {
     for (const unit of game.party) game.optimizeEquipment?.(unit.id);
@@ -208,11 +245,51 @@ export function prepareFieldInput(game, pathTo) {
           game.useAbility?.(id, caster.id, target.id)) return { status: 'prepare', action: 'cure-condition' };
       }
   }
-  const lowMagic = game.party.some(unit => unit.hp > 0 && unit.mp < unit.maxMp * 0.2 &&
-    (unit.abilities || []).some(id => game.battleData.abilities?.[id]?.mp > 0));
-  if (lowMagic && game.canCamp?.()) {
-    const tent = items.find(({ item }) => item.menu_function_group_id === 11);
-    if (tent && game.useItem(tent.contentId, game.party[0].id)) return { status: 'prepare', action: 'camp' };
+  const magic = magicNeeds(game, currentPreparation(game));
+  const lowMagic = magic.some(({ unit, floor }) => unit.hp > 0 && unit.mp < floor);
+  const timer = game.banks.PlaySystems?.timer;
+  const timed = timer && !timer.expired && !timer.dispatched;
+  if (lowMagic) {
+    // A reachable bed on this map is cheaper than spending several Ethers.
+    // Do not leave a timed event to seek a service; immediate items still work.
+    if (!timed && game.data.navigation) {
+      const bed = routeToStory(game, { rest: 'mp' }, pathTo);
+      if (bed.target && !bed.target.destination && [5, 6, 8, 17].includes(bed.target.kind)) {
+        const guarded = preparationRoute(game, bed, 'rest');
+        if (guarded) return guarded;
+      }
+    }
+    const camp = items.find(({ item }) => item.menu_function_group_id === 11),
+      bag = items.find(({ item }) => item.menu_function_group_id === 10);
+    if (game.canCamp?.()) {
+      if (camp && game.useItem(camp.contentId, game.party[0].id)) return { status: 'prepare', action: 'camp' };
+      const target = magic.find(({ unit, floor }) => unit.hp > 0 && unit.mp < floor)?.unit;
+      if (bag && target && game.useItem(bag.contentId, target.id)) return { status: 'prepare', action: 'camp' };
+    } else if (!timed && (camp || bag)) {
+      const points = (game.entities || []).filter(entity => entity.kind === 9)
+        .map(entity => ({ ...entity, ...game.actors.get(String(entity.id)) }))
+        .filter(point => point.visible !== false && point.savePoint?.visible !== false &&
+          (point.savePoint?.actionId === undefined || point.savePoint.actionId === 7))
+        .map(target => ({ status: 'target', target, route: pathTo(game, target) }))
+        .filter(input => input.route).sort((a, b) => a.route.length - b.route.length);
+      if (points[0]) {
+        const guarded = preparationRoute(game, points[0], 'rest');
+        if (guarded) return guarded;
+      }
+    }
+    // Give a nearly empty healer enough MP before spending the party's HP
+    // supplies. Each attempt goes through useItem and consumes real stock.
+    const targets = magic.filter(({ unit, floor }) => unit.hp > 0 && unit.mp < floor)
+      .sort((a, b) => Number(b.healer) - Number(a.healer) || a.unit.mp / a.unit.maxMp - b.unit.mp / b.unit.maxMp);
+    for (const { unit } of targets) {
+      const ethers = items.filter(({ item }) => [3, 4].includes(item.menu_function_group_id) && mpRecovery(game, item) > 0)
+        .sort((a, b) => Number(a.item.menu_function_group_id === 4) - Number(b.item.menu_function_group_id === 4) ||
+          Math.max(0, mpRecovery(game, a.item) - (unit.maxMp - unit.mp)) -
+          Math.max(0, mpRecovery(game, b.item) - (unit.maxMp - unit.mp)) ||
+          mpRecovery(game, a.item) - mpRecovery(game, b.item));
+      for (const ether of ethers) if (game.useItem(ether.contentId, unit.id))
+        return { status: 'prepare', action: 'restore-mp' };
+    }
   }
   for (const target of game.party) {
     if (target.hp <= 0) {
@@ -234,13 +311,7 @@ export function prepareFieldInput(game, pathTo) {
         Math.abs((target.maxHp - target.hp) - b.item.standard_value))[0];
     if (potion && game.useItem(potion.contentId, target.id)) return { status: 'prepare', action: 'heal' };
   }
-  for (const caster of game.party.filter(unit => unit.hp > 0 && unit.mp < unit.maxMp * 0.2)) {
-    if (!(caster.abilities || []).some(id => game.battleData.abilities?.[id]?.mp > 0)) continue;
-    const ether = items.find(({ item }) => [3, 4].includes(item.menu_function_group_id));
-    if (ether && game.useItem(ether.contentId, caster.id)) return { status: 'prepare', action: 'restore-mp' };
-  }
-  const timer = game.banks.PlaySystems?.timer;
-  if (timer && !timer.expired && !timer.dispatched) return null;
+  if (timed) return null;
   // The original field data includes ordinary chests beside the story path.
   // Their declarative rewards are ordinary inputs, not test supplies. Open
   // only reachable, source-active boxes and let their normal dialogue/flag
@@ -293,7 +364,10 @@ export function prepareFieldInput(game, pathTo) {
       if (route) candidates.push({ status: 'target', target: actual, route });
     }
     candidates.sort((a, b) => a.route.length - b.route.length);
-    if (candidates[0]) return candidates[0];
+    if (candidates[0]) {
+      const route = preparationRoute(game, candidates[0], 'shopping');
+      if (route) return route;
+    }
   }
   if (!game.map?.worldTerrain && game.gil >= 200 && game.data.navigation &&
       (game.visited || []).some(id => game.data.navigation.maps[id]?.world)) {
@@ -302,18 +376,26 @@ export function prepareFieldInput(game, pathTo) {
       .reduce((sum, entry) => sum + game.inventory[entry.contentId], 0);
     const revivalCount = items.filter(({ item }) => item.menu_function_group_id === 2)
       .reduce((sum, entry) => sum + game.inventory[entry.contentId], 0);
-    if (healingCount < game.party.length || revivalCount < 2) {
+    const heldMp = items.filter(({ item }) => item.menu_function_group_id === 3)
+      .reduce((sum, { contentId, item }) => sum + game.inventory[contentId] * mpRecovery(game, item), 0);
+    const needsEther = magic.length && heldMp < magic.reduce((sum, need) => sum + need.reserve, 0) * .5;
+    const needsEscape = items.filter(({ item }) => escapeItem(game, item))
+      .reduce((sum, { contentId }) => sum + game.inventory[contentId], 0) < 2;
+    if (healingCount < game.party.length || revivalCount < 2 || needsEther || needsEscape) {
       const maps = game.data.navigation.maps, area = maps[game.mapId]?.areaId;
       const groups = [...new Set(Object.values(maps).filter(map => map.areaId === area)
         .flatMap(map => map.entries.map(entry => entry.productGroup)).filter(Boolean))];
       const shops = groups.filter(group => preparationPurchases(game, shopStock(game, group)).some(request => {
         const item = itemOf(game, request.contentId);
         return item?.menu_function_group_id === 1 && healingCount < game.party.length ||
-          item?.menu_function_group_id === 2 && revivalCount < 2;
+          item?.menu_function_group_id === 2 && revivalCount < 2 ||
+          item?.menu_function_group_id === 3 && needsEther ||
+          item && escapeItem(game, item) && needsEscape;
       }));
       if (shops.length) {
         const route = routeToStory(game, { shops }, pathTo);
-        if (!['no-route', 'no-input'].includes(route.status)) return route;
+        const guarded = preparationRoute(game, route, 'shopping');
+        if (guarded) return guarded;
       }
     }
   }
@@ -321,7 +403,8 @@ export function prepareFieldInput(game, pathTo) {
     needsHealing = game.party.some(unit => unit.hp > 0 && unit.hp < unit.maxHp * 0.4);
   if ((needsHealing || lowMagic) && game.data.navigation) {
     const input = routeToStory(game, { rest: lowMagic ? 'mp' : 'hp' }, pathTo);
-    if (input.status !== 'no-route') return input;
+    const route = preparationRoute(game, input, 'rest');
+    if (route) return route;
   }
   if ((needsRevival || needsHealing) && game.gil >= 50 && game.data.navigation) {
     const usableGroups = new Set((game.data.systemTables?.product || []).filter(product => {
@@ -331,7 +414,8 @@ export function prepareFieldInput(game, pathTo) {
     }).map(product => Number(product.group_id)));
     if (usableGroups.size) {
       const input = routeToStory(game, { shops: [...usableGroups] }, pathTo);
-      if (input.status !== 'no-route') return input;
+      const route = preparationRoute(game, input, 'shopping');
+      if (route) return route;
     }
   }
   return null;

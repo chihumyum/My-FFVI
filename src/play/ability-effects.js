@@ -330,7 +330,9 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
       if(kind==='heal' && target.undead && resource==='hp')n=-n;
       if(host.forceFieldElements?.includes(ability.elements?.[0]))n=0;
       if(n>0 && kind==='physical' && targetCount===1 && (ability.id===1 || process==='StealAttack') && host.golemShield?.side===target.side && host.golemShield?.hp>0){const block=Math.min(n,host.golemShield.hp);host.golemShield.hp-=block;n-=block;}
-      apply(n,resource);
+      const actual=apply(n,result.resource||resource);
+      if(result.drain){const key=result.resource||resource,max=key==='mp'?'maxMp':'maxHp';
+        actor[key]=clamp((actor[key]||0)+Math.trunc(actual*(result.drainPercent??100)/100),0,actor[max]||0);}
     }
   };
   const child=(id,retarget=false)=>{
@@ -417,7 +419,11 @@ export function executeAbilityEffects(host, actor, target, ability, targetCount,
       case 11:case 12:{const fallen=target.hp<=0;for(const id of fn.id===11?[a]:conditionIdsForGroup(data,a))setCondition(host,target,id,false);if(fallen&&isRevival(data,ability))target.hp=0;break;}
       case 13:{const resource=a===2?'mp':'hp',max=resource==='mp'?actor.maxMp:actor.maxHp;const drain=Math.max(0,lastDamage)*b/100;actor[resource]=clamp(actor[resource]+Math.trunc(drain),0,max);break;}
       case 15:target.defending=true;break;
-      case 16:target.escaped=true;target.hidden=true;target.ready=false;break;
+      case 16:
+        if(actor.side==='player'&&target.side==='player'&&host.canEscape===false){
+          host.warning?.('PR escape effect failed because the current source formation or enemy forbids escape.');break;
+        }
+        target.escaped=true;target.hidden=true;target.ready=false;break;
       case 17:target.row=target.row==='back'?'front':'back';break;
       case 18:approximate(host,ability,'battle equipment menu is deferred; current equipment remains active.');host.event('battle-input-request',{kind:'equipment',actorId:actor.id});break;
       case 19:case 23:break;

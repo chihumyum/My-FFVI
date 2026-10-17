@@ -54,3 +54,30 @@ test('command scoring accounts for the PR command counter without advancing live
   assert.equal(ai.wakes,before.wakes);assert.deepEqual(ai.vars,before.vars);
   assert.equal(battle.aiQueue.length,0);
 });
+
+test('automatic Fight does not heal a damaged absorbing enemy when no positive HP attack is available', () => {
+  const actor={side:'player',hp:300,maxHp:300},enemy={side:'enemy',hp:200,maxHp:500};
+  const used=[],battle={players:[actor],enemies:[enemy],context:{},data:{},
+    events:{autoCommand:()=>null},supported:()=>true,targetable:unit=>unit.hp>0,
+    commandsFor:()=>[{id:1,kind:'physical',range:3,functions:[{id:2}]},{id:2,kind:'defend'}],
+    choose:(_index,id)=>{used.push(id);return true;}};
+  autoBattleInput(battle,actor,()=>({amount:-100}));
+  assert.deepEqual(used,[2]);assert.equal(enemy.hp,200);
+});
+
+test('a random group capable of killing the party within one action cycle is avoided even with strong offense', () => {
+  const players=[1,2,3].map(id=>({id,side:'player',hp:400,maxHp:500,mp:50,maxMp:100}));
+  const water={id:43,kind:'magic',mp:0,all:true,functions:[{id:3,values:[1]}]},
+    fight={id:1,kind:'physical',functions:[{id:2}]};
+  const enemies=[1,2].map(id=>({id,side:'enemy',hp:800,maxHp:800,mp:20,
+    aiState:{program:{ops:[['Act',[43],[100]]]}}}));
+  let escapes=0,attacks=0;
+  const battle={players,enemies,context:{randomEncounter:true},canEscape:true,data:{abilities:{1:fight,43:water}},
+    events:{autoCommand:()=>null},supported:()=>true,commandsFor:()=>[fight],targetable:unit=>unit.hp>0,
+    requestEscape:()=>{escapes++;return true;},choose:()=>{attacks++;return true;}};
+  autoBattleInput(battle,players[0],(actor,target,ability)=>({amount:actor.side==='player'?450:ability.id===43?250:20}));
+  assert.equal(escapes,1);assert.equal(attacks,0);
+  battle.context.randomEncounter=false;
+  autoBattleInput(battle,players[0],()=>({amount:450}));
+  assert.equal(escapes,1);assert.equal(attacks,1);
+});

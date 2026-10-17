@@ -1,6 +1,23 @@
 // Read-only projections choose ordinary player routes. They never execute a
 // field task, emit an event, or write a game flag.
 import { storyCondition } from "./story-plan.js";
+import { canVehicleLand } from './vehicle-input.js';
+
+function landingRegions(game,map) {
+  const ids=[4,5].includes(game.player.vehicle)?[game.player.vehicle]:Object.entries(game.banks.PlaySystems?.vehicles||{})
+    .filter(([id,vehicle])=>[4,5].includes(Number(id))&&vehicle.enabled!==false&&vehicle.mapId===map.id).map(([id])=>Number(id));
+  if(map.landingRegions)return new Set(ids.flatMap(id=>map.landingRegions[id]||[]));
+  if(map.id!==game.mapId || !game.map?.worldTerrain || !map.regionRuns?.[game.player.layer])return null;
+  const key=ids.join(',')+':'+game.player.layer;
+  if(game.landingRegionsCache?.map===game.map&&game.landingRegionsCache.key===key)return game.landingRegionsCache.regions;
+  const regions=new Set();let start=0;
+  for(const[end,region]of map.regionRuns[game.player.layer]){
+    if(region&&!regions.has(region))for(let cell=start;cell<end;cell++)if(ids.some(id=>
+      canVehicleLand(game,id,cell%map.width,Math.floor(cell/map.width)))){regions.add(region);break;}
+    start=end;
+  }
+  game.landingRegionsCache={map:game.map,key,regions};return regions;
+}
 
 function project(
   game,
@@ -9,7 +26,7 @@ function project(
   { initializer = false, direction = "up", depth = 0,
     initialBanks = game.banks, previousArea = game.areaId, newEntry = false,
     followContinuations = true, startPc = 0, actor = null, position = null,
-    sameMapContext = false } = {},
+    sameMapContext = false, timedCallbacks = false } = {},
 ) {
   const data = game.data,
     map = data.navigation.maps[mapId];
@@ -151,6 +168,7 @@ function project(
             actor: binding.actor, startPc: binding.pc, position: initialPosition,
             depth: depth + 1, initialBanks: { ...initialBanks, ...banks },
             previousArea: map.areaId, sameMapContext: true, direction,
+            timedCallbacks,
           });
           if (child.landing) {
             if (isPlayer) { player = child.landing; moved = true; }
@@ -193,7 +211,7 @@ function project(
         if (followContinuations && s[0] && depth < 16 && data.navigation.maps[i[0]]) {
           const next = project(game, i[0], s[0], { direction, depth: depth + 1,
             initialBanks: { ...initialBanks, ...banks }, previousArea: map.areaId,
-            newEntry: true, position: data.navigation.maps[i[0]].entrances[i[1]] });
+            newEntry: true, position: data.navigation.maps[i[0]].entrances[i[1]], timedCallbacks });
           // A forced continuation owns this staging map until its next map
           // transition. It never grants the player free access to its doors.
           if(next.leavesMap||next.landing)destinations.splice(transitionIndex,1);
@@ -209,12 +227,13 @@ function project(
       case "Encount":
       case "EncountBoss":
         encounters.add(i[0]);
+        if (timedCallbacks && kind === 'Encount') for (const id of i.slice(1,4)) if (id > 0) encounters.add(id);
         if (s[0]) {
           scripts.add(s[0]);
           if (followContinuations && depth < 16) {
             const next = project(game, mapId, s[0], { direction, depth: depth + 1,
               initialBanks: { ...initialBanks, ...banks }, previousArea: map.areaId,
-              sameMapContext: true, position: player });
+              sameMapContext: true, position: player, timedCallbacks });
             destinations.push(...next.destinations);
             if (next.destinations.some(dest => dest.entrance !== undefined)) leavesMap = true;
             for (const name of next.scripts) scripts.add(name);
@@ -225,6 +244,15 @@ function project(
           }
           return result();
         }
+        break;
+      case 'SetTimer':
+        // Preparation may look ahead through a source-owned timer, including
+        // its battle continuations. A forecast never starts the timer or uses
+        // its future map/flag changes as a navigation shortcut.
+        if (timedCallbacks && s[0] && depth < 16) service(project(game,mapId,s[0],{
+          direction,depth:depth+1,initialBanks:{...initialBanks,...banks},
+          previousArea:map.areaId,sameMapContext:true,position:player,timedCallbacks,
+        }));
         break;
       case "ChangeScript": {
         scripts.add(s[0]);
@@ -522,7 +550,7 @@ export function routeToStory(game, objective, pathTo, { allowStateTravel = true,
             intersects(entrance.regions, pointRegions(map, vehicle))));
         const reachable = entries.filter(
           (entry) =>
-            flight ||
+            flight && (!landingRegions(game,map) || intersects(entry.regions,[...landingRegions(game,map)])) ||
             !entrance.regions.length && !map.regionRuns ||
             intersects(entrance.regions, entry.regions),
         );
@@ -549,6 +577,8 @@ export function routeToStory(game, objective, pathTo, { allowStateTravel = true,
   }
   const { distances, destinationKey } = state.distances.get(cacheKey);
   const exits = local
+    .filter(entry=>!currentMap?.world || ![4,5].includes(game.player.vehicle) ||
+      !landingRegions(game,currentMap) || intersects(entry.regions,[...landingRegions(game,currentMap)]))
     .map((entry) => ({
       entry,
       target: actual(entry),
@@ -584,6 +614,15 @@ export function routeToStory(game, objective, pathTo, { allowStateTravel = true,
     const route = pathTo(game, target);
     if (route) return { status: "target", target, route };
     const routeMotion=movingInput(entry,target);if(routeMotion)return routeMotion;
+    // The world graph can use a parked airship to connect distant land
+    // regions. If that best exit has no foot path, ask the ordinary vehicle
+    // controller to board instead of choosing a worse town exit and looping.
+    if (currentMap?.world && ![4,5].includes(game.player.vehicle) &&
+        (!landingRegions(game,currentMap) || intersects(entry.regions,[...landingRegions(game,currentMap)])) &&
+        Object.entries(game.banks.PlaySystems?.vehicles || {}).some(([id,vehicle]) =>
+          [4,5].includes(Number(id)) && vehicle.enabled !== false && vehicle.mapId === game.mapId &&
+          pathTo(game,{...vehicle,id:`board:${id}`,kind:6}) !== null))
+      return {status:'no-route',requiresVehicle:true};
   }
   if (allowStateTravel) {
     const travel = stateChangingTravel(game,objective,pathTo,state,avoidBattles);
@@ -663,12 +702,12 @@ export function encountersForInput(game, input) {
     }
   }
   for (const trigger of upcoming) {
-    const preview = project(game,game.mapId,trigger.script,{direction:trigger.direction,position:trigger});
+    const preview = project(game,game.mapId,trigger.script,{direction:trigger.direction,position:trigger,timedCallbacks:true});
     for (const id of preview.encounters) ids.add(id);
     destinations.push(...preview.destinations);
   }
   if (name) for (const direction of target.allowedDirections?.length ? target.allowedDirections : ['up','right','down','left']) {
-    const preview = project(game,game.mapId,name,{direction,position:target});
+    const preview = project(game,game.mapId,name,{direction,position:target,timedCallbacks:true});
     for (const id of preview.encounters) ids.add(id);
     destinations.push(...preview.destinations);
   }
@@ -679,7 +718,7 @@ export function encountersForInput(game, input) {
     if (!map?.initializer || seen.has(key)) continue;
     seen.add(key);
     const preview = project(game, map.id, map.initializer, { newEntry: true,
-      previousArea: game.areaId, position: destination.position || map.entrances[destination.entrance] });
+      previousArea: game.areaId, position: destination.position || map.entrances[destination.entrance],timedCallbacks:true });
     for (const id of preview.encounters) ids.add(id);
     destinations.push(...preview.destinations);
   }

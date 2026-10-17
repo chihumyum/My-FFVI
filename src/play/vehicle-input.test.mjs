@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { executeVehicleInstruction, executeVehicleSyscall, vehicleInputState,
   openVehicleInput, submitVehicleInput, moveVehicle, canVehicleLand, autoVehicleInput } from './vehicle-input.js';
 import { updateVehicleInput } from './vehicle-input.js';
+import { vehicleJourneyInput } from './story-actions.js';
 
 function host() {
   const row = (id, extra = {}) => ({ id: String(id), asset_id: String(id + 32), release_flag: String(899 + id),
@@ -32,6 +33,19 @@ function host() {
   };
 }
 const place = (game, id = 4, x = 1, y = 0) => executeVehicleInstruction(game, null, 'SetVehicle', [id, 1, x, y, 1, 3]);
+
+test('flight can land farther than four tiles from a cave and then use its normal walking corridor', () => {
+  const game=host(),target={id:'cave',kind:3,x:12,y:0,layer:1};
+  Object.assign(game.map,{width:14,height:1});
+  Object.assign(game.map.worldTerrain,{width:14,height:1,cells:Array.from({length:14},(_,i)=>i===1?3:2)});
+  game.map.worldTerrain.transportRules[1].collisionByFoot[2]=0;
+  game.data.navigation={maps:{1:{width:14,regionRuns:{1:[[14,1]]},entries:[{...target,regions:[1]}]}}};
+  Object.assign(game.player,{x:0,y:0,vehicle:4});
+  game.canWalk=()=>true;game.move=direction=>moveVehicle(game,direction);
+  const input=vehicleJourneyInput(game,{target},host=>host.player.vehicle?['right']:[]);
+  assert.equal(input.target.x,1);assert.equal(input.status,'walk');assert.equal(game.player.x,1);
+  assert.equal(game.player.vehicle,4);assert.equal(game.tasks.length,0);
+});
 
 test('source parking, release, position and visibility instructions do not impersonate boarding', () => {
   const game = host(), flags = structuredClone(game.banks);

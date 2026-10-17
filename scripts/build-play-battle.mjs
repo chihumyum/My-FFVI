@@ -323,6 +323,7 @@ export async function buildPlayBattle({
         maxMp: row.mp,
         level: row.lv,
         strength: row.strength,
+        vitality: row.vitality,
         magic: row.ability_attack,
         attack: row.attack,
         speed: row.agility,

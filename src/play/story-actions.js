@@ -67,6 +67,22 @@ export function prepareStoryParty(game, objective, pathTo) {
 
 // Travel uses normal directional input and the source landing callback. Find
 // a legal landing tile from which the actual town/field trigger is walkable.
+function landingCandidates(game, vehicleId, target) {
+  const key=JSON.stringify([game.mapId,vehicleId,target.id,target.x,target.y,target.layer,game.navigationCache?.signature]);
+  if(game.flightLandingCache?.key===key)return game.flightLandingCache.points;
+  const map=game.data.navigation?.maps[game.mapId],runs=map?.regionRuns?.[game.player.layer],
+    regions=new Set(map?.entries.find(entry=>entry.id===target.id)?.regions || []),points=[];
+  const add=(x,y)=>{if(canVehicleLand(game,vehicleId,x,y))points.push({x,y,
+    cost:Math.abs(x-target.x)+Math.abs(y-target.y)+(Math.abs(x-game.player.x)+Math.abs(y-game.player.y))/1000});};
+  // A cave can be connected to a legal landing field by a long narrow
+  // corridor. Search its complete walking region instead of a fixed radius.
+  if(runs&&regions.size){let start=0;for(const[end,region]of runs){
+    if(regions.has(region))for(let cell=start;cell<end;cell++)add(cell%map.width,Math.floor(cell/map.width));
+    start=end;
+  }}else for(let y=0;y<game.map.height;y++)for(let x=0;x<game.map.width;x++)add(x,y);
+  points.sort((a,b)=>a.cost-b.cost);
+  game.flightLandingCache={key,points};return points;
+}
 export function vehicleJourneyInput(game, input, pathTo) {
   if (!game.map?.worldTerrain) return null;
   const model = vehicleInputState(game);
@@ -74,13 +90,7 @@ export function vehicleJourneyInput(game, input, pathTo) {
       autoVehicleInput(game, { action: 'dismount', vehicleId: model.id }))
     return { ...input, status: 'vehicle' };
   if (model.flying && input.target) {
-    const candidates = [];
-    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
-      const x = input.target.x + dx, y = input.target.y + dy;
-      if (canVehicleLand(game, model.id, x, y)) candidates.push({ x, y,
-        cost: Math.abs(dx) + Math.abs(dy) + (Math.abs(x - game.player.x) + Math.abs(y - game.player.y)) / 1000 });
-    }
-    candidates.sort((a, b) => a.cost - b.cost);
+    const candidates = landingCandidates(game,model.id,input.target);
     for (const point of candidates) {
       const foot = Object.create(game);
       foot.player = { ...game.player, ...point, vehicle: null };

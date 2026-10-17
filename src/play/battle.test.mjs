@@ -80,6 +80,35 @@ test('a normal escape completes as escape with no experience, Gil or victory rew
   assert.equal(next.players[0].removed,false);
 });
 
+test('a source final Snort that ejects the living party returns escape rather than a fabricated defeat or victory', () => {
+  const data={parties:{1:{members:[{monsterId:1}]}},monsters:{1:{id:1,hp:100,maxHp:100,exp:100,gil:100,aiName:'snort'}},
+    abilities:{1322:{id:1322,name:'Snort',range:4,all:true,functions:[{id:16,values:[2]}]}},
+    aiPrograms:{snort:{name:'snort',ops:[['SyncAI'],['FinalAttackAct',[1322],[100]],['JumpBattleAI',[0]]]}}};
+  const party=[1,2,3].map(id=>({id,hp:200,maxHp:200}));
+  const battle=new Battle({data,party,encounterId:1,random:()=>.5});
+  const enemy=battle.enemies[0];enemy.hp=0;enemy.aiState.wake('final');battle.drainAI();battle.checkEnd();
+  assert.equal(battle.phase,'escape');assert.equal(battle.result.code,1);
+  assert.equal(battle.result.exp,0);assert.equal(battle.result.gil,0);
+  assert(party.every(unit=>unit.hp===200&&unit.escaped));
+});
+
+test('a real all-party escape item spends one unit and respects source escape prohibitions', () => {
+  const data={parties:{1:{members:[{monsterId:1}]}},monsters:{1:{id:1,hp:1000,maxHp:1000,exp:1000,gil:500}},
+    contents:{23:{type_id:1,type_value:22}},items:{22:{id:22,battle_function_group_id:16,battle_renge_id:2,destroy_rate:100}},
+    functions:{16:{function1_id:16,function1_value1:2}}};
+  const party=[1,2,3].map(id=>({id,hp:200,maxHp:200})),inventory={23:2};
+  const battle=new Battle({data,party,inventory,encounterId:1,random:()=>.5});party[0].ready=true;
+  assert(battle.useItem(0,23));assert.equal(inventory[23],1);
+  assert.equal(battle.phase,'escape');assert.equal(battle.result.code,1);
+  assert.equal(battle.result.exp,0);assert.equal(battle.result.gil,0);
+  assert(party.every(unit=>unit.hp===200&&unit.escaped));
+  const blocked=new Battle({data:{...data,parties:{1:{...data.parties[1],notEscape:true}}},
+    party,inventory,encounterId:1,random:()=>.5});party[0].ready=true;
+  assert(blocked.useItem(0,23));assert.equal(inventory[23],0);
+  assert.equal(blocked.phase,'active');assert(party.every(unit=>!unit.escaped));
+  assert([...blocked.warnings].some(message=>message.includes('forbids escape')));
+});
+
 test('source character commands expose Runic and it absorbs an entire area spell once', () => {
   const data = { parties:{1:{members:[{monsterId:1}]}}, monsters:{1:{id:1,hp:1000,maxHp:1000,mp:50,maxMp:50}},
     commands:{16:{ability_id:11}},conditions:{57:{condition_type:612}}, abilities:{
@@ -236,6 +265,29 @@ test('the PR variable companion runs once for an area action without discarding 
   battle.drainAI();
   assert.equal(enemy.aiState.vars[2], 1);
   assert(battle.players.every(unit => unit.hp < 1000));
+});
+
+test('an ordinary MP-draining sword transfers actual MP without damaging HP', () => {
+  const data={parties:{1:{members:[{monsterId:1}]}},monsters:{1:{id:1,hp:500,maxHp:500,mp:20,maxMp:20}},
+    contents:{100:{type_id:2,type_value:24}},weapons:{24:{id:24,type_id:1,wear_function_group_id:100}},
+    functions:{100:{function1_id:13,function1_value1:2,function1_value2:100}},
+    abilities:{1:{id:1,kind:'physical',range:3,power:0,accuracy:255,functions:[{id:2}]}}};
+  const party=[{id:2,hp:100,maxHp:200,mp:10,maxMp:20,attack:100,level:20,equipment:[100]}];
+  const battle=new Battle({data,party,encounterId:1,random:()=>.5});
+  battle.perform(party[0],battle.enemies[0],data.abilities[1]);
+  assert.equal(party[0].hp,100);assert.equal(party[0].mp,20);
+  assert.equal(battle.enemies[0].hp,500);assert.equal(battle.enemies[0].mp,10);
+});
+
+test('a failed Hawk Eye proc is not rolled again inside the damage calculator', () => {
+  const data={parties:{1:{members:[{monsterId:1}]}},monsters:{1:{id:1,hp:1000,maxHp:1000}},
+    contents:{100:{type_id:2,type_value:75}},weapons:{75:{id:75,type_id:1,process_prog:'HAWK_EYE'}},
+    abilities:{1:{id:1,kind:'physical',range:3,power:0,accuracy:255,functions:[{id:2}]}}};
+  const party=[{id:2,hp:100,maxHp:100,attack:40,equipment:[100],criticalRate:0}];
+  const battle=new Battle({data,party,encounterId:1,random:()=>.5});
+  let draws=0;battle.random=()=>{draws++;return .75;};
+  battle.perform(party[0],battle.enemies[0],data.abilities[1]);
+  assert.equal(draws,3); // one proc, variance, ordinary critical check
 });
 
 test('final reserve order reaches the source replacement handler and cannot recycle departed members', () => {

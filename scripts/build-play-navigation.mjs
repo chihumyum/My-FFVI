@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { navigationRegions } from "./play-navigation-regions.mjs";
 import { recoverSourceMap } from "./play-source-map.mjs";
 import { addNpcFlags } from "./build-play.mjs";
+import { canVehicleLand } from '../src/play/vehicle-input.js';
 const root = resolve(import.meta.dirname, "..");
 export async function buildNavigation({ force = false } = {}) {
   const output = resolve(root, "build/play/navigation.json");
@@ -11,7 +12,7 @@ export async function buildNavigation({ force = false } = {}) {
       const cached = JSON.parse(await readFile(output, "utf8"));
       if (cached.maps[1]?.world && Object.values(cached.maps).some(map => map.entries.some(entry => entry.productGroup)) &&
           cached.maps[1].regionRuns?.[0]?.some(([,region]) => region === 0))
-        return output;
+        if(cached.maps[1].landingRegions?.[4])return output;
     } catch {}
   }
   const files = (await readdir(resolve(root, "build/world/maps"))).filter((f) =>
@@ -91,6 +92,17 @@ export async function buildNavigation({ force = false } = {}) {
             isWarp(entry, raw.mapId),
           ),
         };
+        if(header.world){
+          const indexed=maps[raw.mapId],host={data,map:raw.map,mapId:raw.mapId,player:{layer:0}},sets={4:new Set(),5:new Set()};
+          let start=0;
+          for(const[end,region]of indexed.regionRuns[0]){
+            if(region)for(const id of [4,5])if(!sets[id].has(region))for(let cell=start;cell<end;cell++){
+              if(canVehicleLand(host,id,cell%indexed.width,Math.floor(cell/indexed.width))){sets[id].add(region);break;}
+            }
+            start=end;
+          }
+          indexed.landingRegions=Object.fromEntries(Object.entries(sets).map(([id,set])=>[id,[...set]]));
+        }
       }),
     );
   }

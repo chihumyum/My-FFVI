@@ -2,6 +2,7 @@ import { routeToStory, encountersForInput } from './navigation.js';
 import { encounterPool, currentFoot, isVeldt } from './encounters.js';
 import { autoVehicleInput, vehicleInputState } from './vehicle-input.js';
 import { storyChapters } from './story-plan.js';
+import { preparationRoute } from './preparation-route.js';
 
 const average = units => units.reduce((sum, unit) => sum + unit.level, 0) / Math.max(1, units.length);
 const experience = units => units.reduce((sum, unit) => sum + (unit.exp || 0), 0);
@@ -53,7 +54,8 @@ function healingLesson(game, members) {
   candidates.sort((a, b) => b.score - a.score);
   return candidates[0] || null;
 }
-const trainingRoute = (game, objective, pathTo) => routeToStory(game, objective, pathTo, { avoidBattles: true });
+const trainingRoute = (game, objective, pathTo) => preparationRoute(game,
+  routeToStory(game, objective, pathTo, { avoidBattles: true }), 'training', game.preparationTraining?.key);
 function formationMembers(game, encounterIds) {
   return encounterIds.flatMap(id => game.battleData.parties?.[id]?.members || [])
     .map(member => game.battleData.monsters?.[member.monsterId]).filter(Boolean);
@@ -120,7 +122,7 @@ export function prepareBattleReadiness(game, objective, input, pathTo) {
   if (average(roster) >= level && (!multi || roster.every(unit => unit.level >= level - 2)) && learned) {
     if (active?.originMap && game.mapId !== active.originMap) {
       const back = trainingRoute(game, { action: 'visit-map', maps: [active.originMap] }, pathTo);
-      if (!['no-route', 'no-input'].includes(back.status)) return { ...back, training: true };
+      if (back) return { ...back, training: true };
       game.warn(null, `Training ${objective.id}: cannot return to the original preparation map; following the main route.`);
     }
     game.preparationTraining = null;
@@ -154,7 +156,7 @@ export function prepareBattleReadiness(game, objective, input, pathTo) {
       state.partyPreference = { include: selected, count: selected.length };
       if (vehicleInputState(game).flying && autoVehicleInput(game, { action: 'deck' })) return { status: 'training-walk', training: true };
       const menu = trainingRoute(game, { syscalls: ['パーティ編成：１パーティ'] }, pathTo);
-      if (!['no-route', 'no-input'].includes(menu.status)) return { ...menu, training: true };
+      if (menu) return { ...menu, training: true };
       game.warn(null, `Training ${objective.id}: no reachable source party menu for reserve training; continuing the main route.`);
       state.partyPreference = null;
       state.abandoned = true;
@@ -171,7 +173,7 @@ export function prepareBattleReadiness(game, objective, input, pathTo) {
     viablePool(game, game.battleData.encounters.sets?.[map.set]?.choices || [], average(game.party), Boolean(lesson))).map(map => map.id);
   if (possible.length) {
     const route = trainingRoute(game, { action: 'visit-map', maps: possible }, pathTo);
-    if (!['no-route', 'no-input'].includes(route.status)) return { ...route, training: true };
+    if (route) return { ...route, training: true };
   }
   game.warn(null, `Training ${objective.id}: no reachable suitable PR encounter pool; continuing the main route.`);
   state.partyPreference = null;

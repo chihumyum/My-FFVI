@@ -85,7 +85,14 @@ export function autoBattleInput(battle, unit, calculate) {
   const commands = battle.commandsFor(index).filter(command => !command.disabled &&
     (command.kind === 'item' || battle.supported(command)));
   const allies = living(battle, battle.players), enemies = living(battle, battle.enemies);
-  if (battle.escapeState?.active) return battle.choose(index,2);
+  const flee=()=>{
+    const instant=commands.filter(command=>hasFunction(command,16)&&command.all&&command.target==='ally')
+      .sort((a,b)=>(a.mp||0)-(b.mp||0))[0];
+    if(instant&&battle.choose(index,instant.id,sameSideTarget(battle.players,unit)))return true;
+    return battle.requestEscape();
+  };
+  if (battle.escapeState?.active) return battle.canEscape&&commands.some(command=>hasFunction(command,16)&&command.all&&command.target==='ally')
+    ? flee() : battle.choose(index,2);
   if (battle.context.randomEncounter && !battle.isVeldt && battle.canEscape) {
     for (const enemy of enemies) {
       const threat = fatalFinalAttack(battle,enemy,allies,calculate);
@@ -94,16 +101,32 @@ export function autoBattleInput(battle, unit, calculate) {
       battle.warning('Automatic input detected a potentially lethal PR final attack; attempting condition control or an ordinary escape. Confusion is treated as suppressing the final-action branch.');
       if (control && battle.choose(index,control.id,{side:'enemy',index:battle.enemies.indexOf(enemy)})) return true;
       if (allies.some(ally => counterControl(battle,ally,enemy,threat))) return battle.choose(index,2);
-      return battle.requestEscape();
+      return flee();
     }
-    const incoming = enemies.reduce((sum, enemy) => sum + predictedDamage(calculate, enemy, unit,
-      battle.data.abilities?.[1] || {kind:'physical',power:0}, 1), 0);
+    const incoming = enemies.reduce((sum, enemy) => {
+      const ids=[1,...(enemy.aiState?.program?.ops||[]).filter(([op])=>
+        ['Act','LoopAct','FirstAttackAct'].includes(op)).flatMap(([,ids=[],weights=[]])=>ids.filter((_,n)=>weights[n]!==0))];
+      return sum+Math.max(0,...ids.map(id=>battle.data.abilities?.[id]).filter(ability=>ability&&hurtsHp(ability)&&
+        ability.mp<=enemy.mp&&!ability.forbiddenConditions?.some(id=>(enemy.conditions||[]).includes(id)))
+        .map(ability=>ability.all?allies.reduce((n,target)=>n+predictedDamage(calculate,enemy,target,ability,allies.length),0):
+          Math.max(...allies.map(target=>predictedDamage(calculate,enemy,target,ability,1)))));
+    }, 0);
     const outgoing = allies.reduce((sum, ally) => sum + Math.max(1, ...battle.commandsFor(battle.players.indexOf(ally))
       .filter(command => !command.disabled && hurtsHp(command) && command.target !== 'ally')
       .map(command => Math.max(...enemies.map(enemy => predictedDamage(calculate,ally,enemy,command,1))))), 0);
+    const retaliation=allies.reduce((sum,ally)=>{
+      const options=battle.commandsFor(battle.players.indexOf(ally)).filter(command=>!command.disabled&&hurtsHp(command)&&command.target!=='ally')
+        .flatMap(command=>enemies.map(enemy=>{
+          const damage=predictedDamage(calculate,ally,enemy,command,command.all?enemies.length:1);
+          return {damage,cost:predictedCounterCost(battle,ally,enemy,command,damage,calculate)};
+        })).sort((a,b)=>(b.damage-b.cost)-(a.damage-a.cost));
+      return sum+(options[0]?.cost||0);
+    },0);
     const roundsToWin = enemies.reduce((sum, enemy) => sum + enemy.hp, 0) / Math.max(1, outgoing),
-      roundsToFall = allies.reduce((sum, ally) => sum + ally.hp, 0) / Math.max(1, incoming);
-    if (roundsToWin > 1.5 && roundsToFall < roundsToWin * 0.8 && battle.requestEscape()) return true;
+      roundsToFall = allies.reduce((sum, ally) => sum + ally.hp, 0) / Math.max(1, incoming+retaliation);
+    if ((roundsToWin > 1.5 && roundsToFall < roundsToWin * 0.8 ||
+        roundsToWin > .5 && roundsToFall < .9 ||
+        roundsToWin > 1 && retaliation > allies.reduce((sum,ally)=>sum+ally.hp,0)*.6) && flee()) return true;
   }
   const weak = [...allies].sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
   const fallen = battle.players.filter(target => !target.removed && !target.escaped && !target.hidden && target.hp <= 0);
@@ -135,13 +158,13 @@ export function autoBattleInput(battle, unit, calculate) {
     for (const command of revivals.sort((a, b) => (a.mp || 0) - (b.mp || 0)))
       if (battle.choose(index, command.id, sameSideTarget(battle.players, fallen[0]))) return true;
   }
+  if (weak && weak.hp / weak.maxHp < 0.55 && heal()) return true;
   if (unit.mp < unit.maxMp * 0.15 && (commands.some(command => command.mp > 0) ||
       (unit.abilities || []).some(id => battle.data.abilities?.[id]?.mp > unit.mp))) {
     const ether = commands.find(command => command.kind === 'item' &&
       [3, 4].includes(battle.data.items?.[command.itemId]?.battle_function_group_id));
     if (ether && battle.choose(index, ether.id, sameSideTarget(battle.players, unit))) return true;
   }
-  if (weak && weak.hp / weak.maxHp < 0.55 && heal()) return true;
   const runic = commands.find(command => functionsOf(command).some(fn => fn.id === 9 &&
     battle.data.conditions?.[fn.values?.[0]]?.condition_type === 612));
   if (runic && enemies.some(enemy => (enemy.aiState?.program?.ops || []).some(([op, ids = []]) =>
@@ -167,12 +190,16 @@ export function autoBattleInput(battle, unit, calculate) {
     command.kind !== 'heal' && command.kind !== 'defend' &&
     ![1, 2, 5, 12].includes(command.range) &&
     (hurtsHp(command) || command.id === 1));
-  let best = { command: commands.find(command => command.id === 1), target, score: -Infinity };
+  let best = { command: commands.find(command => command.id === 1), target, score: -Infinity }, anyDamage=false;
   for (const command of attacks) {
     for (const victim of enemies.filter(enemy => enemy.role !== 'ymir-shell' || enemies.length === 1)) {
       const targets = command.all ? enemies : [victim];
-      let score = targets.reduce((sum, enemy) => sum +
-        Math.min(enemy.hp, predictedDamage(calculate, unit, enemy, command, targets.length)), 0);
+      let score = targets.reduce((sum, enemy) => {
+        const result=calculate(unit,enemy,command,()=>0.25,targets.length);
+        const amount=result.missed||result.resource==='mp'?0:result.amount||0;
+        anyDamage ||= amount>0;
+        return sum+(amount<0?-Math.min(enemy.maxHp-enemy.hp,-amount):Math.min(enemy.hp,amount));
+      },0);
       score -= targets.reduce((sum, enemy) => sum + predictedCounterCost(battle,unit,enemy,command,
         predictedDamage(calculate,unit,enemy,command,targets.length),calculate),0);
       // MP is finite and must last between rests. Cast when it materially
@@ -181,6 +208,7 @@ export function autoBattleInput(battle, unit, calculate) {
       if (score > best.score) best = { command, target: victim, score };
     }
   }
+  if(!anyDamage && commands.some(command=>command.id===2))return battle.choose(index,2);
   if (best.command && battle.choose(index, best.command.id, battle.enemies.indexOf(best.target))) return true;
   return battle.choose(index, 1, battle.enemies.indexOf(target));
 

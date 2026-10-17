@@ -164,11 +164,12 @@ function fixture(ops, extra = {}) {
 }
 
 test("an unsupported AI-selected effect logs its source and executes Fight", () => {
+  for (const functionId of [999,70]) {
   const { battle, warnings } = fixture(
     [op("SyncAI"), op("Act", [777], [100]), op("JumpBattleAI", [0])],
     {
       abilities: {
-        777: { id: 777, range: 3, functions: [{ id: 999, values: [] }] },
+        777: { id: 777, range: 3, functions: [{ id: functionId, values: [] }] },
       },
     },
   );
@@ -178,6 +179,7 @@ test("an unsupported AI-selected effect logs its source and executes Fight", () 
   assert.ok(player.hp < before);
   assert.equal(battle.lastAction.ability.id, 1);
   assert.match(warnings.join("\n"), /AI fixture:1: ability 777.*using Fight/);
+  }
 });
 
 test("a monster does not counter its own self-targeted Nothing action", () => {

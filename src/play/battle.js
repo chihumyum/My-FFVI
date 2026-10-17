@@ -2,6 +2,7 @@ import { abilityMpCost, applyBattleRewards } from './progression.js';
 import { MonsterAI } from "./monster-ai.js";
 import { BattleEvents } from "./battle-events.js";
 import { autoBattleInput } from "./battle-input.js";
+import { weaponDamagePlan, finalizeWeaponDamage } from './weapon-damage.js';
 import { requestEscape as requestBattleEscape, tickEscape, canEscape } from './escape.js';
 import { FUNCTION_EFFECTS, PROCESS_EFFECTS, abilityFromItem, isRevival, executeAbilityEffects, setCondition, hasConditionType, actionBlocked, conditionSpeed, tickConditions, forcedConditionAction, throwableCommands, applyWeaponEffects } from "./ability-effects.js";
 const clamp = (n, low, high) => Math.max(low, Math.min(high, n));
@@ -17,6 +18,10 @@ export function calculateDamage(
   targetCount = 1,
   data = {},
 ) {
+  const weaponPlan = ability.weaponPlanResolved ? ability.weaponPlan : weaponDamagePlan(data,actor,target,ability,random);
+  if (weaponPlan) ability = weaponPlan.ability;
+  if (weaponPlan?.fixedAmount !== undefined)
+    return finalizeWeaponDamage(weaponPlan,{amount:0,missed:false,critical:false});
   const physical = ability.kind === "physical";
   const power = value(ability.power, 0);
   const conditions = actor.conditions || [];
@@ -71,6 +76,7 @@ export function calculateDamage(
   if (!physical && !healing && target.trance) base /= 2;
   if (conditions.includes(13) && physical) base = Math.min(base, value(actor.level, 1));
   base *= value(physical ? actor.physicalDamageMultiplier : actor.magicDamageMultiplier, 1);
+  base += weaponPlan?.baseBonus || 0;
   let amount = Math.floor((base * (224 + Math.floor(random() * 32))) / 256) + 1;
   if (!healing && !ability.flags?.includes(5)) {
     const defense = clamp(
@@ -84,7 +90,7 @@ export function calculateDamage(
     if (physical && target.row === "back" && !ability.backRow && !(ability.id === 1 && actor.weaponBackRow)) amount = Math.floor(amount / 2);
     if (physical && target.defending) amount = Math.floor(amount / 2);
   }
-  const critical = physical && random() * 100 < value(actor.criticalRate, 0);
+  const critical = physical && !weaponPlan?.noCritical && random() * 100 < value(actor.criticalRate, 0);
   if (critical) amount *= 2;
   const resistances = {...target.affinities ?? target.elementResistances ?? {}};
   for (const id of target.conditions || []) {
@@ -110,11 +116,11 @@ export function calculateDamage(
   }
   if (targetCount > 1 && !ability.flags?.includes(2))
     amount = Math.trunc(amount / 2);
-  return {
+  return finalizeWeaponDamage(weaponPlan,{
     amount: clamp(Math.trunc(amount), -9999, 9999),
     missed: false,
     critical,
-  };
+  });
 }
 
 export function atbRate(unit, battleSpeed = 3) {
@@ -354,6 +360,8 @@ export class Battle {
   }
   supported(ability) {
     if (["ADD_VARIABLE_CALC","SET_VARIABLE_CALC"].includes(ability?.process) && (!Number.isInteger(ability.dataB)||ability.dataB<0||ability.dataB>=15||!Number.isFinite(ability.dataC))) return false;
+    if (ability?.functions?.length && ability.functions.every(f=>FUNCTION_EFFECTS[f.id]?.[1]==='deferred') &&
+        ['None','deferred'].includes(ability.process||'None')) return false;
     return Boolean(ability && (ability.functions || []).every(f => FUNCTION_EFFECTS[f.id]) &&
       PROCESS_EFFECTS[ability.process || "None"]);
   }
@@ -713,6 +721,11 @@ export class Battle {
 
   perform(actor, target, ability, targetCount = 1, options = {}) {
     if (!actor || !target || !ability) return;
+    const weaponPlan = weaponDamagePlan(this.data,actor,target,ability,this.random,{
+      weaponContentId:options.weaponContentId,warn:message=>this.warning(message),
+    });
+    if (ability.id === 1 && ability.kind === 'physical')
+      ability = {...weaponPlan?.ability ?? ability,weaponPlan,weaponPlanResolved:true};
     if (options.sequence?.absorbed) return;
     // Runic consumes a compatible magic action and restores its source MP cost.
     if (ability.flags?.includes(3) && ability.mp > 0 && !options.runic) {
@@ -744,7 +757,7 @@ export class Battle {
     const terminalOutcome = () =>
       this.events?.forcedOutcome?.outcome ||
       (this.escapeState?.complete ? 'escape' : !this.players.some((unit) => this.alive(unit))
-        ? this.escapeState?.members.some(member => member.unit.escaped) ? 'escape' : "defeat"
+        ? this.players.some(unit=>unit.escaped&&unit.hp>0) ? 'escape' : "defeat"
         : !this.enemies.some((unit) => this.alive(unit))
           ? "victory"
           : null);
@@ -765,6 +778,8 @@ export class Battle {
     // while accepting this check. Never settle the stale pre-callback result.
     outcome = terminalOutcome();
     if (!outcome) return;
+    if(outcome==='escape'&&!this.escapeState?.complete&&this.players.some(unit=>unit.escaped&&unit.hp>0))
+      this.warning('All remaining players left through PR effects; interpreting the return as escape/code1 without victory rewards.');
     this.phase = outcome;
     this.outcome = outcome;
     this.result = {

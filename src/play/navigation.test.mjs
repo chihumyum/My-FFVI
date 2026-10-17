@@ -59,6 +59,76 @@ test('supply shopping cannot use an unfinished source boss battle as a shortcut'
   assert.equal(g.tasks.length,0);
 });
 
+test('a world route requiring the parked airship cannot fall back to a town-and-back loop', () => {
+  const door=(id,x,to)=>({id,kind:3,x,y:0,layer:0,regions:[1],group:'entity_default',destination:{mapId:to,entrance:1}});
+  const near=door('town',0,2),far=door('other-continent',4,3),back=door('back',0,1);
+  const data={byMap:{},global:{},programs:{},navigation:{maps:{
+    1:{id:1,world:true,width:5,height:1,entries:[near,far],entrances:{1:{x:0,y:0,layer:0,regions:[1]}}},
+    2:{id:2,entries:[back],entrances:{1:{regions:[1]}}},
+    3:{id:3,entries:[],entrances:{1:{regions:[1]}}},
+  }}};
+  const game=new PlayGame({data});Object.assign(game,{mapId:1,entities:[near,far],
+    player:{x:0,y:0,layer:0},groups:new Set(['entity_default'])});
+  game.banks.PlaySystems={vehicles:{4:{mapId:1,x:1,y:0,layer:0,enabled:true}}};
+  const input=routeToStory(game,{action:'visit-map',maps:[3]},(_game,target)=>
+    target.id==='other-continent'?null:['right']);
+  assert.equal(input.requiresVehicle,true);assert.equal(input.status,'no-route');
+  assert.equal(game.player.vehicle,undefined);assert.equal(game.tasks.length,0);
+});
+
+test('flight reaches a cliff-bound cave through its walking entrance rather than landing inside the cliff', () => {
+  const front={id:'base',kind:3,x:3,y:0,layer:0,regions:[1,2],group:'entity_default',destination:{mapId:2,entrance:1}},
+    cave={id:'cave',kind:3,x:7,y:0,layer:0,regions:[2],group:'entity_default',destination:{mapId:3,entrance:1}},
+    back={id:'back',kind:3,x:0,y:0,layer:0,regions:[1],group:'entity_default',destination:{mapId:1,entrance:2}};
+  const data={byMap:{},global:{},programs:{},systemTables:{transportation:[{id:4,landing_group_id:1}],
+    landingGroup:[{id:1,type2:0,type3:1}]},navigation:{maps:{
+      1:{id:1,world:true,width:8,height:1,regionRuns:{0:[[3,1],[4,0],[8,2]]},entries:[front,cave],
+        entrances:{1:{regions:[1]},2:{regions:[2]}}},
+      2:{id:2,entries:[back],entrances:{1:{regions:[1]}}},3:{id:3,entries:[],entrances:{1:{regions:[1]}}},
+    }}};
+  const game=new PlayGame({data});Object.assign(game,{mapId:1,entities:[front,cave],groups:new Set(['entity_default']),
+    player:{x:1,y:0,layer:0,vehicle:4},map:{width:8,height:1,worldTerrain:{width:8,height:1,
+      cells:[3,3,3,2,2,2,2,2],footRows:{2:{typeId:2},3:{typeId:3}}}}});
+  const input=routeToStory(game,{action:'visit-map',maps:[3]},()=>['right']);
+  assert.equal(input.target.id,'base');assert.equal(game.player.vehicle,4);
+});
+
+test('an indoor route still honors landing restrictions on a future world map', () => {
+  const portal = (id, x, y, regions, destination) => ({ id, x, y, kind: 3,
+    layer: 0, regions, destination, group: 'entity_default' });
+  const south = portal('south', 0, 1, [1], { mapId: 1, entrance: 1 }),
+    north = portal('north', 6, 1, [1], { mapId: 1, entrance: 2 });
+  const data = { byMap: {}, global: {}, programs: {}, navigation: { maps: {
+    1: { id: 1, world: true, width: 8, height: 1,
+      regionRuns: { 0: [[4, 1], [8, 2]] }, landingRegions: { 4: [1] },
+      entrances: {
+        1: { x: 1, y: 0, layer: 0, regions: [1] },
+        2: { x: 5, y: 0, layer: 0, regions: [2] },
+      }, entries: [
+        portal('base', 2, 0, [1], { mapId: 2, entrance: 1 }),
+        portal('cave', 6, 0, [2], { mapId: 3, entrance: 1 }),
+      ] },
+    2: { id: 2, width: 8, height: 3, entries: [south, north],
+      entrances: { 1: { regions: [1] }, 2: { regions: [1] } } },
+    3: { id: 3, entries: [], entrances: { 1: { regions: [1] } } },
+  } } };
+  const game = new PlayGame({ data });
+  Object.assign(game, { mapId: 2, map: { width: 8, height: 3 },
+    entities: [south, north], player: { x: 1, y: 1, layer: 0 },
+    groups: new Set(['entity_default']) });
+  game.banks.PlaySystems = { vehicles: {
+    4: { mapId: 1, x: 1, y: 0, layer: 0, enabled: true },
+  } };
+  assert.equal(pathTo(game, south).length, 1);
+  assert.equal(pathTo(game, north).length, 5);
+  const before = JSON.stringify([game.player, game.banks, [...game.groups]]);
+  const input = routeToStory(game, { action: 'visit-map', maps: [3] }, pathTo);
+  assert.equal(input.target.id, 'north');
+  assert.deepEqual(input.route, Array(5).fill('right'));
+  assert.equal(JSON.stringify([game.player, game.banks, [...game.groups]]), before);
+  assert.equal(game.tasks.length, 0);
+});
+
 test('readiness previews a portal that immediately starts a source battle on entry', () => {
   const data = { byMap: {}, global: { init: 0, battle: 1 }, programs: {
     0: { name: 'init', ops: [['ChangeScript', [0], [], ['battle']], ['Exit']] },
@@ -71,6 +141,21 @@ test('readiness previews a portal that immediately starts a source battle on ent
   assert.deepEqual(encountersForInput(game, { target: { destination: { mapId: 2, entrance: 1 } } }), [437]);
   assert.equal(game.tasks.length, 0);
   assert.deepEqual(game.banks, {});
+});
+
+test('preparation forecasts timer battle chains without taking their future flags or map exits', () => {
+  const input={id:'board',kind:6,x:1,y:0,layer:0,regions:[1],group:'entity_default',script:'board'};
+  const data={byMap:{},global:{board:0,timer:1,after:2},programs:{
+    0:{name:'board',ops:[['SetTimer',[1,1], [8], ['timer']],['Exit']]},
+    1:{name:'timer',ops:[['SetFlag',[8],[],['ScenarioFlag1']],['Encount',[10,11,10,12],[],['after']],['Exit']]},
+    2:{name:'after',ops:[['EncountBoss',[13]],['ChangeMap',[2,1]],['Exit']]},
+  },navigation:{maps:{1:{id:1,entries:[input],entrances:{1:{regions:[1]}}},
+    2:{id:2,entries:[],entrances:{1:{regions:[1]}}}}}};
+  const game=new PlayGame({data});Object.assign(game,{mapId:1,entities:[input],groups:new Set(['entity_default'])});
+  const before=JSON.stringify([game.banks,game.player]);
+  assert.deepEqual(encountersForInput(game,{target:input}),[10,11,12,13]);
+  assert.equal(routeToStory(game,{action:'visit-map',maps:[2]},()=>[]).status,'no-route');
+  assert.equal(JSON.stringify([game.banks,game.player]),before);assert.equal(game.tasks.length,0);
 });
 
 test('PR walking terrain blocks ocean both in actual movement and the navigation connectivity index', () => {
