@@ -15,6 +15,13 @@ import { EffectLibrary } from "./effects.js";
 import { FieldPresentation } from "./field-presentation.js";
 import { PRFilter } from "./pr-filters.js";
 import { FieldAnimations, fieldTileRegions, sampleFieldTile } from "./field-animation.js";
+import {
+  fieldTilePlane,
+  fieldTileOrder,
+  fieldActorPlane,
+  fieldActorOrder,
+  fieldActorPosition,
+} from "./field-order.js";
 
 const WIDTH = 320;
 const HEIGHT = 180;
@@ -86,6 +93,13 @@ export class GameRenderer {
     this._mapMetadata = new WeakMap();
     this._tileLayers = [];
     this._fieldSprites = [];
+    this._fieldActorLayers = Array.from({ length: 4 }, (_, plane) => {
+      const layer = container(`field-actors-${plane}`);
+      layer.zIndex = fieldActorOrder({ layer: plane });
+      layer.sortableChildren = true;
+      this.layers.mapLayers.addChild(layer);
+      return layer;
+    });
     this.fieldAnimations = new FieldAnimations((key, message) =>
       this._warnOnce(`field-animation:${key}`, message),
     );
@@ -663,16 +677,12 @@ export class GameRenderer {
         state = { container: container(`tile-layer-${li}`), sprites: [] };
         this._tileLayers[li] = state;
       }
-      // Ceiling/upper art is the foreground plane; no game collision or actor state is changed.
-      const parent = /(?:upper|ceil|near|foreground)/i.test(layer.name || "")
-        ? this.layers.near
-        : this.layers.mapLayers;
+      const parent = this.layers.mapLayers;
       if (state.container.parent !== parent) parent.addChild(state.container);
-      state.container.zIndex = li;
-      state.container.visible = true;
+      state.container.zIndex = fieldTileOrder(layer);
+      state.container.visible = layer.visible !== false;
       state.container.alpha = layer.opacity ?? 1;
-      const plane =
-        { BottomLayer: 0, GroundLayer: 1, UpperLayer: 2, CeilLayer: 3 }[layer.name] ?? li;
+      const plane = fieldTilePlane(layer);
       let count = 0;
       if (layer.data) {
         const bottom = wrapY
@@ -743,7 +753,10 @@ export class GameRenderer {
       const w = info.logicalWidth || info.width || texture.width;
       const h = info.logicalHeight || info.height || texture.height;
       if (x + w < ox || x - w > ox + viewWidth || y < oy || y - h > oy + viewHeight) return;
-      const sprite = pooledSprite(this._fieldSprites, this.layers.actors, count++);
+      const parent = this._fieldActorLayers[fieldActorPlane(actor)];
+      const sprite = pooledSprite(this._fieldSprites, parent, count++);
+      if (sprite.parent !== parent) parent.addChild(sprite);
+      sprite.zIndex = actor.y * tile;
       sprite.texture = texture;
       sprite.anchor.set(info.pivot?.[0] ?? 0.5, 1 - (info.pivot?.[1] ?? 0));
       sprite.position.set(
@@ -759,7 +772,10 @@ export class GameRenderer {
       if (this.fieldPresentation.flight && actor === game.player) continue;
       if (actor.vehicle === 6)
         draw(actor, "mo_ff6_v006_c00", actor.x * tile, actor.y * tile + tile);
-      if (actor.asset) draw(actor, actor.asset, actor.x * tile + tile / 2, actor.y * tile + tile);
+      if (actor.asset) {
+        const position = fieldActorPosition(actor, tile);
+        draw(actor, actor.asset, position.x, position.y);
+      }
     }
     hideUnused(this._fieldSprites, count);
     this._visibleActors = count;
