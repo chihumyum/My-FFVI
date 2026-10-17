@@ -16,6 +16,50 @@ function game(programs) {
   return value;
 }
 
+test("a reserved map entry replaces the default initializer without stale NPC colliders", async () => {
+  // Opera return0320_1 provides its own entities. The earlier default map
+  // initializer would still see flag165 unset and create Locke in the exit.
+  const g = game([
+    {
+      name: "default-entry",
+      ops: [op("SetEntities", [], [], ["before-performance"]), op("Exit")],
+    },
+    {
+      name: "reserved-entry",
+      ops: [
+        op("SetFlag", [165], [], ["ScenarioFlag1"]),
+        op("SetEntities", [], [], ["after-performance"]),
+        op("Exit"),
+      ],
+    },
+  ]);
+  g.loadMap = async () => ({
+    id: 2,
+    width: 6,
+    height: 6,
+    initializer: "default-entry",
+    entities: [{ id: "entry", kind: 0, objectId: 1, x: 2, y: 1, layer: 1 }],
+    collisions: { 1: Array(36).fill(0) },
+    groups: {
+      "before-performance": {
+        entities: [{ id: "14", kind: 6, x: 2, y: 2, layer: 1, npc: { collision: true } }],
+      },
+      "after-performance": { entities: [] },
+    },
+  });
+  await g.enter(2, 1, "reserved-entry");
+  g.tick(0.1);
+  assert.equal(g.banks.ScenarioFlag1[165], 1);
+  assert.equal(g.actors.has("14"), false);
+  assert.equal(g.groups.has("before-performance"), false);
+  assert.equal(g.move("down"), true, "the source entry leaves the exit clear");
+
+  await g.enter(2, 1);
+  g.tick(0.1);
+  assert.equal(g.actors.has("14"), true, "ordinary entrance still runs the map initializer");
+  assert.equal(g.move("down"), false, "real NPC bodies remain solid");
+});
+
 test("ChangeScript return restores the caller after Exit, including its local variables and ordinary Call stack", () => {
   const g = game([
     {

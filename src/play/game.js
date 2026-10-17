@@ -254,8 +254,13 @@ export class PlayGame {
       this.triggered = new Set();
       this.refreshActors();
       for (const guess of this.map.guesses || []) this.warn(null, guess);
-      const init = this.startScript(this.map.initializer, { init: true });
-      this.afterInit = continuation;
+      // PR ChangeMap reserves its explicit entry script. Integrator.Execute
+      // selects that reserved script instead of the map's default initializer;
+      // running both materializes stale event bodies (opera room's Locke).
+      const init = this.startScript(continuation || this.map.initializer, {
+        init: !continuation,
+      });
+      this.afterInit = "";
       this.loading = false;
       if (!continuation) this.fade = { from: 1, to: 0, start: this.time, duration: 0.25 };
       this.event("map", { name: this.map.name, entrance });
