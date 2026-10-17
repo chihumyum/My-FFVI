@@ -5,6 +5,7 @@
 import { worldCollisionByFoot } from "./encounters.js";
 import { checkFlightEncounterContact } from "./flight-encounters.js";
 import { fieldTerrainBlockerAt } from "./field-collision.js";
+import { partyFieldAsset } from "./appearance.js";
 const selectors = Object.freeze({
   "乗り物に乗る：船": 2,
   "乗り物に乗る：チョコボ": 3,
@@ -78,21 +79,24 @@ function actorSelector(game, id) {
   return character > 0 ? -character : null;
 }
 function appearance(game, actor, id) {
+  const previousAsset = actor.asset;
   if (id > 1) {
     actor.walkAsset ??= actor.asset;
     const field = asset(game, id);
     if (field?.asset_name) actor.asset = field.asset_name;
     actor.vehicle = id;
   } else {
-    const member = game.party?.[0]?.id,
-      field = game.data?.fieldAssets?.[member];
+    const member = game.party?.[0];
     actor.asset =
       actor === game.player
-        ? (field?.asset_name ?? actor.walkAsset ?? actor.asset)
+        ? member
+          ? partyFieldAsset(game.data, member)
+          : (actor.walkAsset ?? actor.asset)
         : (actor.walkAsset ?? actor.asset);
     actor.vehicle = null;
     delete actor.walkAsset;
   }
+  if (previousAsset !== actor.asset) actor.animation = "Default";
 }
 
 // Call after map entry (or updateVehicleInput once per tick) so source puppets

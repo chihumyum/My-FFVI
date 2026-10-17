@@ -1,5 +1,6 @@
 // Ordinary multi-party controls. Plate flags belong exclusively to their PR
 // enter/leave scripts; this module records physical occupancy and player input.
+import { setPartyAppearance } from "./appearance.js";
 const directions = [
   ["up", 0, -1],
   ["right", 1, 0],
@@ -43,15 +44,8 @@ export function saveCooperativePosition(game) {
 }
 
 function restoreLeader(game) {
-  const id = game.partySlots[game.partyIndex]?.[0],
-    asset = game.data.fieldAssets?.[id];
-  if (id) {
-    game.player.characterId = id;
-    game.player.asset =
-      typeof asset === "string"
-        ? asset
-        : (asset?.asset_name ?? `mo_ff6_p${String(id).padStart(3, "0")}`);
-  }
+  const id = game.partySlots[game.partyIndex]?.[0];
+  if (id) setPartyAppearance(game, game.player, game.roster?.[id] || { id });
   game.player.visible = true;
   game.player.motion = null;
   if (game.camera) game.camera.manual = false;

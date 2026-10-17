@@ -154,7 +154,9 @@ export function compileMap(row, binding, tables, media, messages) {
           .filter((part) => /^\d+$/.test(part))
           .join(":");
         const entity = {
-          id: String(p.entity_id || `${name}:${layerPath}:${index}`),
+          // PR uses -1 for unaddressed decorations. Negative script selectors
+          // belong to characters, so those bodies need their own map-local ID.
+          id: Number(p.entity_id) > 0 ? String(p.entity_id) : `${name}:${layerPath}:${index}`,
           kind,
           objectId: Number(p.object_id || 0),
           layer: layerId,

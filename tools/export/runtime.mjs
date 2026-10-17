@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { packageBinding, compileMap } from "./maps.mjs";
 import { compileBattle } from "./battle.mjs";
 import { compileNavigation } from "./navigation.mjs";
+import { compileAppearanceConditions } from "./appearances.mjs";
 
 const read = async (file) => JSON.parse(await readFile(file, "utf8"));
 const identity = (asset) => `${asset.source.file}::${asset.source.assetPath}`.toLowerCase();
@@ -182,6 +183,7 @@ export async function compileRuntime(out) {
         "content",
         "function_group",
         "character_status",
+        "character_asset",
         "job",
         "learning",
         "transportation",
@@ -213,6 +215,7 @@ export async function compileRuntime(out) {
     mnemonics: [...mnemonics].sort(),
   };
   const battle = compileBattle(tables, assets, media, data, nativeStones);
+  data.appearanceConditions = compileAppearanceConditions(tables, assets);
   battle.colosseum = colosseum;
   const navigation = compileNavigation(sourceMaps, data);
   await write(path.join(out, "data.json"), data);

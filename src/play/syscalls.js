@@ -6,6 +6,7 @@ import {
   finishSyscallTimer,
 } from "./event-systems.js";
 import { executeCooperativeSyscall } from "./cooperative-input.js";
+import { setPartyAppearance } from "./appearance.js";
 export { updateSyscallSystems, configureSyscallTimer, finishSyscallTimer };
 // PR SysCall labels carry the selector; their eight numeric operands are normally zero.
 // These are source character IDs, including temporary characters, rather than party indices.
@@ -110,13 +111,7 @@ function warnOnce(game, task, message) {
 }
 function refreshLeader(game) {
   const leader = game.party[0];
-  if (leader) {
-    const asset = game.data.fieldAssets?.[leader.id];
-    game.player.characterId = leader.id;
-    if (typeof asset === "string") game.player.asset = asset;
-    else if (asset?.asset_name) game.player.asset = asset.asset_name;
-    else game.player.asset = `mo_ff6_p${String(leader.id).padStart(3, "0")}`;
-  }
+  if (leader) setPartyAppearance(game, game.player, leader);
   game.camera.manual = false;
   game.event("party", {
     partyIndex: game.partyIndex,
@@ -446,14 +441,16 @@ export function executeSyscall(game, task, name, i = [], r = []) {
     } else {
       systems.puppetBackup ??= [-1001, -1002, -1003, -1004].map((selector) => {
         const actor = game.actor(selector);
-        return [selector, { asset: actor.asset, characterId: actor.characterId }];
+        return [
+          selector,
+          { asset: actor.asset, walkAsset: actor.walkAsset, characterId: actor.characterId },
+        ];
       });
       const slot = subject.includes("３") ? 2 : subject.includes("２") ? 1 : game.partyIndex;
       const members = game.partySlots[slot] ?? [];
       members.forEach((memberId, index) => {
         const actor = game.actor(-1001 - index);
-        actor.characterId = memberId;
-        actor.asset = game.data.fieldAssets?.[memberId]?.asset_name ?? actor.asset;
+        setPartyAppearance(game, actor, game.roster?.[memberId] || { id: memberId });
       });
       warnOnce(
         game,

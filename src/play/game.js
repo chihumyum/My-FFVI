@@ -43,12 +43,12 @@ import {
   configureSyscallTimer,
   finishSyscallTimer,
 } from "./syscalls.js";
-// Puppet selectors use character_id. The table's row id diverges for vehicles
-// and story doubles (for example row39 is transformed character200).
-const fieldCharacterAsset = (data, id) =>
-  Object.entries(data.fieldAssets || {}).find(
-    ([key, row]) => Number(row.character_id ?? key) === id,
-  )?.[1]?.asset_name;
+import {
+  fieldCharacterAsset,
+  puppetFieldAsset,
+  refreshCostume,
+  setPartyAppearance,
+} from "./appearance.js";
 const dirs = ["up", "right", "down", "left"],
   delta = [
     [0, -1],
@@ -303,6 +303,8 @@ export class PlayGame {
           animation: "Default",
           motion: null,
         });
+      else if (actor && actor.kind === e.kind && actor.asset == null && e.asset)
+        actor.asset = e.asset;
     }
     this.actorEntitySource = entities;
   }
@@ -338,9 +340,7 @@ export class PlayGame {
         return this.actors.get(key);
       }
       const id = selector < 0 ? -selector : null,
-        asset = id
-          ? fieldCharacterAsset(this.data, id) || `mo_ff6_p${String(id).padStart(3, "0")}`
-          : undefined;
+        asset = id ? puppetFieldAsset(this.data, id, this.roster?.[id]) : undefined;
       this.actors.set(key, {
         id: selector,
         x: this.player.x,
@@ -793,12 +793,20 @@ export class PlayGame {
       case "EncountBoss":
         this.encounter(i[0], s[0], t);
         return;
-      case "OrganizePartySlot":
-        this.partySlots[Math.max(0, i[0] - 1)] = i.slice(1, 5).filter((n) => n > 0);
+      case "OrganizePartySlot": {
+        const slot = Math.max(0, i[0] - 1);
+        this.partySlots[slot] = i.slice(1, 5).filter((n) => n > 0);
+        const id = this.partySlots[this.partyIndex]?.[0];
+        if (slot === this.partyIndex && id)
+          setPartyAppearance(this, this.player, this.roster[id] || { id });
         return;
-      case "ChangePartySlot":
+      }
+      case "ChangePartySlot": {
         this.partyIndex = Math.max(0, i[0] - 1);
+        const id = this.partySlots[this.partyIndex]?.[0];
+        if (id) setPartyAppearance(this, this.player, this.roster[id] || { id });
         return;
+      }
       case "GetItem":
         changeInventory(this, i[0], i[1] || 1);
         return;
@@ -836,6 +844,7 @@ export class PlayGame {
             u.conditions = i[0] === 0 ? [] : u.conditions.filter((n) => n !== i[0]);
             if (i[0] === 5 && u.hp <= 0) u.hp = 1;
           }
+          refreshCostume(this, u);
         }
         return;
       case "RideVehicleNPC":
@@ -1053,6 +1062,7 @@ export class PlayGame {
       warn: (msg) => this.warn(t, String(msg)),
       onEnd: (result) => {
         this.battle?.events?.releaseFieldTimer?.(result.outcome);
+        for (const unit of this.party) refreshCostume(this, unit);
         const book = this.banks.PlaySystems;
         if (book?.monsterRecords && book.monsterRecordsLegacyCount == null)
           book.monsterRecordsLegacyCount = this.battles.length;
@@ -1438,9 +1448,27 @@ export class PlayGame {
     this.groups = new Set(saved.groups);
     if (saved.actors)
       this.actors = new Map(
-        saved.actors.map(([key, actor]) => {
+        saved.actors.map(([key, original]) => {
+          const actor = { ...original };
           const id = -Number(key),
             canonical = id > 0 && fieldCharacterAsset(this.data, id);
+          if (id > 0 && actor.kind === 10 && actor.asset !== canonical) {
+            const candidates = Object.entries(this.map.groups || {})
+              .filter(([group]) => this.groups.has(group))
+              .flatMap(([, group]) => group.entities || [])
+              .filter(
+                (entity) =>
+                  !Number.isFinite(Number(entity.id)) &&
+                  entity.kind === actor.kind &&
+                  entity.asset === actor.asset,
+              );
+            const exact = candidates.filter(
+              (entity) => entity.x === actor.x && entity.y === actor.y,
+            );
+            const source =
+              exact.length === 1 ? exact[0] : candidates.length === 1 ? candidates[0] : null;
+            if (source) return [String(source.id), { ...actor, id: source.id }];
+          }
           // Repair only the old nonexistent numeric fallback, preserving authored
           // costumes/vehicles and without rewriting the caller's saved object.
           return [

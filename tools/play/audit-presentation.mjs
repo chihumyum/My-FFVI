@@ -608,6 +608,7 @@ export class PresentationAudit {
   }
   observeBattle(game) {
     const battle = game.battle;
+    this.battleFrames = [];
     this.coverage.battles.add(battle.encounterId);
     this.view.battle = battle;
     this.view.formation = battle.formation;
@@ -626,11 +627,18 @@ export class PresentationAudit {
         let info = unit.sprite,
           armor = null,
           animation = null;
+        const pose = this.view.unitPose(
+          unit,
+          row,
+          game.time,
+          this.view.position(side, index).mirror,
+        );
+        info = pose?.info || info;
+        armor = pose?.armor;
+        if (pose)
+          animation = requestedBattlePose(unit, row, game.time, this.shared.battleData, battle);
         if (side === "player") {
           animation = requestedBattlePose(unit, row, game.time, this.shared.battleData, battle);
-          const pose = this.view.pose(unit, row, game.time, this.view.position(side, index).mirror);
-          info = pose?.info || info;
-          armor = pose?.armor;
           this.weaponContext = { entityId, animation };
           this.view.drawWeapons(unit, row, game.time);
         }
@@ -641,6 +649,12 @@ export class PresentationAudit {
           resource: info?.url ?? null,
           mounted: Boolean(armor),
         };
+        this.battleFrames.push({
+          ...record,
+          index,
+          entityId: unit.id,
+          armorResource: armor?.url ?? null,
+        });
         this.coverage.actors.set(JSON.stringify(record), record);
         this.check(info?.url, {
           entityId,

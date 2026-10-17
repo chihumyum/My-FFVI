@@ -303,6 +303,7 @@ export class FieldPresentation {
   }
 
   draw(game, offset = { x: 0, y: 0 }, data) {
+    this.flightFrame = null;
     if (!this.catalog || !game.map) return;
     const binding = this.catalog.maps[game.mapId] || { far: [], near: [] };
     this.backdropPlane.tint = this.backdrop ?? tint(color(binding.backdrop, [0, 0, 0, 1]));
@@ -378,6 +379,25 @@ export class FieldPresentation {
         animation: game.player.animation,
       });
       this.flightActor.visible = !!texture;
+      this.flightFrame = {
+        side: "field",
+        entityId: game.player.id,
+        asset: game.player.asset,
+        characterId: game.player.characterId,
+        vehicle: game.player.vehicle,
+        animation: game.player.animation || "Default",
+        clip: frame?.clip,
+        frame: frame?.name,
+        resource: info?.file,
+        x: game.player.x,
+        y: game.player.y,
+        layer: game.player.layer,
+        screen: { x: 160, y: 137 + Math.round(Math.sin(this.clock * 3)) },
+        drawn: Boolean(texture),
+        ...(!texture
+          ? { reason: char?.sprites ? "missing-texture" : "missing-character-data" }
+          : {}),
+      };
       if (texture) {
         this.flightActor.texture = texture;
         this.flightActor.width = info.logicalWidth || info.width;

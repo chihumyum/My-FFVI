@@ -78,6 +78,8 @@ PLAY_TEST_BOOST=1 npm run play:through
 
 `PLAY_WEB_URL=http://127.0.0.1:4174/ npm run play:asset-decode` 在 Playwright Chromium 里实际请求并解码全部图集与预览 PNG；`PLAY_BROWSER=webkit` 可改用 WebKit。报告保存在 `build/play/acceptance/step-2/`。这能发现浏览器解码失败，不能代替场景截图和外观核对。
 
+回归同时输出 `*-appearances.json`（支线为 `appearance-audit/`），从本地导出的原始 PR 表和脚本独立推导角色、变装、载具与怪物外观，再和实际选择比较；缺少源证据的关联记录为未知。此项需要 `PLAY_DATA_DIR` 中保留 `raw/`，不能用静态包自己的选择证明自己正确。`PLAY_APPEARANCE_AUDIT=0` 仅供短探针，不算正式验收。浏览器外观工具 `node tools/play/check-appearances-browser.mjs` 和 `node tools/play/check-battle-appearances-browser.mjs` 使用独立 Playwright 上下文、读取真实检查点并保存 F9/截图；`PLAY_WEB_URL` 指向静态服务器，`PLAY_BROWSER=webkit` 切换引擎。它们还检查被选中图集区域的实际 alpha，完全透明会单独报出；这仍不等同场景遮挡或整幅画面验收。
+
 默认读取 `build/web-data/`；`PLAY_DATA_DIR` 可指向另一个独立导出目录，`PLAY_STATIC_DIR=dist/web` 可验证静态包。普通模式默认到三分线结束附近，也可用 `PLAY_THROUGH=M1` 验证开场。`PLAY_REPORT` 指定报告，`PLAY_SEED` 指定随机种子。`PLAY_CHECKPOINT_DIR` 记录真实游玩产生的目标存档；`PLAY_RESUME` 继续存档，不计作新游戏全程验收。强化会复制普通存档，不写回原槽，不修改剧情旗标。自动跑法为检查远处路线会显式预载全部剧情；回归会逐步审计实际执行的脚本是否已由正常地图边界取得，避免预载掩盖缺失依赖。手动游玩不全量预载。怪物 AI 直接解释 PR 的 430 个程序和 69 种指令。
 
 可选内容清单用 `npm run play:optional-inventory` 生成 `build/play/optional-inventory.json` 和 CSV，按 PR 地区列出源脚本、NPC、入口及旗标守卫。`--report`、`--checkpoints`、`--coverage` 可选择实际回归证据，`--optional` 指定支线报告目录（默认 `build/play/optional`）；实际支线 VM 观察会合并到地区缺口清单，未完成用例只贡献观察，不算支线通过；`PLAY_COVERAGE_REPORT=build/play/main-script-coverage.json` 会观察真正执行的 VM 指令，区分同名的不同作用域脚本。静态入口、脚本覆盖和支线完成分别记录，不能互相代替。

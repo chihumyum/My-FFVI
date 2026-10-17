@@ -1,6 +1,60 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { compileMap } from "./maps.mjs";
+import { PlayGame } from "../../src/play/game.js";
+
+test("unaddressed PR decorations cannot occupy a negative character selector", () => {
+  const source = {
+    map: { data: { width: 8, height: 8, tilewidth: 16, layers: [], tilesets: [] } },
+    entities: {
+      data: {
+        layers: [
+          {
+            name: "GroundObject",
+            objects: [1, 2].map((asset) => ({
+              x: asset * 16,
+              y: 32,
+              properties: [
+                { name: "object_type", value: 10 },
+                { name: "entity_id", value: -1 },
+                { name: "asset_id", value: asset },
+              ],
+            })),
+          },
+        ],
+      },
+    },
+  };
+  const map = compileMap(
+    { id: 5 },
+    {
+      pack: { data: {}, source: { file: "test" } },
+      declaration: { tilemap: "map", entity_default: "entities" },
+      assetAt: (name) => source[name],
+      assetPath: (name) => name,
+    },
+    {
+      "mapobject.csv": [
+        { id: 1, asset_name: "save-point" },
+        { id: 2, asset_name: "sparkle" },
+      ],
+    },
+    { textures: [] },
+    {},
+  );
+  assert.equal(new Set(map.entities.map((entity) => entity.id)).size, 2);
+  assert.ok(map.entities.every((entity) => !Number.isFinite(Number(entity.id))));
+  const game = new PlayGame({
+    data: { programs: {}, fieldAssets: { 1: { character_id: 1, asset_name: "terra" } } },
+  });
+  game.map = map;
+  game.refreshActors();
+  assert.equal(game.actor(-1).asset, "terra");
+  assert.deepEqual(
+    map.entities.map((entity) => game.actors.get(entity.id).asset),
+    ["save-point", "sparkle"],
+  );
+});
 
 test("PR collider entities retain their passage and transportation properties", () => {
   const source = {

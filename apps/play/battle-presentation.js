@@ -1,5 +1,29 @@
 import { Container, Rectangle, Sprite, Texture } from "pixi.js";
 
+// Compatibility with catalogs exported before conditionAppearances. PR's misc
+// table names the field versions of the two costumes; their matching BC
+// resources exist. The MO -> BC relation and visually identified P016 Imp are
+// presentation inferences, never battle rules or independent audit evidence.
+const inferredConditionAppearances = [
+  {
+    conditionType: 601,
+    asset: "bc_ff6_p016",
+    reason:
+      "PR P016 is visually the Imp; the condition-to-battle-asset binding is not declared in the extracted tables.",
+  },
+  {
+    conditionType: 665,
+    asset: "bc_ff6_p021_c01",
+    reason:
+      "PR misc type 665 names field CID202/MO_P021_C01; the same-name BC costume is inferred.",
+  },
+  {
+    conditionType: 666,
+    asset: "bc_ff6_p025",
+    reason: "PR misc type 666 names field CID203/MO_P025; the same-name BC costume is inferred.",
+  },
+];
+
 // All clocks, poses and queues here belong to the renderer, never the combat engine.
 export class BattlePresentation {
   constructor({ actors, effects, getTexture, warn, onEffect, diagnostics }) {
@@ -143,19 +167,60 @@ export class BattlePresentation {
     }
     return this.units.get(key);
   }
+  unitPose(unit, row, now, mirror) {
+    const characterBody =
+      unit.side === "player" ||
+      (unit.conditions || []).some(
+        (id) => Number(this.data.conditions?.[id]?.condition_type) === 601,
+      );
+    return characterBody ? this.pose(unit, row, now, mirror) : null;
+  }
   group(unit) {
     const canonical = this.data.characters?.[unit.id];
     const source = canonical?.sprite || unit.normalSprite;
     const url = unit.side === "player" ? source?.url || unit.sprite?.url : unit.sprite?.url;
     const asset = url?.match(/\/(bc_ff6_[^/]+?)_assets_all_/i)?.[1]?.toLowerCase();
-    const transformed = unit.trance && this.catalog?.groups[asset + "_tr"];
-    if (unit.trance && !transformed)
-      this.diagnostics?.record("battle-transformation-fallback", {
+    const types = (unit.conditions || []).map((id) =>
+      Number(this.data.conditions?.[id]?.condition_type),
+    );
+    // SNES UpdateStatusChangeAnim checks Morph before Imp. PR supplies the
+    // condition types; removing them must restore the current character body,
+    // rather than keeping a cached costume or rewriting unit.sprite.
+    const trance = unit.trance || types.includes(621);
+    const rules = this.catalog?.conditionAppearances || inferredConditionAppearances;
+    const rule =
+      !trance &&
+      [601, 665, 666]
+        .map((type) =>
+          rules.find((row) => Number(row.conditionType) === type && types.includes(type)),
+        )
+        .find(Boolean);
+    const selected = trance ? asset + "_tr" : rule?.asset;
+    const transformed = selected && this.catalog?.groups[selected];
+    if (selected) {
+      const reason =
+        rule?.reason ||
+        "Trance uses the PR same-base *_TR source group; the state-to-asset binding is not declared in the extracted tables.";
+      this.appearanceWarnings ??= new Set();
+      if (!this.appearanceWarnings.has(selected)) {
+        this.appearanceWarnings.add(selected);
+        this.warn?.(`Battle appearance inferred: ${selected}. ${reason}`);
+      }
+      this.diagnostics?.record("battle-special-appearance-binding-inferred", {
         entityId: unit.id,
-        asset,
-        resource: asset + "_tr",
-        fallback: asset,
+        asset: selected,
+        resource: selected,
+        reason,
       });
+      if (!transformed)
+        this.diagnostics?.record("battle-transformation-fallback", {
+          entityId: unit.id,
+          asset,
+          resource: selected,
+          fallback: asset,
+          reason: "Selected special appearance group is absent from the catalog.",
+        });
+    }
     if (!transformed && !this.catalog?.groups[asset])
       this.diagnostics?.record("battle-animation-group-missing", {
         entityId: unit.id,
@@ -374,7 +439,7 @@ export class BattlePresentation {
         const row = this.row(side, index),
           position = this.position(side, index);
         if (unit.hidden || unit.removed || unit.escaped) continue;
-        const pose = side === "player" ? this.pose(unit, row, now, position.mirror) : null;
+        const pose = this.unitPose(unit, row, now, position.mirror);
         const info = pose?.info || unit.sprite;
         row.renderInfo = {
           resource: info?.url,

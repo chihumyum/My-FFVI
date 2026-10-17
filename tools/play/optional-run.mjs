@@ -19,6 +19,7 @@ import { recruitOptionalCases } from "./optional-recruit-cases.mjs";
 import { esperOptionalCases } from "./optional-esper-cases.mjs";
 import { questOptionalCases } from "./optional-quest-cases.mjs";
 import { PresentationAudit } from "./audit-presentation.mjs";
+import { AppearanceObserver } from "./appearance-observer.mjs";
 import {
   selectColosseumWager,
   selectColosseumChallenger,
@@ -102,6 +103,11 @@ if (auditTemplate) {
   });
 }
 const assetAuditResults = [];
+const appearanceAuditDir = assetAuditDir
+  ? path.resolve(option("--appearance-audit", path.join(out, "appearance-audit")))
+  : null;
+const appearanceTemplate =
+  appearanceAuditDir && cases.length ? await AppearanceObserver.open({ dataRoot }) : null;
 await mkdir(out, { recursive: true });
 if (mapCheckpointDir) await mkdir(mapCheckpointDir, { recursive: true });
 const maxTicks = Number(option("--ticks", "40000")),
@@ -254,6 +260,11 @@ function objectiveTarget(game, objective, fixedRoutes) {
 }
 for (const test of cases) {
   const assetAudit = auditTemplate?.fork();
+  appearanceTemplate?.field.reset();
+  appearanceTemplate?.battle.reset();
+  const appearanceAudit = appearanceTemplate
+    ? new AppearanceObserver(appearanceTemplate.field, appearanceTemplate.battle)
+    : null;
   if (packed) packed.boundaryChunks.clear();
   let caseStart = args.includes("--start")
     ? startFile
@@ -298,6 +309,12 @@ for (const test of cases) {
         });
       }
       results.push(result);
+      if (appearanceAudit)
+        await appearanceAudit.write(path.join(appearanceAuditDir, `${test.id}.json`), {
+          caseId: test.id,
+          start: "dependency-not-entered",
+          stop: result.stop,
+        });
       continue;
     }
     caseStart = path.join(out, `${dependency}-save.json`);
@@ -317,6 +334,7 @@ for (const test of cases) {
       const sourceIndex = task.pc,
         sourceProgram = assetAudit && this.data.programs[task.program],
         sourceOp = sourceProgram?.ops[sourceIndex];
+      appearanceAudit?.instruction(this, task, sourceProgram, sourceIndex, sourceOp);
       executedPrograms.add(String(task.program));
       executedOps.add(`${task.program}:${task.pc}`);
       if (
@@ -363,6 +381,7 @@ for (const test of cases) {
   // flags, actor positions, available members or event program counters are set.
   await game.restore(structuredClone(caseSaved.snapshot || caseSaved), { testBoost: true });
   assetAudit?.observe(game);
+  appearanceAudit?.observe(game, assetAudit);
   const initialBattles = game.battles.length,
     initialHistory = game.history.length;
   const checkpointStates = new Set(),
@@ -442,6 +461,7 @@ for (const test of cases) {
         game.tick(0.1, { auto: true });
         if (game.loading) await game.pending;
         assetAudit?.observe(game);
+        appearanceAudit?.observe(game, assetAudit);
         continue;
       }
       stop = completed.length > alreadyComplete.length ? "passed" : "already-complete";
@@ -468,6 +488,7 @@ for (const test of cases) {
           inputs["fixed-quest-battle-input"] = (inputs["fixed-quest-battle-input"] || 0) + 1;
     if (game.loading) await game.pending;
     assetAudit?.observe(game);
+    appearanceAudit?.observe(game, assetAudit);
     recordCompletions();
     await recordMapCheckpoint();
     if (game.busy) continue;
@@ -572,6 +593,13 @@ for (const test of cases) {
   };
   await writeFile(path.join(out, `${test.id}.json`), JSON.stringify(result, null, 2));
   await writeFile(path.join(out, `${test.id}-save.json`), JSON.stringify(game.snapshot()));
+  if (appearanceAudit)
+    await appearanceAudit.write(path.join(appearanceAuditDir, `${test.id}.json`), {
+      caseId: test.id,
+      startSave: result.startSave,
+      mode: result.mode,
+      stop,
+    });
   if (assetAudit) {
     const file = path.join(assetAuditDir, `${test.id}.json`);
     const audit = await assetAudit.write(

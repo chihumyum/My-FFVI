@@ -14,6 +14,34 @@ const sprite = (s) => ({
   pivot: s.pivot,
 });
 
+export function compileBattleConditionAppearances(tables, misc, groups) {
+  const result = (misc.change_character_condition_list || []).flatMap((row) => {
+    const field = tables["field_character_asset.csv"].find(
+      (entry) => Number(entry.character_id) === Number(row.field_character_asset_cid),
+    );
+    const asset = field?.asset_name?.toLowerCase().replace(/^mo_/, "bc_");
+    return asset && groups[asset]
+      ? [
+          {
+            conditionType: Number(row.condition_type),
+            fieldCharacterId: Number(row.field_character_asset_cid),
+            fieldAsset: field.asset_name,
+            asset,
+            reason: `PR misc type ${row.condition_type} names field CID${row.field_character_asset_cid}/${field.asset_name}; the same-name BC costume is inferred.`,
+          },
+        ]
+      : [];
+  });
+  if (groups.bc_ff6_p016)
+    result.push({
+      conditionType: 601,
+      asset: "bc_ff6_p016",
+      reason:
+        "PR P016 is visually the Imp; the condition-to-battle-asset binding is not declared in the extracted tables.",
+    });
+  return result;
+}
+
 export async function compileBattlePresentation(out) {
   const [media, tables, index] = await Promise.all(
     ["raw/media.json", "raw/tables.json", "raw/index.json"].map((p) => read(path.join(out, p))),
@@ -42,6 +70,7 @@ export async function compileBattlePresentation(out) {
   const animationAliases = Object.fromEntries(
     misc.data.battle_anim_alias_table.map((row) => [row.key, row]),
   );
+  const conditionAppearances = compileBattleConditionAppearances(tables, misc.data, groups);
   const scene = index.files.find((f) => f.file.includes("scene_maingame_") && f.objectsOutput);
   const objects = (await read(path.join(out, scene.objectsOutput))).objects;
   const controller = objects.find((o) => o.class === "BattleController");
@@ -92,6 +121,7 @@ export async function compileBattlePresentation(out) {
     ],
     groups,
     animationAliases,
+    conditionAppearances,
     magitek: { asset: "bc_ff6_p022" },
     equipment,
     digits,
@@ -101,6 +131,7 @@ export async function compileBattlePresentation(out) {
       "Player positions use PR game constants; Magitek vertical spacing expands for the full rider/armor extent. Six-frame-per-second pose timing remains approximate.",
       "Weapon motion_type is retained; web swing angles and hand attachment timing are approximated without altering battle resolution.",
       "Magitek uses PR rider/armor frames, native texture offsets and mesh positions. Web draws the clipped rider above the armor rather than reproducing native mesh depth.",
+      "Disguise condition types use PR misc field bindings and inferred matching BC names. Imp uses visually identified BC P016; direct special-state battle asset bindings remain unconfirmed.",
       "Simplified Chinese MISS uses PR Miss_9 (visually identified as 失手); digit bounce timing is approximated.",
     ],
   };

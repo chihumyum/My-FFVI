@@ -9,12 +9,18 @@ import { Battle } from "../../src/play/battle.js";
 import { advanceStory } from "../../src/play/story-route.js";
 import { storyChoice } from "../../src/play/story-plan.js";
 import { PresentationAudit } from "./audit-presentation.mjs";
+import { AppearanceObserver } from "./appearance-observer.mjs";
 const dataRoot = process.env.PLAY_DATA_DIR || "build/web-data";
 const reportFile = process.env.PLAY_REPORT || "build/play/playthrough.json";
 const assetAuditFile =
   process.env.PLAY_ASSET_AUDIT === "0"
     ? null
     : process.env.PLAY_ASSET_AUDIT || reportFile.replace(/\.[^/.]+$/, "") + "-assets.json";
+const appearanceAuditFile =
+  process.env.PLAY_APPEARANCE_AUDIT === "0"
+    ? null
+    : process.env.PLAY_APPEARANCE_AUDIT ||
+      reportFile.replace(/\.[^/.]+$/, "") + "-appearances.json";
 await mkdir("build/play", { recursive: true });
 let randomState = Number(process.env.PLAY_SEED || 1) >>> 0;
 const random = () => {
@@ -48,6 +54,9 @@ const assetAudit = assetAuditFile
       battleData,
     })
   : null;
+const appearanceAudit = appearanceAuditFile ? await AppearanceObserver.open({ dataRoot }) : null;
+if (appearanceAudit && !assetAudit)
+  throw Error("Appearance acceptance requires presentation audit");
 let through = process.env.PLAY_THROUGH;
 if (process.env.PLAY_CHECKPOINT_DIR)
   await mkdir(process.env.PLAY_CHECKPOINT_DIR, { recursive: true });
@@ -65,6 +74,7 @@ class RegressionGame extends ObservedGame {
     const sourceIndex = task.pc,
       sourceProgram = assetAudit && this.data.programs[task.program],
       sourceOp = sourceProgram?.ops[sourceIndex];
+    appearanceAudit?.instruction(this, task, sourceProgram, sourceIndex, sourceOp);
     if (coverage) {
       coverage.programs.add(String(task.program));
       coverage.operations.add(`${task.program}:${task.pc}`);
@@ -201,6 +211,7 @@ for (let tick = 0; tick < Number(process.env.TICKS || 120000); tick++) {
   game.tick(0.1, { auto: true });
   if (game.loading) await game.pending;
   assetAudit?.observe(game);
+  appearanceAudit?.observe(game, assetAudit);
   if (observedBattle && observedBattle.phase !== "active") {
     recordBattle(observedBattle);
     observedBattle = null;
@@ -325,10 +336,12 @@ const battleDebug = game.battle
   : null;
 if (observedBattle) recordBattle(observedBattle);
 const result = {
+  appearanceAudit: appearanceAuditFile,
   assetAudit: assetAuditFile,
-  acceptanceNote: assetAuditFile
-    ? null
-    : "Asset audit explicitly disabled; development probe only, not formal acceptance.",
+  acceptanceNote:
+    assetAuditFile && appearanceAuditFile
+      ? null
+      : "Asset or source-appearance audit explicitly disabled; development probe only, not formal acceptance.",
   start: process.env.PLAY_RESUME ? "resume" : "new-game",
   resumedMode,
   boostReason: process.env.PLAY_BOOST_REASON || null,
@@ -361,6 +374,15 @@ const result = {
   events,
 };
 await writeFile(reportFile, JSON.stringify(result, null, 2));
+if (appearanceAudit)
+  await appearanceAudit.write(appearanceAuditFile, {
+    start: result.start,
+    mode: result.mode,
+    stop,
+    through,
+    titleScreen: Boolean(game.titleScreen),
+    battleCount: game.battles.length,
+  });
 if (assetAudit)
   await assetAudit.write(assetAuditFile, {
     start: result.start,

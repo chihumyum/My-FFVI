@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { Container, Texture, TextureSource } from "pixi.js";
 import { Battle } from "../../src/play/battle.js";
 import { BattlePresentation } from "./battle-presentation.js";
+import { compileBattleConditionAppearances } from "../../tools/export/battle-presentation.mjs";
 
 const read = async (name) =>
   JSON.parse(await readFile(new URL(`../../build/web-data/${name}`, import.meta.url)));
@@ -12,6 +13,124 @@ const [data, catalog, tables] = await Promise.all([
   read("battle-presentation.json"),
   read("raw/tables.json"),
 ]);
+
+test("source condition costumes and Imp select battle bodies without changing units or keeping a removed disguise", async () => {
+  const misc = (
+    await read("raw/bundles/misc_assets_all_b47bd0a260d7958797256f167ca4f198.json")
+  ).find((entry) => entry.data.change_character_condition_list);
+  const rules = compileBattleConditionAppearances(tables, misc.data, catalog.groups);
+  assert.deepEqual(
+    rules
+      .filter((row) => [665, 666].includes(row.conditionType))
+      .map((row) => [row.conditionType, row.fieldCharacterId, row.fieldAsset, row.asset]),
+    [
+      [665, 202, "mo_ff6_p021_c01", "bc_ff6_p021_c01"],
+      [666, 203, "mo_ff6_p025", "bc_ff6_p025"],
+    ],
+  );
+  assert.ok(rules.every((row) => /inferred|not declared/.test(row.reason)));
+  const warnings = [],
+    issues = [];
+  const view = Object.assign(Object.create(BattlePresentation.prototype), {
+    data,
+    catalog: { ...catalog, conditionAppearances: rules },
+    warn: (message) => warnings.push(message),
+    diagnostics: { record: (category, detail) => issues.push({ category, ...detail }) },
+  });
+  const unit = { ...structuredClone(data.characters[2]), side: "player", conditions: [79] };
+  let before = structuredClone(unit);
+  assert.equal(view.group(unit), catalog.groups.bc_ff6_p021_c01);
+  assert.deepEqual(unit, before);
+  unit.conditions = [80];
+  before = structuredClone(unit);
+  assert.equal(view.group(unit), catalog.groups.bc_ff6_p025);
+  assert.deepEqual(unit, before);
+  unit.conditions = [];
+  assert.equal(view.group(unit), catalog.groups.bc_ff6_p002);
+  // The source condition TYPE is authoritative, rather than just ID13, and
+  // the common status appearance applies to all party roles and enemy bodies.
+  view.data = { ...data, conditions: { ...data.conditions, 999: { condition_type: 601 } } };
+  for (const base of Object.values(data.characters))
+    assert.equal(
+      view.group({ ...base, side: "player", conditions: [999] }),
+      catalog.groups.bc_ff6_p016,
+    );
+  assert.equal(
+    view.group({ ...data.monsters[1], side: "enemy", conditions: [13] }),
+    catalog.groups.bc_ff6_p016,
+  );
+  assert.equal(
+    view.group({ ...data.characters[1], side: "player", conditions: [56, 13], trance: true }),
+    catalog.groups.bc_ff6_p001_tr,
+  );
+  assert.ok(
+    warnings.some((message) => message.includes("bc_ff6_p016") && message.includes("not declared")),
+  );
+  assert.ok(
+    issues.some(
+      (row) =>
+        row.category === "battle-special-appearance-binding-inferred" &&
+        row.asset === "bc_ff6_p025",
+    ),
+  );
+});
+
+test("actual Battle drawing replaces both sides with Imp and restores the original monster when removed", () => {
+  const battle = new Battle({
+    data,
+    party: [{ id: 2, conditions: [13] }],
+    encounterId: 3,
+    random: () => 0.5,
+  });
+  battle.enemies[0].conditions = [13];
+  const state = () =>
+    [...battle.players, ...battle.enemies].map(({ aiState, ...unit }) => ({
+      ...unit,
+      aiState: aiState ? { mode: aiState.mode, vars: aiState.vars } : null,
+    }));
+  const before = structuredClone(state());
+  const textures = new Map(),
+    infos = new Map(
+      [
+        ...Object.values(catalog.groups).flatMap(Object.values),
+        ...Object.values(data.monsters).map((row) => row.sprite),
+      ]
+        .filter(Boolean)
+        .map((info) => [info.url, info]),
+    );
+  const actors = new Container(),
+    effects = new Container();
+  const getTexture = (url) => {
+    if (!url) return null;
+    if (!textures.has(url)) {
+      const info = infos.get(url);
+      assert.ok(info, url);
+      textures.set(
+        url,
+        new Texture({ source: new TextureSource({ width: info.width, height: info.height }) }),
+      );
+    }
+    return textures.get(url);
+  };
+  const view = new BattlePresentation({ actors, effects, getTexture, warn: () => {} });
+  view.setCatalog(catalog);
+  view.draw(battle, data, 0);
+  for (const side of ["player", "enemy"]) {
+    assert.equal(view.row(side, 0).container.visible, true);
+    assert.equal(
+      view.row(side, 0).sprite.texture,
+      getTexture(catalog.groups.bc_ff6_p016.Default_00.url),
+    );
+  }
+  assert.deepEqual(state(), before);
+  battle.enemies[0].conditions = [];
+  view.draw(battle, data, 1);
+  assert.equal(view.row("enemy", 0).sprite.texture, getTexture(battle.enemies[0].sprite.url));
+  view.clear();
+  actors.destroy();
+  effects.destroy();
+  for (const texture of textures.values()) texture.destroy(false);
+});
 
 test("Narshe's PR party keeps Terra and both soldier riders on P022 armor, including an older ghost-sprite save", () => {
   const ghost = data.characters[17].sprite;

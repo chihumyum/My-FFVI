@@ -994,6 +994,10 @@ export class GameRenderer {
     hideUnused(this._fieldSprites, count);
     this._visibleActors = count;
     this.fieldPresentation.draw(game, { x: ox, y: oy }, data);
+    if (this.fieldPresentation.flightFrame) {
+      this.frameActors.push(this.fieldPresentation.flightFrame);
+      if (this.fieldPresentation.flightFrame.drawn) this._visibleActors++;
+    }
   }
 
   _drawBattle(game, battleData) {

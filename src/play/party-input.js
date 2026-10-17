@@ -1,6 +1,7 @@
 // Source party menus pause their calling task. This module handles the same
 // player input for manual UI and auto play; it never recruits a character,
 // writes plot flags, changes HP, moves a party, or dispatches a story script.
+import { setPartyAppearance } from "./appearance.js";
 export const partyInputSelectors = Object.freeze({
   "パーティ編成：１パーティ": "one",
   "パーティ編成：オペラ入場": "opera",
@@ -268,12 +269,7 @@ function leaderAppearance(game) {
   const id = game.partySlots[0]?.[0],
     unit = game.roster?.[id];
   if (!game.player || !unit) return;
-  const asset = game.data?.fieldAssets?.[id];
-  game.player.characterId = id;
-  game.player.asset =
-    typeof asset === "string"
-      ? asset
-      : (asset?.asset_name ?? `mo_ff6_p${String(id).padStart(3, "0")}`);
+  setPartyAppearance(game, game.player, unit);
 }
 
 function finish(game, accepted) {

@@ -173,7 +173,7 @@ export function compileBattle(tables, assets, media, play, nativeStones) {
       };
     }),
   );
-  const characterAssets = byId("character_asset"),
+  const characterAssets = rows("character_asset"),
     monsterAssets = byId("monster_asset");
   const characters = dictionary(
     rows("character_status").map((row) => {
@@ -194,7 +194,15 @@ export function compileBattle(tables, assets, media, play, nativeStones) {
         (g) => g.group_id === row.growth_curve_group_id && g.lv <= row.lv,
       );
       const weapon = equipment.find((item) => item.attack > 0);
-      const asset = characterAssets[row.character_asset_id]?.asset_name;
+      // character_asset_id selects a character group, not the CSV row ID.
+      // Each group has battle/portrait entries for every job; repeated moogle
+      // jobs have the same asset. The source job selects the battle body.
+      const asset = characterAssets.find(
+        (entry) =>
+          entry.character_id === row.character_asset_id &&
+          entry.job_id === row.job_id &&
+          entry.asset_type === 1,
+      )?.asset_name;
       const learned = rows("learning")
         .filter((l) => l.job_id === row.job_id && l.type_id === 1 && l.value1 <= row.lv)
         .map((l) => contents[l.content_id])
