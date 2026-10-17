@@ -23,6 +23,7 @@
     "play:asset-audit": "node tools/play/audit-presentation.mjs",
     "play:asset-decode": "node tools/play/check-asset-decode.mjs",
     "play:extras-check": "node tools/play/check-extras-browser.mjs",
+    "play:visual-check": "node tools/play/visual-regression.mjs",
     "play:ability-audit": "node tools/play/audit-play-abilities.mjs",
     "format": "prettier --write \"{src/play,apps/play,tools/export,tools/play}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
     "format:check": "prettier --check \"{src/play,apps/play,tools/export,tools/play}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",

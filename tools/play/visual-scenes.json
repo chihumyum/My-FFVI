@@ -1,0 +1,222 @@
+{
+  "boundaryDirectory": "build/play/acceptance/step-5/reference-frames",
+  "referenceDirectory": "build/play/acceptance/step-5/goldens",
+  "limits": {
+    "channelDelta": 8,
+    "differentPixels": 32
+  },
+  "scope": "Manually reviewed stable stills only. Pending occlusion, palette and special-camera questions are not approved by these references. Original assets and PNG references stay outside Git.",
+  "scenes": [
+    {
+      "sequence": 4,
+      "name": "纳尔谢开场远景",
+      "point": {
+        "kind": "context",
+        "mapId": 609,
+        "script": "sc_e_0001",
+        "instruction": 33,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 31,
+      "name": "魔导装甲与乘员",
+      "point": {
+        "kind": "battle",
+        "mapId": 3,
+        "script": "sc_e_0002",
+        "instruction": 5,
+        "programInstruction": null,
+        "encounterId": 3,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 54,
+      "name": "左右夹击阵型",
+      "point": {
+        "kind": "battle",
+        "mapId": 3,
+        "script": "sc_e_0006",
+        "instruction": 10,
+        "programInstruction": null,
+        "encounterId": 42,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 114,
+      "name": "蒂娜与照顾者",
+      "point": {
+        "kind": "context",
+        "mapId": 17,
+        "script": "sc_e_0012_2",
+        "instruction": 19,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 135,
+      "name": "纳尔谢矿坑",
+      "point": {
+        "kind": "context",
+        "mapId": 317,
+        "script": "sc_map_30011_1",
+        "instruction": 17,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 256,
+      "name": "步行世界地图",
+      "point": {
+        "kind": "context",
+        "mapId": 1,
+        "script": "sc_map_10010",
+        "instruction": 98,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 2
+    },
+    {
+      "sequence": 283,
+      "name": "费加罗中央门",
+      "point": {
+        "kind": "context",
+        "mapId": 31,
+        "script": "sc_map_20051_10",
+        "instruction": 13,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 503,
+      "name": "科尔兹山加法瀑布",
+      "point": {
+        "kind": "context",
+        "mapId": 340,
+        "script": "sc_map_30041_6",
+        "instruction": 2,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 2022,
+      "name": "歌剧院包厢远景",
+      "point": {
+        "kind": "context",
+        "mapId": 114,
+        "script": "sc_map_20161_2",
+        "instruction": 93,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 2523,
+      "name": "地下熔岩材质",
+      "point": {
+        "kind": "program-entry",
+        "mapId": 407,
+        "script": "sc_map_30531_3",
+        "instruction": 4,
+        "programInstruction": 0,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 2985,
+      "name": "幻兽洞窟瀑布",
+      "point": {
+        "kind": "context",
+        "mapId": 425,
+        "script": "sc_e_0546",
+        "instruction": 72,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 2
+    },
+    {
+      "sequence": 3455,
+      "name": "孤岛海面远景",
+      "point": {
+        "kind": "context",
+        "mapId": 193,
+        "script": "sc_e_0627_2",
+        "instruction": 4,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 4374,
+      "name": "最终战合成背景",
+      "point": {
+        "kind": "battle",
+        "mapId": 571,
+        "script": "sc_e_1004",
+        "instruction": 58,
+        "programInstruction": null,
+        "encounterId": 472,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 4499,
+      "name": "猎隼号蓝天甲板",
+      "point": {
+        "kind": "context",
+        "mapId": 268,
+        "script": "sc_e_1030_3",
+        "instruction": 165,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 1
+    },
+    {
+      "sequence": 4613,
+      "name": "结局甲板与队伍",
+      "point": {
+        "kind": "context",
+        "mapId": 268,
+        "script": "sc_e_1032_15",
+        "instruction": 214,
+        "programInstruction": null,
+        "encounterId": null,
+        "outcome": null
+      },
+      "occurrence": 1
+    }
+  ],
+  "throughM3": [4, 31, 54, 114, 135, 256, 283, 503]
+}

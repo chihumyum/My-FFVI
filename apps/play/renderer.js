@@ -1301,6 +1301,21 @@ export class GameRenderer {
     this.layers.effects.setChildIndex(this._fade, this.layers.effects.children.length - 1);
     this.layers.effects.setChildIndex(this._flashSprite, this.layers.effects.children.length - 1);
     this.app.render();
+    const renderer = this.app.renderer;
+    if (
+      renderer.accessibility?.isActive &&
+      renderer.backBuffer?.useBackBuffer &&
+      !renderer.renderingToScreen &&
+      renderer.renderTarget.renderTarget?.isRoot
+    ) {
+      // Pixi8.22 presents the back buffer to the canvas in renderEnd, but its
+      // root-pass flag still describes the intermediate texture. Accessibility
+      // then skips postrender. Rebind the already presented screen through the
+      // public render-target API without clearing/drawing, and update its DOM.
+      renderer.renderTarget.renderStart({ target: renderer.view.renderTarget, clear: false });
+      renderer.accessibility.postrender();
+      this._accessibilityScreenSyncs = (this._accessibilityScreenSyncs || 0) + 1;
+    }
     this._renderedGame = game;
     this._renderedFrame = {
       mapId: game?.mapId ?? null,
@@ -1331,6 +1346,7 @@ export class GameRenderer {
       fps: this._frameIntervals.length ? 1000 / mean(this._frameIntervals) : 0,
       sampleFrames: this._frameIntervals.length,
       frames: this._frameCount,
+      accessibilityScreenSyncs: this._accessibilityScreenSyncs || 0,
       renderMs: mean(this._renderTimes),
       renderMaxMs: Math.max(0, ...this._renderTimes),
       logicalWidth: this._width,

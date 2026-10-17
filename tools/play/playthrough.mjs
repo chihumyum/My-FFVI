@@ -11,6 +11,7 @@ import { storyChoice } from "../../src/play/story-plan.js";
 import { PresentationAudit } from "./audit-presentation.mjs";
 import { AppearanceObserver } from "./appearance-observer.mjs";
 import { BoundaryCheckpoints } from "./boundary-checkpoints.mjs";
+import { selectVisualPoints } from "./visual-points.mjs";
 const dataRoot = process.env.PLAY_DATA_DIR || "build/web-data";
 const reportFile = process.env.PLAY_REPORT || "build/play/playthrough.json";
 const assetAuditFile =
@@ -59,6 +60,19 @@ const appearanceAudit = appearanceAuditFile ? await AppearanceObserver.open({ da
 const boundaryCheckpoints = process.env.PLAY_BOUNDARY_DIR
   ? await new BoundaryCheckpoints(process.env.PLAY_BOUNDARY_DIR, assetAudit).open()
   : null;
+const currentVisualDirectory =
+    process.env.PLAY_TEST_BOOST === "1" &&
+    (!process.env.PLAY_THROUGH || process.env.PLAY_THROUGH === "all") &&
+    !process.env.PLAY_RESUME
+      ? reportFile.replace(/\.[^/.]+$/, "") + "-visual-frames"
+      : null,
+  visualConfig = JSON.parse(await readFile(new URL("./visual-scenes.json", import.meta.url))),
+  currentVisualCheckpoints = currentVisualDirectory
+    ? await new BoundaryCheckpoints(currentVisualDirectory, assetAudit, {
+        select: selectVisualPoints(visualConfig.scenes),
+      }).open()
+    : null,
+  checkpointObservers = [boundaryCheckpoints, currentVisualCheckpoints].filter(Boolean);
 if (appearanceAudit && !assetAudit)
   throw Error("Appearance acceptance requires presentation audit");
 let through = process.env.PLAY_THROUGH;
@@ -79,7 +93,8 @@ class RegressionGame extends ObservedGame {
       sourceProgram = assetAudit && this.data.programs[task.program],
       sourceOp = sourceProgram?.ops[sourceIndex];
     appearanceAudit?.instruction(this, task, sourceProgram, sourceIndex, sourceOp);
-    boundaryCheckpoints?.instruction(this, task, sourceProgram, sourceIndex);
+    for (const observer of checkpointObservers)
+      observer.instruction(this, task, sourceProgram, sourceIndex);
     if (coverage) {
       coverage.programs.add(String(task.program));
       coverage.operations.add(`${task.program}:${task.pc}`);
@@ -110,7 +125,7 @@ class RegressionGame extends ObservedGame {
 }
 const game = new RegressionGame({
   onPresentation: (event) => {
-    boundaryCheckpoints?.presentationEvent(event);
+    for (const observer of checkpointObservers) observer.presentationEvent(event);
     presentationCounts[event.name] = (presentationCounts[event.name] || 0) + 1;
   },
   data,
@@ -123,7 +138,7 @@ const game = new RegressionGame({
     packed ? packed.loadMap(id) : JSON.parse(await readFile(`${dataRoot}/maps/${id}.json`)),
   onEvent: (e) => {
     assetAudit?.event(game, e);
-    boundaryCheckpoints?.event(game, e);
+    for (const observer of checkpointObservers) observer.event(game, e);
     if (["script", "map", "battle", "battle-end"].includes(e.kind)) {
       events.push(e);
       if (e.kind === "script" && last !== e.script) {
@@ -219,8 +234,10 @@ for (let tick = 0; tick < Number(process.env.TICKS || 120000); tick++) {
   if (game.loading) await game.pending;
   assetAudit?.observe(game);
   appearanceAudit?.observe(game, assetAudit);
-  boundaryCheckpoints?.observe(game);
-  if (boundaryCheckpoints?.writes.length > 24) await boundaryCheckpoints.flush();
+  for (const observer of checkpointObservers) {
+    observer.observe(game);
+    if (observer.writes.length > 24) await observer.flush();
+  }
   if (observedBattle && observedBattle.phase !== "active") {
     recordBattle(observedBattle);
     observedBattle = null;
@@ -382,17 +399,18 @@ const result = {
   groups: [...game.groups],
   events,
 };
-await boundaryCheckpoints?.finish({
-  start: result.start,
-  mode: result.mode,
-  stop,
-  time: game.time,
-  battles: game.battles.length,
-  titleScreen: game.titleScreen,
-  finalBattleVictory: game.battles.some(
-    (row) => row.encounterId === 472 && row.outcome === "victory",
-  ),
-});
+for (const observer of checkpointObservers)
+  await observer.finish({
+    start: result.start,
+    mode: result.mode,
+    stop,
+    time: game.time,
+    battles: game.battles.length,
+    titleScreen: game.titleScreen,
+    finalBattleVictory: game.battles.some(
+      (row) => row.encounterId === 472 && row.outcome === "victory",
+    ),
+  });
 await writeFile(reportFile, JSON.stringify(result, null, 2));
 if (appearanceAudit)
   await appearanceAudit.write(appearanceAuditFile, {
@@ -462,3 +480,19 @@ if (coverage)
       2,
     ) + "\n",
   );
+
+// Visual regression is independent of the story player's choices. It restores
+// reviewed frozen browser frames; it must never steer this game or loosen a
+// reference to turn a failure into a pass.
+const { visualRegression } = await import("./visual-regression.mjs"),
+  visualReportFile = reportFile.replace(/\.[^/.]+$/, "") + "-visual.json",
+  visualResult = await visualRegression({
+    reportFile: visualReportFile,
+    dataRoot,
+    staticRoot: process.env.PLAY_STATIC_DIR,
+    boundaryDirectory: currentVisualDirectory,
+  });
+result.visualRegression = { report: visualReportFile, status: visualResult.status };
+await writeFile(reportFile, JSON.stringify(result, null, 2));
+console.log(JSON.stringify({ visualRegression: visualResult.status, report: visualReportFile }));
+if (visualResult.status !== "passed") process.exitCode = 1;

@@ -775,3 +775,12 @@ await writeFile(
     "\n",
 );
 if (results.some((r) => r.stop !== "passed")) process.exitCode = 1;
+
+const { visualRegression } = await import("./visual-regression.mjs"),
+  visualResult = await visualRegression({
+    reportFile: path.join(out, "visual-regression/report.json"),
+    dataRoot: process.env.PLAY_DATA_DIR || "build/web-data",
+    staticRoot: process.env.PLAY_STATIC_DIR,
+  });
+console.log(JSON.stringify({ visualRegression: visualResult.status }));
+if (visualResult.status !== "passed") process.exitCode = 1;

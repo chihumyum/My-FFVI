@@ -18,7 +18,7 @@ const animationCommands = new Set([
 // random, cursors, inputs or the regression policy. Bytes are frozen synchronously
 // at the event; filesystem writes may finish later.
 export class BoundaryCheckpoints {
-  constructor(directory, presentationAudit) {
+  constructor(directory, presentationAudit, { select } = {}) {
     this.directory = directory;
     this.presentation = presentationAudit;
     this.entries = [];
@@ -27,6 +27,8 @@ export class BoundaryCheckpoints {
     this.recentEvents = [];
     this.pending = [];
     this.programEntries = new Set();
+    this.select = select;
+    this.sequence = 0;
   }
   async open() {
     await mkdir(this.directory, { recursive: true });
@@ -84,7 +86,7 @@ export class BoundaryCheckpoints {
     if (ready.length) this.capture(game, "context", { parents: ready.map((row) => row.parent) });
   }
   capture(game, kind, event = {}, displayBattle = null) {
-    const sequence = this.entries.length + 1,
+    const sequence = ++this.sequence,
       battle = displayBattle || game.battle;
     const metadata = {
       sequence,
@@ -104,6 +106,11 @@ export class BoundaryCheckpoints {
       dialogue: !!game.dialogue,
       fade: game.fade && { ...game.fade },
     };
+    if (this.select) {
+      const selected = this.select(metadata);
+      if (!selected) return metadata;
+      Object.assign(metadata, selected);
+    }
     const name = `${String(sequence).padStart(5, "0")}-${kind}-${game.mapId}`;
     metadata.file = `${name}.json`;
     const actors = [game.player, ...game.actors.values(), ...(game.partyPositions || [])];
@@ -164,8 +171,10 @@ export class BoundaryCheckpoints {
       schema: "ffvi-boundary-checkpoints",
       run,
       counts,
-      scope:
-        "Every emitted map/story-script/battle start/end, a supplementary first-entry frame for each executed program (including initializer, NPC/actor and called programs), plus visible context frames after at least half a second. Frozen VM/battle/presentation state, not playable saves. Exact black/faded boundaries are retained. Context frames may be absent when the source leaves the map earlier. No game simulation occurs during screenshot restore.",
+      selection: this.select ? "Explicit current-run visual reference points" : "Every boundary",
+      scope: this.select
+        ? "Selected source points from this actual regression run; other boundaries still participate in context timing and occurrence counting but are not serialized. No old state, normalization or story input is substituted. Frozen VM/battle/presentation frames, not playable saves."
+        : "Every emitted map/story-script/battle start/end, a supplementary first-entry frame for each executed program (including initializer, NPC/actor and called programs), plus visible context frames after at least half a second. Frozen VM/battle/presentation state, not playable saves. Exact black/faded boundaries are retained. Context frames may be absent when the source leaves the map earlier. No game simulation occurs during screenshot restore.",
       entries: this.entries,
     };
     await writeFile(path.join(this.directory, "manifest.json"), JSON.stringify(manifest, null, 2));

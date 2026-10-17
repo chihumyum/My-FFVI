@@ -1,8 +1,8 @@
 # FFVI Web 状态
 
 ## 能玩到哪
-- 阶段 A 第 1–4 步完成并分别回归：强化新游戏→结局 185 战、最终战胜利、返回标题。清单 build/play/acceptance/step-{1,2,3,4}/summary.json。
-- 第 4 步真实静态 WebGL 截图 4,625 张、290 墙逐格复核；修复 16 类共用问题，截图加载/浏览器错误 0。step-4/screenshots-final/、capture-coverage.json。标准图/数值/Boss/兼容验收待第 5–7 步。
+- 阶段 A 第 1–5 步完成并分别回归：强化新游戏→结局 185 战、最终战胜利、返回标题。清单 build/play/acceptance/step-{1,2,3,4,5}/summary.json。
+- 第 4 步真实 WebGL 截图 4,625 张、290 墙逐格复核，修复 16 类共用问题。第 5 步当次主线 15 处标准图像素差异 0，隐藏角色的故障检验有效；另修 Pixi backbuffer 导致控件不可点击，Chromium/WebKit 控件检查通过。数值/Boss/完整兼容待第 6–7 步。
 - 额外内容已高清化：24/32 缩略图、搜索、原画缩放/拖动；游戏画面比例保持。截图 step-2/extras/。
 
 ## 已知问题
