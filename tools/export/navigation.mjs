@@ -36,6 +36,7 @@ function geometryEntity(entity, group) {
         allLayers: entity[key].allLayers,
         acceptDirection: entity[key].acceptDirection,
         moveType: entity[key].moveType,
+        moveAreaId: entity[key].moveAreaId,
         interaction: entity[key].interaction,
       };
   if (entity.treasure)

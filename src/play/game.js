@@ -13,6 +13,7 @@ import {
   sameCellFieldInteraction,
   dispatchFieldInteraction,
 } from "./field-interaction.js";
+import { updateNpcMovement, tryNpcContact } from "./npc-movement.js";
 import { executePartyInput, autoPartyInput } from "./party-input.js";
 import { walkEncounter, worldCollisionAt } from "./encounters.js";
 import {
@@ -486,6 +487,7 @@ export class PlayGame {
       (t) => !t.done || this.tasks.some((o) => o.children.includes(t)),
     );
     updateCooperativeInput(this);
+    updateNpcMovement(this, dt);
     if (!this.busy) this.tickNpc(dt);
   }
   finishTask(t) {
@@ -1193,6 +1195,8 @@ export class PlayGame {
       const door = openableDoorAt(this, x, y, this.player.layer, direction);
       if (door) openFieldDoor(this, door);
       if (!this.canMove(x, y)) {
+        const blocked = fieldBlockerAt(this, x, y, this.player.layer);
+        if (blocked && tryNpcContact(this, blocked.entity)) return false;
         this.walkCache = null;
         if (this.rts?.active) this.checkTriggers();
         return false;

@@ -193,6 +193,11 @@ export function compileMap(row, binding, tables, media, messages) {
           entity.npc = {
             ...interaction(p, script),
             moveType: Number(p.move_type || 0),
+            moveSpeedId: Number(p.move_speed_id ?? 0),
+            moveIntervalId: Number(p.move_interval_id ?? 0),
+            moveStep: Number(p.move_step ?? 1),
+            moveAreaId: Number(p.link_object_id || 0),
+            moveWhileDisplayMessage: Boolean(p.move_while_display_message),
             pushed: Boolean(p.pushed),
             eyeContact: Boolean(p.eye_contact),
             turnAround: Boolean(p.turn_around),
