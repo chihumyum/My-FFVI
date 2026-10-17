@@ -40,6 +40,17 @@ const continentRoutes = [
   [590, [63, 41, 2], "U5"],
   [592, [63, 36, 2], "U4 L1 U1 L2 U7"],
 ];
+const towerPlatformRoutes = [
+  [542, [43, 21, 1], "R6 D8 L4 U1 L2 U1 L4"],
+  [553, [17, 52, 1], "U9 L5 D1 L1 D13 L2 D1 L1 D1 L1 D1"],
+  [554, [86, 49, 1], "D10 L5 D1"],
+  [555, [15, 11, 1], "D6 L2 D1 L2 U1 L4 U1 L2 U1 L1 U4 R2 U1 R1 U1 R1 U1 R1 U1 R3 U1"],
+  [556, [18, 14, 1], "U4 L2 D3 L5"],
+  [556, [11, 11, 1], "U3 L5"],
+  [542, [17, 35, 1], "D4 L1 D7 R1 D4"],
+  [542, [16, 47, 1], "R1 D3"],
+  [560, [89, 9, 1], "D1 L1 D4 L1"],
+];
 const expand = (steps) =>
   steps
     .split(" ")
@@ -65,6 +76,24 @@ function recordedWalk(game, x, y, layer, directions, route) {
 }
 
 export function fixedStoryInput(game, objective) {
+  if (objective.id === "tower-platform") {
+    // The second party reaches the right-hand switch through the prison and
+    // ladder. Crossing the centre room's still-closed side barriers is invalid.
+    if (game.partyIndex !== 1) {
+      game.switchParty();
+      return { status: "fixed-input", route: "tower-platform", action: "switch-party" };
+    }
+    for (const [map, start, steps] of towerPlatformRoutes) {
+      if (map !== game.mapId) continue;
+      const walking = recordedWalk(game, ...start, expand(steps), "tower-platform");
+      if (walking) return walking;
+    }
+    if (game.mapId === 556 && game.player.x === 11 && game.player.y === 13) {
+      game.move("up");
+      if (!game.busy) game.confirm();
+      return { status: "fixed-input", route: "tower-platform", action: "climb-ladder" };
+    }
+  }
   if (objective.id === "figaro-engine-approach" && game.mapId === 454)
     return recordedWalk(
       game,
