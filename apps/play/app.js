@@ -15,6 +15,8 @@ import {
   isAudioInstruction,
 } from "./presentation-events.js";
 import { createBattleMenu } from "./battle-menu.js";
+import { BattleFlow } from "./battle-flow.js";
+import { mapAudioCommands, legacySceneAudio } from "./scene-audio.js";
 import {
   isTextEntry,
   mountTouchControls,
@@ -68,6 +70,9 @@ let data,
   autosavePending = false,
   titlePending = false;
 const audio = new WebAudioPlayer();
+const audioHistory = [];
+const battleFlow = new BattleFlow({ audio, emit: (event) => renderer.event(event) });
+window.ffviBattleFlow = () => battleFlow.diagnostics();
 const opera = new OperaHost(renderer, audio);
 renderer.onBattleSound = (id) =>
   audio
@@ -106,7 +111,20 @@ function presentation(command) {
     renderer.event(command);
     return;
   }
-  const result = opera.command(command);
+  audioHistory.push({
+    name: command.name,
+    i: command.i,
+    r: command.r,
+    mapId: command.mapId ?? game?.mapId,
+    script: command.script ?? game?.lastInstruction?.script,
+    index: command.index ?? game?.lastInstruction?.index,
+    time: game?.time,
+  });
+  if (audioHistory.length > 40) audioHistory.shift();
+  battleFlow.audioCommand(command);
+  const result = opera.command(
+    command.name === "SyncBGM" && (auto || walking) ? { ...command, skipTrackEnd: true } : command,
+  );
   result?.catch?.((error) => audio.warn(error.message));
 }
 function event(e) {
@@ -121,13 +139,24 @@ function event(e) {
       choices: null,
     };
   if (e.kind === "battle-message-close" || e.kind === "battle-end") battleDialogue = null;
-  if (["map", "battle-action", "battle-party", "battle-end"].includes(e.kind)) renderer.event(e);
+  if (e.kind === "map") {
+    renderer.event(e);
+    for (const command of mapAudioCommands(data.maps[e.mapId]))
+      presentation({ ...command, mapId: e.mapId, script: "map.csv", index: null });
+  }
+  if (["battle", "battle-action", "battle-party", "battle-end"].includes(e.kind))
+    battleFlow.event(e, game?.battle);
   if ((e.kind === "bgm" || e.kind === "se") && !observingAudioInstruction(game)) {
     const engine = game?.battle?.events;
     const op = engine?.program?.ops?.[engine.pc - 1];
     if (op && isAudioInstruction(op[0]))
       presentation({ name: op[0], i: op[1], r: op[2], s: op[3] });
-    else opera.event(e)?.catch?.((error) => audio.warn(error.message));
+    else
+      presentation({
+        name: e.kind === "bgm" ? "PlayBGM" : "PlaySE",
+        i: [e.id],
+        r: [e.fade || 0],
+      });
   }
   if (e.kind === "battle-effect") {
     if (isAudioInstruction(e.name)) presentation(e);
@@ -145,8 +174,11 @@ function event(e) {
 }
 async function start(saved = null, testBoost = false) {
   eventHistory.clear();
+  audioHistory.length = 0;
   if (extras.active) extras.close();
   opera.reset();
+  battleFlow.reset();
+  renderer.heldBattle = null;
   renderer.resetPresentation();
   battleDialogue = null;
   $("new").disabled = true;
@@ -162,6 +194,11 @@ async function start(saved = null, testBoost = false) {
     ui.setCharacters(battleData.characters);
     game = new PresentationGame({
       onPresentation: presentation,
+      yieldPresentation: (name) => name === "SyncBGM" && audio.syncPending,
+      onAudioSnapshot: () => ({
+        ...audio.saveState(),
+        ...(battleFlow.battle ? { music: battleFlow.previousMusic } : {}),
+      }),
       data,
       battleData,
       Battle,
@@ -172,8 +209,17 @@ async function start(saved = null, testBoost = false) {
     });
     game.autoChoice = (g) => (walking ? storyChoice(g) : 0);
     window.ffvi = game;
-    if (saved) await game.restore(saved, { testBoost });
-    else await game.start();
+    audio.playMusic(0);
+    audio.stopEffects("environment");
+    audio.savedMusic = null;
+    if (saved) {
+      await game.restore(saved, { testBoost });
+      if (saved.audio?.version === 1) await audio.restore(saved.audio);
+      else {
+        const commands = await legacySceneAudio(saved, { data, battleData, map: game.map });
+        for (const command of commands) presentation(command);
+      }
+    } else await game.start();
     $("mode").hidden = !game.testBoost;
     started = true;
     autosavePending = false;
@@ -305,6 +351,8 @@ async function reportBug() {
   try {
     renderer.render(started ? game : null, data, battleData);
     const report = describeBugState(game, renderer, eventHistory.read(), ui.presentation.mapNames);
+    report.battlePresentation = battleFlow.diagnostics();
+    report.audio = { ...audio.snapshot(), commands: [...audioHistory] };
     report.screenshot = {
       mimeType: "image/png",
       dataURL: await renderer.captureFrame(),
@@ -331,6 +379,11 @@ function gameKeyDown(e) {
     return;
   }
   if (isTextEntry(e.target) || isTextEntry(document.activeElement)) return;
+  if (battleFlow.busy && !paused) {
+    if ([" ", "Enter"].includes(e.key) && !e.repeat) battleFlow.confirm();
+    e.preventDefault();
+    return;
+  }
   if (extras.active) {
     if (e.key === "Escape") {
       extras.close();
@@ -598,9 +651,15 @@ const battleMenu = createBattleMenu({
   targets: $("targets"),
   status: $("battle-status"),
   createElement: createWidget,
+  isBlocked: () => battleFlow.busy,
 });
 renderer.canSelectBattleTarget = (side, index) =>
-  !paused && !battleDialogue && !game?.dialogue && !auto && battleMenu.canSelectTarget(side, index);
+  !battleFlow.busy &&
+  !paused &&
+  !battleDialogue &&
+  !game?.dialogue &&
+  !auto &&
+  battleMenu.canSelectTarget(side, index);
 renderer.onBattleTarget = (side, index) => battleMenu.selectTarget(side, index);
 $("escape").onclick = () => game?.battle?.requestEscape();
 $("shop-close").onclick = () => {
@@ -692,6 +751,55 @@ $("formation-cancel").onclick = () => {
   renderFormation();
 };
 
+let lastBattleResult = null;
+$("battle-result-confirm").onclick = () => battleFlow.confirm();
+function renderBattleFlow() {
+  const locked = battleFlow.busy;
+  $("battle-status").playbackLocked = locked;
+  $("commands").hidden = locked;
+  $("targets").hidden = locked;
+  $("escape").hidden = locked;
+  if (battleFlow.view) {
+    $("battle-status").battleModel = battleFlow.view;
+    if (locked)
+      $("battle-status").textContent = JSON.stringify([
+        battleFlow.view.players.map((u) => [u.hp, u.mp, u.atb]),
+        battleFlow.view.log.at(-1),
+        battleFlow.phase,
+      ]);
+  }
+  if (locked) $("battle-status").activeActor = -1;
+  $("battle-action").hidden = !battleFlow.banner;
+  $("battle-action-name").textContent = battleFlow.banner;
+  const result = battleFlow.phase === "result" ? battleFlow.result : null;
+  $("battle-result").hidden = !result;
+  if (lastBattleResult === result) return;
+  lastBattleResult = result;
+  if (!result) return;
+  $("battle-reward-summary").textContent =
+    `获得 ${result.gil} Gil　·　${result.ap} AP　·　总经验 ${result.exp}`;
+  $("battle-reward-members").replaceChildren(
+    ...result.players.map((unit) => {
+      const row = createWidget("p");
+      const learned = unit.learned.map((id) => battleData.abilities[id]?.name || `技能 ${id}`);
+      row.textContent =
+        `${unit.name}　Lv.${unit.level}　EXP +${unit.exp}` +
+        (unit.levels > 0 ? `　升级 ↑${unit.levels}` : "") +
+        (learned.length ? `　学会 ${learned.join("、")}` : "");
+      return row;
+    }),
+  );
+  const drops = new Map();
+  for (const item of result.drops || [])
+    drops.set(item.id, (drops.get(item.id) || 0) + (item.count || 1));
+  $("battle-reward-items").textContent = drops.size
+    ? "获得道具：" +
+      [...drops]
+        .map(([id, count]) => `${battleData.contentNames[id] || `道具 ${id}`} ×${count}`)
+        .join("、")
+    : "没有获得道具";
+}
+
 function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
@@ -700,10 +808,17 @@ function loop(now) {
     return;
   }
   if (started && game && !acceptanceLoading) {
-    if (!paused && !opera.busy && (!battleDialogue || auto)) {
+    if (!paused) battleFlow.update(dt, { auto, fast: walking && auto });
+    if (
+      !paused &&
+      !opera.busy &&
+      !battleFlow.busy &&
+      !audio.syncPending &&
+      (!battleDialogue || auto)
+    ) {
       for (let n = 0; n < (auto ? (game.testBoost ? 16 : 4) : 1); n++) {
         game.tick(dt, { auto });
-        if (opera.busy) {
+        if (opera.busy || battleFlow.busy || audio.syncPending) {
           keys.clear();
           break;
         }
@@ -767,18 +882,21 @@ function loop(now) {
         ])
           if (keys.has(k)) game.move(d);
     }
-    if (game.battle) {
+    if (game.battle && !battleFlow.busy) {
       $("escape").disabled = !game.battle.canEscape;
       $("escape").textContent = game.battle.escapeState?.active ? "正在逃跑…" : "逃跑";
       battleMenu.update(game.battle);
     }
+    renderBattleFlow();
     renderFormation();
     renderNaming();
     renderShop();
     renderColosseum();
     renderVehicle();
-    const dialogue = battleDialogue || game.dialogue;
-    $("battle").hidden = !game.battle || !!dialogue;
+    const dialogue = battleFlow.busy ? null : battleDialogue || game.dialogue;
+    $("battle").hidden =
+      !(game.battle || battleFlow.view) || !!dialogue || battleFlow.phase === "result";
+    $("over").hidden = !game.over || battleFlow.busy;
     $("switch").hidden = !game.rts?.active;
     $("dialogue").hidden = !dialogue;
     if (dialogue) {
@@ -809,6 +927,7 @@ function loop(now) {
   );
   ui.render();
   opera.update(dt);
+  renderer.heldBattle = battleFlow.view;
   renderer.render(started ? game : null, data, battleData);
   requestAnimationFrame(loop);
 }
@@ -832,6 +951,8 @@ if (new URLSearchParams(location.search).get("acceptance") === "1") {
       paused = true;
       walking = auto = false;
       opera.reset();
+      battleFlow.reset();
+      renderer.heldBattle = null;
       renderer.resetPresentation();
       battleDialogue = null;
       repository ||= new WebData(webIndexURL());
@@ -869,6 +990,8 @@ if (new URLSearchParams(location.search).get("acceptance") === "1") {
         "over",
         "dialogue",
         "battle",
+        "battle-action",
+        "battle-result",
         "shop",
         "formation",
         "colosseum",

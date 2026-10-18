@@ -5,6 +5,7 @@ import { packageBinding, compileMap } from "./maps.mjs";
 import { compileBattle } from "./battle.mjs";
 import { compileNavigation } from "./navigation.mjs";
 import { compileAppearanceConditions } from "./appearances.mjs";
+import { compileMapAudio } from "./map-audio.mjs";
 
 const read = async (file) => JSON.parse(await readFile(file, "utf8"));
 const identity = (asset) => `${asset.source.file}::${asset.source.assetPath}`.toLowerCase();
@@ -176,6 +177,7 @@ export async function compileRuntime(out) {
     );
     characters[key] = { animation: { data: asset.data }, sprites };
   }
+  const mapAudio = compileMapAudio(tables["map.csv"]);
   const data = {
     systemTables: Object.fromEntries(
       [
@@ -202,7 +204,15 @@ export async function compileRuntime(out) {
     messages,
     speakers: text.story_cha_zhc?.values || {},
     characters,
-    maps: Object.fromEntries(sourceMaps.map((map) => [map.id, { name: map.name }])),
+    maps: Object.fromEntries(
+      sourceMaps.map((map) => [
+        map.id,
+        {
+          name: map.name,
+          ...mapAudio[map.id],
+        },
+      ]),
+    ),
     audio,
     init: tables["initialize_data.csv"],
     scriptIds: Object.fromEntries(

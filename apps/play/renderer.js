@@ -11,6 +11,7 @@ import {
 } from "pixi.js";
 
 import { BattlePresentation } from "./battle-presentation.js";
+import { OpeningMarch } from "./opening-march.js";
 import { PRParticles } from "./particles.js";
 import { EffectLibrary } from "./effects.js";
 import { FieldPresentation } from "./field-presentation.js";
@@ -172,6 +173,13 @@ export class GameRenderer {
       getTexture: (url, details) => this._texture(url, { entityId: "scene", ...details }),
       warn: (key, message) => this._warnOnce(key, message),
       sampleActor: (actor, character, time) => this.fieldAnimations.sample(actor, character, time),
+    });
+    this.openingMarch = new OpeningMarch({
+      parent: this.layers.near,
+      getTexture: (url, details) => this._texture(url, details),
+      sample: (actor, character, time) => this.fieldAnimations.sample(actor, character, time),
+      warn: (key, message) => this._warnOnce(key, message),
+      diagnostics: this.diagnostics,
     });
   }
 
@@ -1275,8 +1283,11 @@ export class GameRenderer {
     this._previousFrame = start;
     this._visibleTiles = 0;
     this._visibleActors = 0;
+    this.openingMarch.container.visible = false;
     const displayedBattle =
-      game?.battle || (this._battleExit?.until > start / 1000 ? this._battleExit.battle : null);
+      this.heldBattle ||
+      game?.battle ||
+      (this._battleExit?.until > start / 1000 ? this._battleExit.battle : null);
     const inBattle = !!displayedBattle;
     this.fieldPresentation.prepare(game, inBattle);
     this._viewport(inBattle);
@@ -1301,8 +1312,15 @@ export class GameRenderer {
       hideUnused(this._battleSprites, 0);
       hideUnused(this._battleNames, 0);
       hideUnused(this._battleTargets, 0);
-      this._drawMap(game || {}, data);
-      this.fieldPresentation.project(this.app.renderer, this.layers, game);
+      if (this.openingMarch.matches(game)) {
+        hideUnused(this._fieldSprites, 0);
+        this.layers.mapLayers.visible = this.layers.actors.visible = false;
+        this.frameActors = this.openingMarch.draw(game, data, this.fieldPresentation.catalog);
+        this._visibleActors = this.frameActors.filter((row) => row.drawn).length;
+      } else {
+        this._drawMap(game || {}, data);
+        this.fieldPresentation.project(this.app.renderer, this.layers, game);
+      }
     }
     this._fade.alpha = sceneFadeAlpha(game?.fade, game?.time || 0, inBattle);
     this._fade.visible = this._fade.alpha > 0;

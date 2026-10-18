@@ -5,6 +5,7 @@ export function createBattleMenu({
   targets,
   status,
   createElement = document.createElement.bind(document),
+  isBlocked = () => false,
 }) {
   let battle = null,
     index = -1,
@@ -18,7 +19,9 @@ export function createBattleMenu({
     const b = createElement("button");
     b.textContent = label;
     b.disabled = disabled;
-    b.onclick = run;
+    b.onclick = () => {
+      if (!isBlocked()) run();
+    };
     return b;
   };
   const invalidate = () => {
@@ -70,7 +73,7 @@ export function createBattleMenu({
     invalidate();
   };
   const canSelectTarget = (side, n) => {
-    if (!selection || battle?.phase !== "active") return false;
+    if (isBlocked() || !selection || battle?.phase !== "active") return false;
     const sides = selection.targetSides ?? [selection.target === "ally" ? "player" : "enemy"];
     const unit = (side === "player" ? battle.players : battle.enemies)[n];
     return sides.includes(side) && !!unit && battle.eligibleTarget(unit, selection);
@@ -156,7 +159,7 @@ export function createBattleMenu({
     commands.dataset.submenu = menu ? String(menu.commandId) : "";
     status.activeActor = index;
     status.selectActor = (i) => {
-      if (eligible(battle.players[i] ?? {})) {
+      if (!isBlocked() && eligible(battle.players[i] ?? {})) {
         index = i;
         close();
       }

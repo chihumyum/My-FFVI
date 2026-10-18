@@ -83,7 +83,26 @@ export class BoundaryCheckpoints {
     }
     const ready = this.pending.filter((row) => row.at <= game.time && row.mapId === game.mapId);
     this.pending = this.pending.filter((row) => row.at > game.time && row.mapId === game.mapId);
-    if (ready.length) this.capture(game, "context", { parents: ready.map((row) => row.parent) });
+    if (ready.length) {
+      const context = this.capture(game, "context", { parents: ready.map((row) => row.parent) });
+      if (this.select && !context.file) this.missedContext = context;
+    }
+  }
+  completedInstruction(game, task, program, index) {
+    // A half-second context can coincide with a child puppet's Exit rather
+    // than the foreground Exit requested by a reviewed reference. Preserve
+    // the exact configured source point by also observing its real completion;
+    // never substitute an old save or change the pixel comparison threshold.
+    const missed = this.missedContext;
+    if (
+      !this.select ||
+      task.actor !== null ||
+      program?.ops[index]?.[0] !== "Exit" ||
+      missed?.mapId !== game.mapId ||
+      missed?.script !== program.name
+    )
+      return;
+    this.capture(game, "context", { script: program.name, parents: missed.parents });
   }
   capture(game, kind, event = {}, displayBattle = null) {
     const sequence = ++this.sequence,

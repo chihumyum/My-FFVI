@@ -1,6 +1,7 @@
 // Observe executed PR presentation instructions without changing the game VM,
 // its program counters, waits, random stream, state, or existing events.
 const listening = new WeakMap();
+const hostYield = Symbol("presentation host yield");
 const audioInstructions = new Set([
   "PlayBGM",
   "ReplayBgm",
@@ -49,10 +50,26 @@ export const observingAudioInstruction = (game) => Boolean(listening.get(game));
 export const isAudioInstruction = (name) => audioInstructions.has(name);
 export function withPresentation(Base) {
   return class PresentationGame extends Base {
-    constructor({ onPresentation, ...options }) {
+    constructor({ onPresentation, onAudioSnapshot, yieldPresentation, ...options }) {
       super(options);
       // The observer belongs to the host. It is never serialized into a save.
       Object.defineProperty(this, "onPresentation", { value: onPresentation });
+      Object.defineProperty(this, "onAudioSnapshot", { value: onAudioSnapshot });
+      Object.defineProperty(this, "yieldPresentation", { value: yieldPresentation });
+    }
+    tick(...args) {
+      try {
+        return super.tick(...args);
+      } catch (error) {
+        // The source instruction has completed. Unwind only this host tick,
+        // leaving its next PC, waits, random stream and task fields untouched.
+        if (error !== hostYield) throw error;
+      }
+    }
+    snapshot() {
+      const saved = super.snapshot();
+      if (this.onAudioSnapshot) saved.audio = this.onAudioSnapshot();
+      return saved;
     }
     step(task) {
       const program = this.data.programs[task.program],
@@ -98,6 +115,7 @@ export function withPresentation(Base) {
         } catch (error) {
           console.warn("Presentation observer failed; game continues", error);
         }
+        if (this.yieldPresentation?.(op[0])) throw hostYield;
         return result;
       } finally {
         listening.set(this, listening.get(this) - 1);

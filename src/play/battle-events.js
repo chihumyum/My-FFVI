@@ -371,9 +371,14 @@ export class BattleEvents {
     // Function 19 is the event-only change-animation routine (e.g. Locke's
     // change-of-clothes poses). It must not become the AI's Fight fallback.
     if (ability.functionId !== 19)
-      for (const actor of actors)
+      for (const actor of actors) {
+        const presentationSequence = {};
         for (const [index, target] of targets.entries())
-          b.perform(actor, target, ability, targets.length, { updateVariables: index === 0 });
+          b.perform(actor, target, ability, targets.length, {
+            updateVariables: index === 0,
+            presentationSequence,
+          });
+      }
     this.event("battle-action", {
       actorSide: i[0],
       actorId: i[1],

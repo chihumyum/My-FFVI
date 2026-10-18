@@ -120,6 +120,8 @@ class RegressionGame extends ObservedGame {
         index: sourceIndex,
         actor: task.actor,
       });
+    for (const observer of checkpointObservers)
+      observer.completedInstruction(this, task, sourceProgram, sourceIndex);
     return result;
   }
 }

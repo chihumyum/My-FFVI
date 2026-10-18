@@ -47,6 +47,17 @@ import {
 } from "./ability-effects.js";
 const clamp = (n, low, high) => Math.max(low, Math.min(high, n));
 const value = (n, fallback) => (Number.isFinite(Number(n)) ? Number(n) : fallback);
+// Event identity only: lets consumers group one spell's multiple targets while
+// keeping repeated casts/hits distinct. It owns no combat state or RNG draws.
+const actionSequences = new WeakMap();
+function actionId(battle, sequence) {
+  if (!actionSequences.has(battle)) actionSequences.set(battle, { next: 0, ids: new WeakMap() });
+  const state = actionSequences.get(battle);
+  if (sequence && state.ids.has(sequence)) return state.ids.get(sequence);
+  const id = ++state.next;
+  if (sequence) state.ids.set(sequence, id);
+  return id;
+}
 
 // SNES CalcDmg/CalcMagicDmg and CalcDmgMod. PR power and participant stats take precedence.
 export function calculateDamage(
@@ -1375,6 +1386,8 @@ export class Battle {
       targetSide: target.side,
       targetIndex: target.index,
       abilityId: ability.id,
+      abilityName: ability.name || options.item?.name,
+      actionId: actionId(this, options.presentationSequence || options.sequence),
       time: this.elapsed,
       result: { amount: result.amount, mp: result.mp, hit: result.hit, critical: result.critical },
     });

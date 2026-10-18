@@ -118,7 +118,13 @@ export class WebAudioPlayer {
     level.gain.setValueAtTime(fade > 0 ? 0 : gain, now);
     if (fade > 0) level.gain.linearRampToValueAtTime(gain, now + fade);
     node.start(now, Math.max(0, Math.min(offset, buffer.duration - 1 / buffer.sampleRate)));
-    return { node, level, track, buffer, started: now, offset, gain, rate: 1 };
+    const voice = { node, level, track, buffer, started: now, offset, gain, rate: 1, ended: false };
+    node.onended = () => {
+      voice.ended = true;
+      node.disconnect();
+      level.disconnect();
+    };
+    return voice;
   }
   position(voice = this.current, after = 0) {
     if (!voice) return 0;
@@ -138,6 +144,7 @@ export class WebAudioPlayer {
     if (fade > 0) voice.level.gain.linearRampToValueAtTime(0, now + fade);
     voice.node.stop(now + Math.max(0, fade));
     node.onended = () => {
+      voice.ended = true;
       node.disconnect();
       level.disconnect();
       if (this.outgoing === voice) this.outgoing = null;
@@ -146,12 +153,14 @@ export class WebAudioPlayer {
   }
   playMusic(id, { fade = 0, offset = 0, restart = false } = {}) {
     id = Number(id) || 0;
+    this.requestedMusic = id ? { id, offset } : null;
     const ticket = ++this.sequence;
     this.serial = this.serial
       .catch(() => {})
       .then(async () => {
         if (ticket !== this.sequence) return;
         await this.unlock();
+        this.transitionUntil = Math.max(this.transitionUntil, this.context.currentTime + fade);
         if (!id) {
           this.end(this.outgoing);
           this.outgoing = null;
@@ -160,7 +169,7 @@ export class WebAudioPlayer {
           this.musicBuffers.clear();
           return;
         }
-        if (this.current?.id === id && !restart) return;
+        if (this.current?.id === id && !this.current.ended && !restart) return;
         // At most two music buffers may be live, including an outgoing crossfade.
         this.end(this.outgoing);
         this.outgoing = null;
@@ -172,11 +181,13 @@ export class WebAudioPlayer {
         this.outgoing = this.current;
         this.end(this.outgoing, fade);
         const track = this.track("bgm", id);
-        this.current = {
-          music: true,
-          ...this.source(track, buffer, { gain: 0.5 * (track.gain ?? 1), offset, fade }),
-          id,
-        };
+        this.current = Object.assign(
+          this.source(track, buffer, { gain: 0.5 * (track.gain ?? 1), offset, fade }),
+          {
+            music: true,
+            id,
+          },
+        );
         for (const key of this.musicBuffers.keys())
           if (![String(id), String(this.outgoing?.id)].includes(key)) this.musicBuffers.delete(key);
         this.status = `BGM ${id}`;
@@ -194,8 +205,17 @@ export class WebAudioPlayer {
       .catch((error) => this.warn(error.message));
     return this.serial;
   }
+  musicState() {
+    const requested = this.requestedMusic;
+    if (!requested) return null;
+    if (this.current?.id === requested.id && this.current.ended) return null;
+    return this.current?.id === requested.id
+      ? { id: requested.id, offset: this.position() }
+      : { ...requested };
+  }
   pauseMusic(fade = 0) {
     ++this.sequence;
+    this.requestedMusic = null;
     if (!this.current) return;
     this.savedMusic = { id: this.current.id, offset: this.position(this.current, fade) };
     this.end(this.outgoing);
@@ -225,18 +245,19 @@ export class WebAudioPlayer {
     }
     return buffer;
   }
-  async playEffect(kind, id, { slot = null, fade = 0 } = {}) {
+  async playEffect(kind, id, { slot = null, fade = 0, offset = 0 } = {}) {
     const track = this.track(kind, id);
     if (!track) {
       this.warn(`Missing PR ${kind} ${id}`);
       return;
     }
-    await this.unlock();
     const registry = kind === "environment" ? this.environments : this.effects;
     const key = slot ?? `one-shot-${++this.effectSequence}`;
     this.end(registry.get(key), fade);
-    const pending = {};
+    const pending = { id };
     registry.set(key, pending);
+    await this.unlock();
+    if (registry.get(key) !== pending) return;
     const buffer = await this.effectBuffer(track);
     if (registry.get(key) !== pending) return;
     if (pending.paused) {
@@ -254,6 +275,7 @@ export class WebAudioPlayer {
       gain: 0.6 * (track.gain ?? 1),
       fade,
       loop: Boolean(track.loop || track.looping),
+      offset,
     });
     voice.id = id;
     registry.set(key, voice);
@@ -277,17 +299,48 @@ export class WebAudioPlayer {
         registry.delete(key);
       }
   }
-  command({ name, i = [], r = [] }) {
+  saveState() {
+    return {
+      version: 1,
+      music: this.musicState(),
+      savedMusic: this.savedMusic || null,
+      environments: [...this.environments]
+        .filter(([, voice]) => voice.id)
+        .map(([slot, voice]) => ({
+          slot,
+          id: voice.id,
+          paused: !!voice.paused,
+          offset: voice.paused ? voice.savedOffset || 0 : voice.node ? this.position(voice) : 0,
+        })),
+    };
+  }
+  async restore(saved) {
+    this.stopEffects("environment");
+    this.savedMusic = saved.savedMusic || null;
+    await this.playMusic(saved.music?.id || 0, { offset: saved.music?.offset || 0, restart: true });
+    for (const voice of saved.environments || []) {
+      await this.playEffect("environment", voice.id, {
+        slot: voice.slot,
+        offset: voice.offset || 0,
+      });
+      if (voice.paused) this.command({ name: "PauseEnvSe", i: [voice.slot, 1] });
+    }
+  }
+  command({ name, i = [], r = [], skipTrackEnd = false }) {
     const fade = Math.max(0, Number(r[0]) || 0);
     if (["PlayBGM", "StopBGM", "PauseBGM", "ReplayBgm", "SetVolume"].includes(name))
       this.transitionUntil = (this.context?.currentTime || 0) + fade;
     if (["PauseBGM", "PlaySE", "PlayEnvSe", "SyncBGM"].includes(name))
       this.warn(
-        "PR audio bus/slot operands and SyncBGM fade barriers use a presentation-only mapping; VM timing is unchanged.",
+        "PR audio bus/slot operands use an inferred presentation mapping. SyncBGM waits for fades or a one-shot track's end in the browser host; VM timing is unchanged.",
       );
     switch (name) {
       case "PlayBGM":
-        return this.playMusic(i[0], { fade, restart: Boolean(i[2]) });
+        return this.playMusic(i[0], {
+          fade,
+          restart: Boolean(i[2]),
+          offset: Math.max(0, Number(r[1]) || 0),
+        });
       case "ReplayBgm":
         return i[0] ? this.playMusic(i[0], { fade }) : this.resumeMusic(fade);
       case "StopBGM":
@@ -350,17 +403,28 @@ export class WebAudioPlayer {
         }
         return;
       case "SyncBGM":
+        this.syncPending = true;
+        const syncTicket = (this.syncTicket = (this.syncTicket || 0) + 1);
         this.serial = this.serial
           .catch(() => {})
-          .then(
-            () =>
-              new Promise((resolve) =>
-                setTimeout(
-                  resolve,
-                  Math.max(0, this.transitionUntil - (this.context?.currentTime || 0)) * 1000,
-                ),
-              ),
-          );
+          .then(async () => {
+            const voice = this.current,
+              sequence = this.sequence;
+            while (
+              sequence === this.sequence &&
+              ((this.context?.currentTime || 0) < this.transitionUntil ||
+                (!skipTrackEnd &&
+                  voice &&
+                  this.current === voice &&
+                  !voice.node.loop &&
+                  !voice.ended &&
+                  this.position(voice) < voice.buffer.duration))
+            )
+              await new Promise((resolve) => setTimeout(resolve, 25));
+          })
+          .finally(() => {
+            if (syncTicket === this.syncTicket) this.syncPending = false;
+          });
         return this.serial; // Presentation barriers never alter VM timing.
       case "SyncSE":
         return Promise.resolve();

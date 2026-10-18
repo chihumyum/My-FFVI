@@ -746,6 +746,16 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
     state.endingScene = true;
     return true;
   }
+  if (name === "スカイボックススクロール：OP") {
+    // The source has just launched its camera and three armor puppets with
+    // explicit 117-second Lerps. This host call is their cinematic barrier,
+    // not a no-op that can immediately FinishPuppet and change maps.
+    task.waitFor = "children";
+    warn(
+      "Opening skybox scroll waits for the authored camera/armor puppets; native skybox projection is presented approximately.",
+    );
+    return true;
+  }
   if (name.startsWith("スタッフロール")) {
     state.credits ??= { segments: [] };
     if (name.includes("再生：")) {

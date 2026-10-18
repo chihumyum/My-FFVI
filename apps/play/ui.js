@@ -600,6 +600,8 @@ export class GameUI {
     return y;
   }
   bounds(root) {
+    if (root.id === "battle-action") return [480, 42, 960, 108];
+    if (root.id === "battle-result") return [96, 90, 1200, 900];
     if (root.id === "extras") return [24, 18, 1872, 1044];
     // The serialized message root is positioned by a runtime animation. Retain
     // its PR size and bottom margin; compose the PR touch battle window widths.
@@ -684,9 +686,9 @@ export class GameUI {
       }
       const y = 36 + i * Math.floor(Math.min(66, (height - 78) / 4) / 6) * 6;
       drawText(row, "name", `${i === model.activeActor ? "▶ " : ""}${u.name}`, 0, y);
-      row.name.eventMode = "static";
+      row.name.eventMode = model.playbackLocked ? "none" : "static";
       row.name.cursor = "pointer";
-      row.name.accessible = !!u.ready;
+      row.name.accessible = !!u.ready && !model.playbackLocked;
       row.name.accessibleTitle = `操作 ${u.name}`;
       row.name.accessibleText = `操作 ${u.name}`;
       if (!row.inputBound) {
@@ -750,7 +752,11 @@ export class GameUI {
       const commands = this.get("commands"),
         targets = this.get("targets"),
         key = `${commands.dataset.submenu || ""}:${!!targets.children.length}`;
-      options.hidden = this.get("battle").hidden || !!targets.children.length || key === ":false";
+      options.hidden =
+        commands.hidden ||
+        this.get("battle").hidden ||
+        !!targets.children.length ||
+        key === ":false";
       options.children = [commands];
       if (options.dataset.selection !== key) {
         options.dataset.selection = key;
@@ -795,6 +801,10 @@ export class GameUI {
       this.skin(v, width, height);
       this.used.add(root);
       if (root.hidden) continue;
+      if (root.id === "battle-action") {
+        this.item(this.get("battle-action-name"), v.container, 24, 24, width - 48);
+        continue;
+      }
       if (!v.content) {
         v.content = new Container();
         v.mask = new Graphics();
