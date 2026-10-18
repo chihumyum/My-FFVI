@@ -194,7 +194,8 @@ async function start(saved = null, testBoost = false) {
     ui.setCharacters(battleData.characters);
     game = new PresentationGame({
       onPresentation: presentation,
-      yieldPresentation: (name) => name === "SyncBGM" && audio.syncPending,
+      yieldPresentation: (name) =>
+        (name === "SyncBGM" && audio.syncPending) || (name === "PlayBGM" && audio.musicPending),
       onAudioSnapshot: () => ({
         ...audio.saveState(),
         ...(battleFlow.battle ? { music: battleFlow.previousMusic } : {}),
@@ -808,17 +809,18 @@ function loop(now) {
     return;
   }
   if (started && game && !acceptanceLoading) {
-    if (!paused) battleFlow.update(dt, { auto, fast: walking && auto });
+    if (!paused && !audio.musicPending) battleFlow.update(dt, { auto, fast: walking && auto });
     if (
       !paused &&
       !opera.busy &&
       !battleFlow.busy &&
       !audio.syncPending &&
+      !audio.musicPending &&
       (!battleDialogue || auto)
     ) {
       for (let n = 0; n < (auto ? (game.testBoost ? 16 : 4) : 1); n++) {
         game.tick(dt, { auto });
-        if (opera.busy || battleFlow.busy || audio.syncPending) {
+        if (opera.busy || battleFlow.busy || audio.syncPending || audio.musicPending) {
           keys.clear();
           break;
         }

@@ -189,6 +189,7 @@ export class BattleFlow {
       audioState: this.audio.context?.state || null,
       musicPosition: this.audio.current ? this.audio.position() : null,
       musicSyncPending: !!this.audio.syncPending,
+      musicLoading: !!this.audio.musicPending,
       previousMusic: this.previousMusic,
       trace: [...this.trace],
     };

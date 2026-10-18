@@ -94,6 +94,7 @@ async function sceneAudioChecks(page, directory) {
       assert.equal(saved.snapshot.audio.music.id, row.bgm);
       assert(saved.snapshot.audio.music.offset > 0);
       await page.reload();
+      await page.locator("#cloud-toggle").waitFor();
       await page.getByRole("button", { name: "继续剧情测试", exact: true }).click();
       await page.getByRole("button", { name: "读取存档 1", exact: true }).click();
       await page.waitForFunction(() => window.ffviBattleFlow().music === 19);
@@ -134,6 +135,10 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       // ONLY this disposable profile's cloud adapter to avoid writing the user's
       // live autosave. No save API responses or gameplay state are fabricated.
       await context.route("**/*", async (route) => {
+        if (new URL(route.request().url()).pathname.startsWith("/api/saves")) {
+          report.errors.push("Acceptance profile unexpectedly attempted the cloud-save API");
+          return route.abort();
+        }
         if (
           route.request().isNavigationRequest() &&
           route.request().resourceType() === "document"
@@ -158,6 +163,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       if (r.status() >= 400) report.failedResponses.push({ url: r.url(), status: r.status() });
     });
     await page.goto(new URL("?through=M1", base).href);
+    await page.locator("#cloud-toggle").waitFor();
     await page.getByRole("button", { name: "新游戏", exact: true }).click();
     await page.waitForFunction(() => window.ffvi && !window.ffvi.loading && window.ffvi.mapId);
     await page.getByRole("button", { name: "自动行走：关", exact: true }).click();

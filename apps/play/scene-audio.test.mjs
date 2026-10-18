@@ -232,3 +232,25 @@ test("a browser SyncBGM barrier stops before the next source command without add
   headless.tick();
   assert.equal(headless.task.pc, 2);
 });
+test("slow BGM loads keep the host barrier until the requested song has actually started", async () => {
+  const player = new WebAudioPlayer();
+  player.context = { currentTime: 0 };
+  player.unlock = async () => player.context;
+  let finishDecode;
+  player.musicBuffer = () =>
+    new Promise((resolve) => {
+      finishDecode = resolve;
+    });
+  player.track = () => ({});
+  player.source = () => ({ started: true });
+  player.end = () => {};
+  const pending = player.playMusic(2);
+  assert.equal(player.musicPending, true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(player.current, undefined);
+  assert.equal(player.musicPending, true);
+  finishDecode({});
+  await pending;
+  assert.equal(player.current.id, 2);
+  assert.equal(player.musicPending, false);
+});

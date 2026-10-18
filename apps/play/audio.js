@@ -155,6 +155,7 @@ export class WebAudioPlayer {
     id = Number(id) || 0;
     this.requestedMusic = id ? { id, offset } : null;
     const ticket = ++this.sequence;
+    this.musicPending = !!id;
     this.serial = this.serial
       .catch(() => {})
       .then(async () => {
@@ -192,7 +193,10 @@ export class WebAudioPlayer {
           if (![String(id), String(this.outgoing?.id)].includes(key)) this.musicBuffers.delete(key);
         this.status = `BGM ${id}`;
       })
-      .catch((error) => this.warn(error.message));
+      .catch((error) => this.warn(error.message))
+      .finally(() => {
+        if (ticket === this.sequence) this.musicPending = false;
+      });
     return this.serial;
   }
   prefetch(id) {
@@ -215,6 +219,7 @@ export class WebAudioPlayer {
   }
   pauseMusic(fade = 0) {
     ++this.sequence;
+    this.musicPending = false;
     this.requestedMusic = null;
     if (!this.current) return;
     this.savedMusic = { id: this.current.id, offset: this.position(this.current, fade) };
