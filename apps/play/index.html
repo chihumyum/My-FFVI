@@ -6,6 +6,10 @@
   /><title>FINAL FANTASY VI · Web</title
   ><link rel="stylesheet" href="./style.css" />
   <body class="game">
+    <div id="boot-status" role="status" aria-live="polite">
+      <p id="boot-message">正在加载游戏资源…</p>
+      <a href="">重新加载</a>
+    </div>
     <main>
       <canvas id="screen" width="320" height="180"></canvas>
       <section id="title">
@@ -100,6 +104,6 @@
         <button id="extras-close">返回</button>
       </aside>
     </main>
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./bootstrap.js"></script>
   </body>
 </html>

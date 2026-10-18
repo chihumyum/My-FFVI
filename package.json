@@ -37,6 +37,7 @@
     "host:backup": "node server/cli.mjs backup",
     "package:host": "node tools/play/package-host.mjs",
     "play:host-check": "node tools/play/check-host-browser.mjs",
+    "play:loading-check": "node tools/play/check-loading-browser.mjs",
     "cloudflare:prepare": "node tools/play/prepare-cloudflare.mjs",
     "cloudflare:dev": "wrangler d1 migrations apply ffvi-saves --local --env local && wrangler dev --env local --ip 127.0.0.1 --port 8788",
     "cloudflare:deploy": "npm run cloudflare:prepare && wrangler d1 migrations apply ffvi-saves --remote && wrangler deploy",

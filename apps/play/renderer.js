@@ -184,6 +184,10 @@ export class GameRenderer {
   }
 
   async init() {
+    // A CSP-blocked Blob Worker can leave Pixi's capability probe unresolved.
+    // Same-origin PNG atlases do not require a script worker; decode them using
+    // the browser's createImageBitmap path without widening script-src.
+    Assets.setPreferences({ preferWorkers: false });
     TextureStyle.defaultOptions.scaleMode = "nearest";
     await this.app.init({
       canvas: this.canvas,

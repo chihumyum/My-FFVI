@@ -12,6 +12,22 @@ body {
   display: grid;
   place-items: center;
 }
+#boot-status {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-content: center;
+  gap: 16px;
+  text-align: center;
+  background: #080b16;
+}
+#boot-status[hidden] {
+  display: none;
+}
+#boot-status a {
+  color: #b9d5ff;
+}
 main {
   width: min(1100px, 100vw);
   position: relative;

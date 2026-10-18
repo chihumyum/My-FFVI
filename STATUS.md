@@ -1,8 +1,8 @@
 # FFVI Web 状态
 
 ## 能玩到哪
-- Cloudflare 私人站点 https://ffvi.chihum.dev/：登录后跨设备同步，等待用户实玩。本轮修复战斗横幅/播放暂停/结算与音乐切换，并恢复源脚本 117 秒雪中行进。
-- 强化新游戏→结局重新完成：182 战，最终战 472 胜利。15 处当次现场齐全；恢复开场导致全局时钟 +117.3 秒，6 张动画相位图逐张复核更新，阈值不变；15 张重比通过，缺人负控仍被检出。详 build/play/battle-flow/visual-phase-review.json。
+- Cloudflare 私人站点 https://ffvi.chihum.dev/：登录后跨设备同步。修复 CSP 限制 Blob Worker 时贴图永久等待；不放宽 CSP，补充启动状态/失败重试。线上原页面、禁止 Worker、模块失败及现有普通云档读取共 8 项通过；内置浏览器直接打开通过。详 build/play/deployment/loading-csp/summary.json。
+- 本轮强化新游戏→结局：182 战，最终战 472 胜利；15 张当次现场标准图差异 0，未改标准图或阈值；443 测试通过。报告 build/play/deployment/loading-csp/main-regression.json。
 - PR 音频全量对照：649 地图（342 个非零默认曲）、105 音乐包、1062 阵型绑定；修复默认曲导出丢失、旧档条件选曲、新档续播、起播偏移和曲终等待。详 build/play/battle-flow/audio-configuration.json。
 - 公网 Chromium/WebKit 均通过：雪中行进、真实选招/点击敌人、ATB 暂停、结算、BGM2/6/7、地图曲19/剧情曲44及刷新存读档续播；443 测试通过。慢网时等新曲解码启动再推进，云档 API 在独立验收配置中被禁止调用。截图与报告：build/play/battle-flow/remote-final/。音乐仍为 93.10 MB，匿名资源保护与云档协议不变。
 
