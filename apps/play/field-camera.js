@@ -1,15 +1,15 @@
 // PR object_type=27 is MapRange. ParseMapRange stores the authored rectangle;
 // FieldController passes it to CameraFollowing.SetMapSize before clamping.
 // Entity coordinates remain in their original editor grid in this web runtime.
-export function fieldCameraFrame(map, focus, width, height) {
+export function fieldCameraFrame(map, focus, width, height, options = {}) {
   const tile = map.tileSize || 16,
     world = /^Map_100(?:10|20|30)/i.test(map.name || ""),
-    loop = world ? (map.worldTerrain?.loopType ?? 3) : 0,
+    loop = options.loop ?? (world ? (map.worldTerrain?.loopType ?? 3) : 0),
     authored = map.entities?.find(
       (entity) => entity.kind === 27 && entity.width > 0 && entity.height > 0,
     ),
     range =
-      !world && authored
+      !options.ignoreRange && !world && authored
         ? {
             x: authored.x * tile,
             y: authored.y * tile,

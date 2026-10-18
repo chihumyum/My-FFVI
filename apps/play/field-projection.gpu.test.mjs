@@ -19,7 +19,9 @@ for(const resolution of [1,2,3]){
  for(const layer of Object.values(layers))app.stage.addChild(layer);
  const view=new FieldPresentation({layers,getTexture:()=>Texture.WHITE,warn:()=>{}});
  const terrain=new Graphics();for(let x=0;x<640;x++)terrain.rect(x,0,1,640).fill(x%2?0xff0000:0x0000ff);layers.mapLayers.addChild(terrain);
- view.flight=true;view.project(app.renderer,layers,{player:{direction:"up"}});app.render();
+ view.setCatalog({warnings:[],sky:{},flight:{ships:{}}});
+ view.flight=true;view.flightSize={width:640,height:360};view.flightState={rotation:0,altitude:0,upDown:0};view.flightHeight=1;view._data={characters:{}};
+ view.project(app.renderer,layers,{map:{name:"Map_10010"},time:0,player:{visible:false,direction:"up"}});app.render();
  const out=app.renderer.extract.pixels({target:app.stage});let red=0,blue=0,total=0;
  for(let y=120;y<170;y++)for(let x=20;x<300;x++){
   const at=(y*resolution*out.width+x*resolution)*4,r=out.pixels[at],b=out.pixels[at+2];total++;if(r>b+100)red++;if(b>r+100)blue++;

@@ -46,7 +46,8 @@ export function existingPresentationActor(game, selector) {
     selector = -(game.partySlots?.[game.partyIndex || 0]?.[-selector - 1001] || 1);
   return game.actors?.get(String(selector)) || null;
 }
-const visualSelector = /モノクロフィルター|幻獣界フィルター|近景|遠景|背景変更|スクロール/;
+const visualSelector =
+  /モノクロフィルター|幻獣界フィルター|近景|遠景|背景変更|スクロール|乗り物に乗る|飛空艇着陸/;
 export const observingAudioInstruction = (game) => Boolean(listening.get(game));
 export const isAudioInstruction = (name) => audioInstructions.has(name);
 export function withPresentation(Base) {
@@ -83,7 +84,10 @@ export function withPresentation(Base) {
         !(op?.[0] === "SysCall" && visualSelector.test(op[3]?.[0] || ""))
       )
         return super.step(task);
-      listening.set(this, (listening.get(this) || 0) + 1);
+      // Only native audio opcodes suppress their duplicate generic events.
+      // A visual SysCall (boarding, scenery, animation) may legitimately emit
+      // BGM/SE itself; observing that scene must not swallow its sound.
+      if (audio) listening.set(this, (listening.get(this) || 0) + 1);
       try {
         const result = super.step(task);
         try {
@@ -120,7 +124,7 @@ export function withPresentation(Base) {
         if (this.yieldPresentation?.(op[0])) throw hostYield;
         return result;
       } finally {
-        listening.set(this, listening.get(this) - 1);
+        if (audio) listening.set(this, listening.get(this) - 1);
       }
     }
   };

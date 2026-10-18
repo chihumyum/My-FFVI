@@ -1,4 +1,6 @@
 import { Container, Filter, GlProgram, Rectangle, RenderTexture, Sprite, Texture } from "pixi.js";
+import { AirshipMotion, flightCamera, radians } from "./airship-motion.js";
+import { BirdView } from "./bird-view.js";
 import { PRFilter, materialFromLayer } from "./pr-filters.js";
 import { screenEffectAmount, clearMapEffects } from "./field-screen-effects.js";
 
@@ -33,28 +35,6 @@ void main() {
   vec3 sepia = mix(vec3(.235294,.141177,.098039)*c.a,vec3(1.311606,1.119329,.817179)*c.a,luma);
   c.rgb = mix(c.rgb,sepia,uEffects.z);
   c.rgb = mix(c.rgb, uTone.rgb * c.a, uTone.a);
-  finalColor = c;
-}`;
-const flightFragment = `
-in vec2 vTextureCoord;
-in vec2 vLocalCoord;
-out vec4 finalColor;
-uniform sampler2D uTexture;
-uniform vec4 uInputClamp;
-uniform vec4 uFlight;
-uniform sampler2D uWorldTexture;
-void main() {
-  vec2 uv = vLocalCoord;
-  float horizon = 0.22;
-  if (uv.y < horizon) { finalColor = vec4(0.0); return; }
-  float depth = 38.0 / (uv.y - horizon + 0.13);
-  vec2 p = vec2((uv.x - 0.5) * depth * 2.05, 100.0 - depth);
-  float cs = cos(uFlight.x), sn = sin(uFlight.x);
-  p = mat2(cs,-sn,sn,cs) * p;
-  vec2 sampleUV = (p + vec2(320.0)) / 640.0;
-  vec4 c = texture(uWorldTexture, clamp(sampleUV,vec2(0.001),vec2(0.999)));
-  float fog = pow(1.0-clamp((uv.y-horizon)/0.78,0.0,1.0), 4.0) * 0.7;
-  c.rgb = mix(c.rgb, vec3(0.40,0.63,0.77),fog);
   finalColor = c;
 }`;
 
@@ -119,17 +99,15 @@ export class FieldPresentation {
       warn: (message) => warn("foreground:" + message, message),
     });
     this.gps = plane("pr-gps", layers.effects);
-    this.projected = plane("pr-bird-view", layers.near);
-    this.flightSprite = new Sprite(Texture.EMPTY);
-    this.projected.addChild(this.flightSprite);
-    this.flightActor = new Sprite(Texture.EMPTY);
-    this.flightActor.anchor.set(0.5, 1);
-    this.projected.addChild(this.flightActor);
-    this.flightFilter = filter("pr-bird-view-projection", flightFragment, {
-      uFlight: { value: new Float32Array(4), type: "vec4<f32>" },
+    this.birdView = new BirdView({
+      parent: layers.near,
+      getTexture,
+      warn,
+      diagnostics,
+      sampleActor,
     });
-    this.flightFilter.resources.uWorldTexture = Texture.EMPTY.source;
-    this.flightSprite.filters = [this.flightFilter];
+    this.projected = this.birdView.container;
+    this.flightMotion = new AirshipMotion({ warn });
     this.screenFilter = filter("pr-field-screen-effects", fragment, {
       uTone: { value: new Float32Array([1, 1, 1, 0]), type: "vec4<f32>" },
       uEffects: { value: new Float32Array(4), type: "vec4<f32>" },
@@ -161,6 +139,9 @@ export class FieldPresentation {
     this.view = null;
     this.clock = 0;
     this.flight = false;
+    this.flightMotion.reset();
+    this.heightTransition = null;
+    this.landingVehicle = null;
     this._metrics = {};
     this._farKey = null;
     this.farTarget = this.previousFar = null;
@@ -174,6 +155,20 @@ export class FieldPresentation {
       // Reset the view/effect lifetime even when its numeric ID is unchanged.
       this.mapId = null;
       this._syncMap(event.mapId);
+      return;
+    }
+    if (event.kind === "airship-motion") {
+      this._syncMap(event.mapId);
+      this.flightMotion.start(event, this.catalog?.flight);
+      return;
+    }
+    if (event.kind === "vehicle" && [4, 5].includes(event.id)) {
+      this.heightTransition = { time: Number(event.time) || 0, from: 0, to: 1, duration: 1 };
+      return;
+    }
+    if (event.kind === "vehicle-landing") {
+      this.landingVehicle = event.id;
+      this.heightTransition = { time: Number(event.time) || 0, from: 1, to: 0, duration: 1 };
       return;
     }
     if (event.kind !== "presentation-command") return;
@@ -196,7 +191,16 @@ export class FieldPresentation {
         "ScreenEffect preset1 uses a sepia approximation from the PR flashback context and shader colors, preset3 a horizontal wave. Native preset property bindings, centers and exact easing remain inferred; no mosaic property exists in the source screen shader.",
       );
     }
-    if (name === "ChangeView") this.view = Boolean(i[0]);
+    if (name === "ChangeView") {
+      this.view = Boolean(i[0]);
+      // The source blend duration controls the same independent pitch clock.
+      this.heightTransition = {
+        time,
+        from: i[0] ? 0 : 1,
+        to: i[0] ? 1 : 0,
+        duration: Math.abs(r[0] || 0.016),
+      };
+    }
     if (name === "Water") {
       const layer = i[0] ?? -1;
       this.water[`${layer}:${s[0]}`] = {
@@ -211,6 +215,13 @@ export class FieldPresentation {
     }
     if (name !== "SysCall") return;
     const selector = s[0] || "";
+    if (
+      /乗り物に乗る：(?:ブラックジャック|ファルコン)/.test(selector) &&
+      /アニメ・BGMなし/.test(selector)
+    ) {
+      this.heightTransition = null;
+      this.landingVehicle = null;
+    }
     if (/モノクロフィルター/.test(selector)) this.gray = selector.includes("はずす") ? 0 : 1;
     if (/幻獣界フィルター/.test(selector)) this.gray = selector.includes("はずす") ? 0 : 0.35;
     if (/飛空艇（通常）|通常を表示/.test(selector)) {
@@ -251,6 +262,9 @@ export class FieldPresentation {
     this.nearEnabled = null;
     this.view = null;
     this.scroll = false;
+    this.flightMotion.reset();
+    this.heightTransition = null;
+    this.landingVehicle = null;
     this._farKey = null;
     this.farTarget = this.previousFar = null;
   }
@@ -277,12 +291,46 @@ export class FieldPresentation {
   }
 
   prepare(game, inBattle) {
+    this.flightFrames = [];
     if (game?.map) this._syncMap(game.mapId);
     this.clock = game?.time || 0;
+    const transition = this.heightTransition;
+    const leavingView =
+      this.view === false &&
+      transition?.to === 0 &&
+      this.clock < transition.time + transition.duration;
     this.flight =
       !inBattle &&
-      /^Map_100(?:10|20|30)/i.test(game?.map?.name || "") &&
-      (this.view ?? [4, 5].includes(Number(game?.player?.vehicle)));
+      (leavingView ||
+        (this.view ??
+          (/^Map_100(?:10|20|30)/i.test(game?.map?.name || "") &&
+            ([4, 5].includes(Number(game?.player?.vehicle)) || !!this.landingVehicle))));
+    if (!this.flight) this._metrics.flightState = null;
+    this.flightState = this.flightMotion.sample(game);
+    this.flightHeight = transition
+      ? lerp(
+          transition.from,
+          transition.to,
+          transition.duration ? (this.clock - transition.time) / transition.duration : 1,
+        )
+      : 1;
+    const camera = flightCamera(this.flightState, this.catalog?.flight, this.flightHeight),
+      distance = camera.distance,
+      pitch = radians(camera.pitch),
+      coverage = Math.max(
+        1,
+        (2 *
+          Math.hypot(Math.cos(pitch) * distance + 360, Math.sin(pitch) * distance + camera.upDown) *
+          Math.tan(radians(camera.fov) / 2)) /
+          640,
+      );
+    // PR changes discrete RT tiers; continuous overscan keeps the same native
+    // camera rays without exposing a clamped texture edge during a turn.
+    const tier = Math.ceil(coverage * 2) / 2;
+    this.flightSize = {
+      width: 640 * tier,
+      height: 360 * tier,
+    };
     this.far.visible = this.near.visible = this.projected.visible = !inBattle && !!game?.map;
     this.gps.visible = !inBattle && /^Map_100(?:10|20|30)/i.test(game?.map?.name || "");
     this.projected.visible &&= this.flight;
@@ -345,7 +393,8 @@ export class FieldPresentation {
   }
 
   draw(game, offset = { x: 0, y: 0 }, data) {
-    this.flightFrame = null;
+    this.flightFrames = [];
+    this._data = data;
     if (!this.catalog || !game.map) return;
     const binding = this.catalog.maps[game.mapId] || { far: [], near: [] };
     this.backdropPlane.tint = this.backdrop ?? tint(color(binding.backdrop, [0, 0, 0, 1]));
@@ -405,57 +454,6 @@ export class FieldPresentation {
     if (this.previousFar && t < 1)
       images.push(...this.previousFar.map((row) => ({ ...row, alpha: 1 - t })));
     if (this.farTarget) images.push(...this.farTarget.map((row) => ({ ...row, alpha: t })));
-    if (this.flight) {
-      const worldName = /10020/.test(name) ? "Map_10020" : "Map_10010";
-      const sky = this.catalog.sky[`bird_view_skybox_${worldName}_normal`];
-      if (sky) images.push({ image: sky, alpha: 1 });
-      else
-        this.diagnostics?.record("sky-texture-missing", {
-          entityId: "scene:sky",
-          resource: worldName,
-        });
-      const visible = game.player.visible !== false;
-      const char = data?.characters?.[game.player.asset?.toLowerCase()];
-      const frame = visible && char && this.sampleActor?.(game.player, char, game.time);
-      const info = frame?.info;
-      const texture =
-        visible &&
-        this.getTexture(info?.file, {
-          required: true,
-          entityId: game.player.id,
-          asset: game.player.asset,
-          animation: game.player.animation,
-        });
-      this.flightActor.visible = !!texture;
-      this.flightFrame = {
-        side: "field",
-        entityId: game.player.id,
-        asset: game.player.asset,
-        characterId: game.player.characterId,
-        vehicle: game.player.vehicle,
-        animation: game.player.animation || "Default",
-        clip: frame?.clip,
-        frame: frame?.name,
-        resource: info?.file,
-        x: game.player.x,
-        y: game.player.y,
-        layer: game.player.layer,
-        screen: { x: 160, y: 137 + Math.round(Math.sin(this.clock * 3)) },
-        drawn: Boolean(texture),
-        ...(!visible
-          ? { reason: "hidden-player" }
-          : !texture
-            ? { reason: char?.sprites ? "missing-texture" : "missing-character-data" }
-            : {}),
-      };
-      if (texture) {
-        this.flightActor.texture = texture;
-        this.flightActor.width = info.logicalWidth || info.width;
-        this.flightActor.height = info.logicalHeight || info.height;
-        this.flightActor.scale.x = Math.abs(this.flightActor.scale.x) * (frame.flip ? -1 : 1);
-        this.flightActor.position.set(160, 137 + Math.round(Math.sin(this.clock * 3)));
-      }
-    }
     this._metrics.farSprites = this._sprites(this.farPlanes, this.far, images, offset, "far");
     this._metrics.nearSprites = this._sprites(
       this.nearPlanes,
@@ -534,22 +532,28 @@ export class FieldPresentation {
 
   project(renderer, layers, game) {
     if (!this.flight) return;
-    this.planeTexture ||= RenderTexture.create({
-      width: 640,
-      height: 640,
-      resolution: 1,
-      scaleMode: "nearest",
-    });
+    const { width, height } = this.flightSize;
+    if (
+      !this.planeTexture ||
+      this.planeTexture.width !== width ||
+      this.planeTexture.height !== height
+    ) {
+      this.planeTexture?.destroy(true);
+      this.planeTexture = RenderTexture.create({
+        width,
+        height,
+        resolution: 1,
+        scaleMode: "nearest",
+      });
+    }
     const previous = layers.mapLayers.filterArea;
     layers.mapLayers.filters = null;
-    layers.mapLayers.filterArea = new Rectangle(0, 0, 640, 640);
-    // The projected ocean uses the same PR water material as the field plane.
-    // A fabricated sine fill previously became enormous purple horizon bands.
-    // Preserve the real scene pass and project it together with the map tiles.
+    layers.mapLayers.filterArea = new Rectangle(0, 0, width, height);
     if (this._flightWater) {
       this.waterPlane.visible = true;
-      this.waterPlane.width = this.waterPlane.height = 640;
-      this.waterFilter.update(this.clock, { width: 640, height: 640 });
+      this.waterPlane.width = width;
+      this.waterPlane.height = height;
+      this.waterFilter.update(this.clock, { width, height });
       renderer.render({ container: this.waterPlane, target: this.planeTexture, clear: true });
       this.waterPlane.visible = false;
       this.waterPlane.width = 320;
@@ -563,17 +567,24 @@ export class FieldPresentation {
     renderer.render({ container: layers.actors, target: this.planeTexture, clear: false });
     layers.mapLayers.filterArea = previous;
     layers.mapLayers.visible = layers.actors.visible = false;
-    this.flightSprite.texture = this.planeTexture;
-    this.flightFilter.resources.uWorldTexture = this.planeTexture.source;
-    this.flightSprite.width = 320;
-    this.flightSprite.height = 180;
-    const direction = ["up", "right", "down", "left"].indexOf(game.player.direction);
-    this.flightFilter.resources.properties.uniforms.uFlight = [
-      (Math.max(0, direction) * Math.PI) / 2,
-      this.clock,
-      0,
-      0,
-    ];
+    this.flightFrames = this.birdView.draw(
+      renderer,
+      this.planeTexture,
+      game,
+      this._data,
+      this.catalog,
+      this.flightState,
+      this.flightHeight,
+      this.landingVehicle,
+    );
+    this._metrics.flightState = this.birdView.metrics;
+  }
+
+  focus(game) {
+    const focus = game.camera?.manual ? game.camera : game.player;
+    return this.flight
+      ? { x: focus.x + this.flightState.offset.x, y: focus.y + this.flightState.offset.y }
+      : focus;
   }
 
   metrics() {
@@ -582,11 +593,10 @@ export class FieldPresentation {
 
   destroy() {
     this.screenFilter.destroy();
-    this.flightFilter.destroy();
+    this.birdView.destroy();
     this.waterFilter.destroy();
     this.maskFilter.destroy();
     this.planeTexture?.destroy(true);
-    for (const container of [this.far, this.near, this.gps, this.projected])
-      container.destroy({ children: true });
+    for (const container of [this.far, this.near, this.gps]) container.destroy({ children: true });
   }
 }

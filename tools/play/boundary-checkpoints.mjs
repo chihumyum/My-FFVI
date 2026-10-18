@@ -74,7 +74,11 @@ export class BoundaryCheckpoints {
     this.pending.push({ parent: entry.sequence, at: game.time + 0.5, mapId: game.mapId });
   }
   event(game, event) {
-    if (event.kind === "map") this.visualEvents.push(event);
+    if (
+      event.kind === "map" ||
+      ["airship-motion", "vehicle", "vehicle-landing"].includes(event.kind)
+    )
+      this.visualEvents.push(event);
     this.recentEvents.push(event);
     if (this.recentEvents.length > 20) this.recentEvents.shift();
     if (event.kind === "battle") this.lastBattle = game.battle;

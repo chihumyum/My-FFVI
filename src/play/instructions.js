@@ -338,19 +338,15 @@ export function executeInstruction(
     case "AddAirShipRotateChangeTask":
     case "AddAirshipUpDownMoveTask":
       game.airshipTasks ??= [];
-      game.airshipTasks.push({ name, i: [...i], r: [...r] });
+      game.airshipTasks.push({ name, i: [...i], r: [...r], time: game.time });
       return true;
     case "StartAirShipAutoManipulate": {
       const tasks = game.airshipTasks ?? [];
-      const duration = Math.max(0, ...tasks.map((op) => Math.abs(op.r[0] ?? 0)));
       game.airshipTasks = [];
-      if (duration) task.wait = Math.min(duration, 30);
+      // PR RVA b40b60 starts the parallel TaskMachine (type1) and returns
+      // normally. Source Wait/Fade commands own the scene's timing; this
+      // instruction must not add another wait or truncate a 41-second flight.
       game.event("airship-motion", { tasks });
-      warning(
-        game,
-        task,
-        "Airship cinematic movement keeps its timing; full bird-view geometry is deferred.",
-      );
       return true;
     }
   }

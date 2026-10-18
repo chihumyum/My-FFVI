@@ -137,9 +137,13 @@ function changeVehicle(game, id, task, silent = false) {
     records(game)[id] = { ...pose(game), enabled: true };
   appearance(game, game.player, id);
   system.currentVehicle = id;
-  // Appearance changes must not reveal a leader hidden behind a story puppet.
-  // Ordinary boarding starts from a visible player; landing has its own
-  // explicit control callback below.
+  // Ordinary PR takeoff hides the walking body and retires the parked puppet.
+  // Its native completion callback returns the controlled flying body. Silent
+  // cinematic borrowing retains authored visibility and has no such callback.
+  if (!silent && airship(id)) system.takeoffVehicle = id;
+  else delete system.takeoffVehicle;
+  // Silent appearance changes retain a story puppet's HidePlayer. Ordinary
+  // takeoff and landing reveal the controlled body in their callbacks below.
   if (id === 6 || previous === 6) for (const member of game.party ?? []) member.magitek = id === 6;
   if (id > 1) {
     const row = definition(game, id);
@@ -557,6 +561,14 @@ export function updateVehicleInput(game) {
     syncVehicleActors(game);
   }
   const system = game.banks?.PlaySystems;
+  if (system?.takeoffVehicle === currentId(game) && world(game) && !game.busy) {
+    const id = system.takeoffVehicle;
+    delete system.takeoffVehicle;
+    game.player.visible = true;
+    if (game.camera) game.camera.manual = false;
+    syncVehicleActors(game);
+    emit(game, "vehicle-airborne", { id, ...pose(game) });
+  }
   if (system?.landingVehicle && currentId(game) === 1 && world(game) && !game.busy) {
     // The source landing continuation hides the walking leader while the
     // vehicle body descends, with no final Show opcode. Its control callback

@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Sprite, Texture } from "pixi.js";
+import { Container, Sprite, Texture } from "pixi.js";
+import { AirshipMotion } from "./airship-motion.js";
+import { BirdView } from "./bird-view.js";
 import { FieldPresentation } from "./field-presentation.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -16,6 +18,7 @@ test("world-water planes release stale atlas views while a replacement page load
     plane = new Sprite(stale);
   let loaded = null;
   const view = {
+    flightMotion: new AirshipMotion(),
     catalog: { maps: { 1: { far: [water], near: [] } }, gps: {} },
     backdropPlane: {},
     waterPlane: plane,
@@ -58,6 +61,8 @@ test("world-water planes release stale atlas views while a replacement page load
 test("field ColorFade cannot black out a battle or survive a map-camera replacement", () => {
   const properties = { uniforms: {} },
     view = {
+      flightMotion: new AirshipMotion(),
+      _metrics: {},
       mapId: 118,
       tone: { rgb: [0, 0, 0], alpha: 1, from: [1, 1, 1, 0], time: 10, duration: 0.7 },
       screenEffects: {},
@@ -94,6 +99,7 @@ test("new-map far scenery is immediately visible at frozen time, with only same-
     second = { name: "FarBGLayer2", visible: true, properties: {} },
     seen = [],
     view = {
+      flightMotion: new AirshipMotion(),
       catalog: {
         maps: { 1: { far: [first, second], near: [] }, 2: { far: [first], near: [] } },
         gps: {},
@@ -150,6 +156,7 @@ test("explicit PR far-background switches activate initially hidden variants acr
     ]),
     seen = [],
     view = {
+      flightMotion: new AirshipMotion(),
       catalog,
       clock: 100,
       mapId: null,
@@ -264,7 +271,11 @@ test("every nonzero PR field shader_type keeps its source binding and is applied
     source.map((row) => row.name).sort(),
   );
   const warnings = [],
-    view = { catalog, warn: (_key, message) => warnings.push(message) };
+    view = {
+      flightMotion: new AirshipMotion(),
+      catalog,
+      warn: (_key, message) => warnings.push(message),
+    };
   for (const row of source) {
     const character = data.characters[row.name],
       before = JSON.stringify(character);
@@ -286,6 +297,8 @@ test("every nonzero PR field shader_type keeps its source binding and is applied
 
 test("reloading the same source world map ends the flight camera before walking", () => {
   const view = {
+    flightMotion: new AirshipMotion(),
+    _metrics: {},
     mapId: 2,
     view: true,
     tone: { rgb: [0, 0, 0], alpha: 1, from: [1, 1, 1, 0], time: 0, duration: 0 },
@@ -324,26 +337,17 @@ test("reloading the same source world map ends the flight camera before walking"
 });
 
 test("flight projection respects hidden players, including unmounted scripted flyovers", () => {
-  const actor = new Sprite(Texture.EMPTY),
-    texture = new Texture({ source: Texture.EMPTY.source }),
+  const texture = new Texture({ source: Texture.EMPTY.source }),
     view = {
-      catalog: { maps: { 1: { far: [], near: [] } }, gps: {}, sky: {} },
-      backdropPlane: {},
-      waterPlane: {},
-      flightFilter: { resources: { properties: { uniforms: {} } } },
-      flightActor: actor,
-      flight: true,
-      near: {},
-      gps: { visible: false },
-      gpsSprites: [],
-      farPlanes: [],
-      nearPlanes: [],
-      _metrics: {},
-      _sprites: () => 0,
-      diagnostics: { record() {} },
+      container: new Container(),
+      filter: { resources: { properties: { uniforms: {} } } },
+      surface: {},
+      output: Texture.EMPTY,
+      display: {},
+      sprites: new Map(),
       getTexture: () => texture,
+      warn() {},
       sampleActor: () => ({ info: { file: "rider.png", width: 16, height: 32 }, flip: false }),
-      clock: 1,
     },
     game = {
       mapId: 1,
@@ -351,24 +355,51 @@ test("flight projection respects hidden players, including unmounted scripted fl
       time: 1,
       player: { id: -1001, visible: true, asset: "mo_ff6_p009" },
     },
+    data = { characters: { mo_ff6_p009: { sprites: {} } } },
+    catalog = { sky: {}, flight: { ships: {} } },
+    state = { rotation: 0, altitude: 0, upDown: 0 },
     draw = () =>
-      FieldPresentation.prototype.draw.call(view, game, undefined, {
-        characters: { mo_ff6_p009: { sprites: {} } },
-      });
-  draw();
-  assert.equal(actor.visible, true);
+      BirdView.prototype.draw.call(
+        view,
+        { render() {} },
+        { source: Texture.EMPTY.source, width: 640, height: 360 },
+        game,
+        data,
+        catalog,
+        state,
+      );
+  let frames = draw();
+  assert.equal(frames[0].drawn, true);
   game.player.visible = false;
-  draw();
-  assert.equal(actor.visible, false);
-  assert.equal(view.flightFrame.drawn, false);
-  assert.equal(view.flightFrame.reason, "hidden-player");
+  frames = draw();
+  assert.equal(view.sprites.get("-1001:body").visible, false);
+  assert.equal(frames[0].drawn, false);
+  assert.equal(frames[0].reason, "hidden-player");
   game.player.vehicle = 5;
   draw();
-  assert.equal(actor.visible, false, "A vehicle never overrides an authored HidePlayer");
+  assert.equal(
+    view.sprites.get("-1001:body").visible,
+    false,
+    "A vehicle never overrides an authored HidePlayer",
+  );
   game.player.visible = true;
   draw();
-  assert.equal(actor.visible, true);
-  actor.destroy();
+  assert.equal(view.sprites.get("-1001:body").visible, true);
+  // Other PR BirdView puppets must remain billboards when the player is hidden.
+  const npc = { id: 1, asset: "mo_ff6_p009", x: 0, y: 0, visible: true };
+  Object.assign(game.player, { x: 0, y: 0, visible: false });
+  game.actors = new Map([["1", npc]]);
+  state.offset = { x: 0, y: 0 };
+  catalog.maps = { 1: { birdActors: { 1: { altitude: 1 } } } };
+  const before = JSON.stringify(npc),
+    puppets = draw();
+  assert.equal(puppets.find((row) => row.entityId === 1).drawn, true);
+  assert.ok(
+    puppets.find((row) => row.entityId === 1).screen.y < 90,
+    "The puppet must be above the ground plane",
+  );
+  assert.equal(JSON.stringify(npc), before, "Projection cannot move the source actor");
+  for (const sprite of view.sprites.values()) sprite.destroy();
   texture.destroy();
 });
 
@@ -377,12 +408,16 @@ test("the projected world renders PR water before land rather than inventing hor
     water = { visible: false, width: 320, height: 180 },
     map = { filters: [], filterArea: null },
     actors = {},
-    target = {},
+    target = { width: 640, height: 360 },
     view = {
+      flightMotion: new AirshipMotion(),
       flight: true,
       _flightWater: true,
       clock: 5,
       planeTexture: target,
+      flightSize: { width: 640, height: 360 },
+      birdView: { draw: () => [] },
+      _metrics: {},
       waterPlane: water,
       waterFilter: { update: (time, size) => calls.push({ time, size }) },
       flightSprite: {},

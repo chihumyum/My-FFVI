@@ -28,7 +28,8 @@ export async function compileFieldPresentation(out) {
   }
   for (const groups of Object.values(scenery))
     for (const images of Object.values(groups)) images.sort((a, b) => a.name.localeCompare(b.name));
-  const maps = {},
+  const flightActors = {},
+    maps = {},
     tilemaps = new Map(),
     missing = new Set();
   const actorMaterials = {},
@@ -50,6 +51,24 @@ export async function compileFieldPresentation(out) {
     for (const asset of await read(path.join(out, entry.bundleOutput)))
       if (asset.data.type === "map" && asset.data.layers)
         tilemaps.set(asset.source.assetPath.toLowerCase(), asset.data);
+      else if (/\/entity_default.json$/i.test(asset.source.assetPath || "")) {
+        const mapName = asset.source.assetPath
+          .match(/\/(Map_\d+(?:_\d+)?)\/entity_default.json$/i)?.[1]
+          ?.toLowerCase();
+        const actors = {};
+        const visit = (layers) => {
+          for (const layer of layers || []) {
+            for (const object of layer.objects || []) {
+              const p = Object.fromEntries((object.properties || []).map((p) => [p.name, p.value]));
+              if (p.birdview_puppet)
+                actors[String(p.entity_id)] = { altitude: Number(p.flight_altitude_ratio ?? 1) };
+            }
+            visit(layer.layers);
+          }
+        };
+        visit(asset.data.layers);
+        if (mapName) flightActors[mapName] = actors;
+      }
   const mediaImage = (name, group = "") => {
     if (!name) return null;
     name = path.posix.basename(name || "").replace(/\.png$/i, "");
@@ -67,7 +86,14 @@ export async function compileFieldPresentation(out) {
     const name = row.map_name.toLowerCase();
     const tilemap = [...tilemaps].find(([file]) => file.endsWith(`/${name}/tilemap.json`))?.[1];
     if (!tilemap) continue;
-    const value = { far: [], near: [], filter: [], tileLayers: [] };
+    const value = {
+      far: [],
+      near: [],
+      filter: [],
+      tileLayers: [],
+      loop: Number(row.loop_type || 0),
+      birdActors: flightActors[name] || {},
+    };
     const walk = (layers, inherited = {}) => {
       for (const layer of layers || []) {
         const p = Object.fromEntries((layer.properties || []).map((p) => [p.name, p.value]));
@@ -110,7 +136,8 @@ export async function compileFieldPresentation(out) {
       value.near.length ||
       value.filter.length ||
       value.backdrop ||
-      value.bodyThreshold != null
+      value.bodyThreshold != null ||
+      Object.keys(value.birdActors).length
     )
       maps[row.id] = value;
   }
@@ -175,6 +202,35 @@ export async function compileFieldPresentation(out) {
     ocean,
     sky,
     cameras,
+    // FF6 native BirdView constants (404330/4042f0/9da110/385300/4b1ea0).
+    // Sprite keys themselves are resolved against the exported anim_info.
+    flight: {
+      input: { width: 640, height: 360 },
+      output: { width: 960, height: 540 },
+      mesh: { width: 1280, height: 720 },
+      fovLow: 35,
+      fovHigh: 60,
+      flightRatioLow: 0.4,
+      flightRatioHigh: 1.2,
+      cameraRotateAngle: -55,
+      maxPitch: 82.8,
+      movementMultiplier: 4,
+      moveSeconds: [0.24, 0.48, 0.12, 0.96, 0.06, 1.92, 0.16, 0.096, 0.08],
+      poseKeys: [
+        ["LookDownL", "LookDown", "LookDownR"],
+        ["LookLeft", "Forward", "LookRight"],
+        ["LookUpL", "LookUp", "LookUpR"],
+      ],
+      ships: Object.fromEntries(
+        [4, 5].map((id) => {
+          const vehicle = tables["transportation.csv"].find((row) => Number(row.id) === id);
+          const asset = tables["field_character_asset.csv"].find(
+            (row) => Number(row.id) === Number(vehicle?.asset_id),
+          );
+          return [id, asset?.asset_name];
+        }),
+      ),
+    },
     actorMaterials,
     summary: {
       farBundles: raw.files.filter((f) => /\/map_far.*\.bundle$/.test(f.file)).length,
@@ -186,7 +242,7 @@ export async function compileFieldPresentation(out) {
     },
     warnings: [
       "Scenery images, order, active flags, offsets, scroll ratios/speeds, texture groups, water colors and shader names come from PR Tiled imagelayers. Nine-slice edge stretching, native clipping and background-selector crossfade duration (0.7s) are presentation approximations.",
-      "World flight reprojects the live tile/actor plane with the PR bird-view FOV and sky texture. Camera altitude/pitch/bank and skybox cylinder geometry are approximated; field movement and terrain remain unchanged.",
+      "BirdView uses PR 640x360 input/1280x720 plane, camera converters, parallel flight tasks, nine pose keys and ShadowLerp. Web input heading smooths a cardinal turn over 0.3 seconds; continuous analog acceleration/bank, native sky cylinder/fog, discrete render-target tiers and source-specific view-duration overrides remain approximated. Source field movement remains unchanged.",
       "GPS uses the PR gps.csv variant, original 800px screen/overlay and 256-tile coordinates; compact placement and blinking player marker are adapted for the web viewport.",
       "Field anim_info shader_type=1 is interpreted as additive blending for the three opaque-black-backed waterfall/effect assets. The enum-to-material binding is inferred from source pixels and usage; shader_type0 keeps normal alpha blending and unknown types emit diagnostics.",
     ],

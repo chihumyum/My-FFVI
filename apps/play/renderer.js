@@ -832,14 +832,25 @@ export class GameRenderer {
       return;
     }
     const tile = map.tileSize || 16;
-    const viewWidth = this.fieldPresentation.flight ? 640 : WIDTH;
-    const viewHeight = this.fieldPresentation.flight ? 640 : HEIGHT;
+    const viewWidth = this.fieldPresentation.flight
+      ? this.fieldPresentation.flightSize.width
+      : WIDTH;
+    const viewHeight = this.fieldPresentation.flight
+      ? this.fieldPresentation.flightSize.height
+      : HEIGHT;
     const world = /^Map_100(?:10|20|30)/i.test(map.name);
-    const loop = world ? (map.worldTerrain?.loopType ?? 3) : 0;
+    const loop = world
+      ? (map.worldTerrain?.loopType ?? 3)
+      : this.fieldPresentation.flight
+        ? (this.fieldPresentation.catalog?.maps[game.mapId]?.loop ?? 0)
+        : 0;
     const wrapX = !!(loop & 1),
       wrapY = !!(loop & 2);
-    const focus = game.camera?.manual ? game.camera : game.player;
-    const view = fieldCameraFrame(map, focus, viewWidth, viewHeight);
+    const focus = this.fieldPresentation.focus(game);
+    const view = fieldCameraFrame(map, focus, viewWidth, viewHeight, {
+      loop,
+      ignoreRange: this.fieldPresentation.flight,
+    });
     const ox = view.x,
       oy = view.y;
     this._fieldCamera = { mapId: game.mapId, ...view };
@@ -1135,7 +1146,12 @@ export class GameRenderer {
       };
     };
     for (const actor of actors) {
-      if (this.fieldPresentation.flight && actor === game.player) continue;
+      if (
+        this.fieldPresentation.flight &&
+        (actor === game.player ||
+          this.fieldPresentation.catalog?.maps[game.mapId]?.birdActors?.[String(actor.id)])
+      )
+        continue;
       const position = fieldActorPosition(actor, tile);
       const parts = fieldActorParts(actor);
       if (!parts.length && (actor === game.player || [6, 10, 14, 17].includes(actor.kind)))
@@ -1161,10 +1177,6 @@ export class GameRenderer {
     hideUnused(this._fieldSprites, count);
     this._visibleActors = count;
     this.fieldPresentation.draw(game, { x: ox, y: oy }, data);
-    if (this.fieldPresentation.flightFrame) {
-      this.frameActors.push(this.fieldPresentation.flightFrame);
-      if (this.fieldPresentation.flightFrame.drawn) this._visibleActors++;
-    }
   }
 
   _drawBattle(game, battleData) {
@@ -1347,6 +1359,7 @@ export class GameRenderer {
       hideUnused(this._battleNames, 0);
       hideUnused(this._battleTargets, 0);
       if (this.openingMarch.matches(game)) {
+        this.fieldPresentation.projected.visible = false;
         hideUnused(this._fieldSprites, 0);
         this.layers.mapLayers.visible = this.layers.actors.visible = false;
         this.frameActors = this.openingMarch.draw(
@@ -1359,6 +1372,10 @@ export class GameRenderer {
       } else {
         this._drawMap(game || {}, data);
         this.fieldPresentation.project(this.app.renderer, this.layers, game);
+        this.frameActors.push(...(this.fieldPresentation.flightFrames || []));
+        this._visibleActors += (this.fieldPresentation.flightFrames || []).filter(
+          (row) => row.drawn,
+        ).length;
       }
     }
     this._fade.alpha = sceneFadeAlpha(game?.fade, game?.time || 0, inBattle);

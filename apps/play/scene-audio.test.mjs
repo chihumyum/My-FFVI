@@ -5,7 +5,7 @@ import { PlayGame } from "../../src/play/game.js";
 import { compileMapAudio } from "../../tools/export/map-audio.mjs";
 import { mapAudioCommands, legacySceneAudio } from "./scene-audio.js";
 import { WebAudioPlayer } from "./audio.js";
-import { withPresentation } from "./presentation-events.js";
+import { withPresentation, observingAudioInstruction } from "./presentation-events.js";
 const read = async (name) =>
   JSON.parse(await readFile(new URL(`../../build/web-data/${name}`, import.meta.url)));
 const [data, battleData, tables] = await Promise.all(
@@ -253,4 +253,52 @@ test("slow BGM loads keep the host barrier until the requested song has actually
   await pending;
   assert.equal(player.current.id, 2);
   assert.equal(player.musicPending, false);
+});
+
+test("observing a PR boarding SysCall keeps its BGM, while direct PlayBGM is consumed exactly once", () => {
+  class Source {
+    constructor({ onEvent } = {}) {
+      this.onEvent = onEvent;
+      this.state = { steps: 0 };
+      this.data = {
+        programs: {
+          1: {
+            name: "flight-audio",
+            ops: [
+              ["SysCall", [], [], ["乗り物に乗る：ブラックジャック号"]],
+              ["PlayBGM", [58], [], []],
+            ],
+          },
+        },
+      };
+    }
+    step(task) {
+      const op = this.data.programs[task.program].ops[task.pc++];
+      this.state.steps++;
+      this.onEvent?.({ kind: "bgm", id: op[0] === "SysCall" ? 46 : 58 });
+    }
+  }
+  const heard = [],
+    suppressed = [],
+    g = new (withPresentation(Source))({
+      onEvent: (e) => {
+        suppressed.push(observingAudioInstruction(g));
+        if (!observingAudioInstruction(g)) heard.push(e.id);
+      },
+      onPresentation: (e) => {
+        if (e.kind === "audio-command") heard.push(e.i[0]);
+      },
+    }),
+    plain = new Source(),
+    task = { program: 1, pc: 0, wait: 0 },
+    plainTask = { ...task };
+  g.step(task);
+  plain.step(plainTask);
+  g.step(task);
+  plain.step(plainTask);
+  assert.deepEqual(heard, [46, 58]);
+  assert.deepEqual(suppressed, [false, true]);
+  assert.deepEqual(task, plainTask);
+  assert.deepEqual(g.state, plain.state);
+  assert.equal(observingAudioInstruction(g), false);
 });

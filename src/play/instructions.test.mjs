@@ -19,6 +19,31 @@ const game = () => ({
   },
 });
 
+test("PR starts parallel airship tasks without inserting a second scene wait or a 30s cap", () => {
+  const g = game(),
+    emitted = [],
+    task = { wait: 0 };
+  g.event = (kind, value) => emitted.push({ kind, ...value });
+  // The imperial approach really supplies a 41-second movement. Rotate,
+  // altitude and camera offset have independent durations in the same batch.
+  const commands = [
+    ["AddAirShipMoveTask", [3], [41, 0, 0.5]],
+    ["AddAirShipRotateChangeTask", [0], [3, 180]],
+    ["AddAirShipFlightAltitudeChangeTask", [1], [4, 1, 0]],
+    ["AddAirshipUpDownMoveTask", [0], [2, 100]],
+  ];
+  for (const [name, i, r] of commands) executeInstruction(g, task, name, i, r, []);
+  executeInstruction(g, task, "StartAirShipAutoManipulate", [], [], []);
+  assert.equal(task.wait, 0, "native StartTask returns normally; PR Wait/Fade own VM timing");
+  assert.equal(emitted.length, 1);
+  assert.equal(emitted[0].kind, "airship-motion");
+  assert.deepEqual(
+    emitted[0].tasks.map(({ name, i, r }) => [name, i, r]),
+    commands,
+  );
+  assert.deepEqual(g.airshipTasks, []);
+});
+
 test("authored flashes let delayed puppet replacements complete before FinishPuppet", () => {
   // PR source0302_4 spawns the Ramuh/magicite puppets, flashes twice, then
   // finishes them. Treating Flash as instantaneous cancels both before 0.2s.

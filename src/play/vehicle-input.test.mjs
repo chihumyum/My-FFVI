@@ -343,3 +343,28 @@ test("deck save/restore keeps world parking and a boat disembarks by one legal s
   assert.deepEqual([boat.player.x, boat.player.y, boat.player.vehicle], [1, 0, null]);
   assert.equal(boat.banks.PlaySystems.vehicles[2].x, 0);
 });
+
+test("ordinary takeoff restores the controlled airship after its source puppets end; silent flight keeps HidePlayer", () => {
+  const game = host();
+  place(game);
+  game.player.visible = false;
+  game.vehicleMenu = {}; // Foreground source sequence is still active.
+  executeVehicleSyscall(game, null, "乗り物に乗る：ブラックジャック号");
+  updateVehicleInput(game);
+  assert.equal(game.player.visible, false);
+  game.vehicleMenu = null;
+  updateVehicleInput(game);
+  assert.equal(game.player.visible, true);
+  assert.equal(game.player.vehicle, 4);
+  assert.equal(
+    game.actor(-103).visible,
+    false,
+    "Only the controlled body may remain after takeoff",
+  );
+  assert.ok(game.events.some((e) => e.kind === "vehicle-airborne"));
+  game.player.visible = false;
+  executeVehicleSyscall(game, null, "乗り物に乗る：ブラックジャック号");
+  executeVehicleSyscall(game, null, "乗り物に乗る：ブラックジャック号(アニメ・BGMなし)");
+  updateVehicleInput(game);
+  assert.equal(game.player.visible, false);
+});

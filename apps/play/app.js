@@ -129,6 +129,7 @@ function presentation(command) {
 }
 function event(e) {
   eventHistory.record(e);
+  if (["airship-motion", "vehicle", "vehicle-landing"].includes(e.kind)) renderer.event(e);
   if (e.kind === "opera" && !auto && !walking) opera.play(e.stage);
   if (e.kind === "battle-message")
     battleDialogue = {
@@ -952,7 +953,7 @@ if (new URLSearchParams(location.search).get("acceptance") === "1") {
       if (!field.flight || !field.planeTexture) throw Error("No projected world map is displayed");
       return {
         plane: await renderer.app.renderer.extract.base64({ target: field.planeTexture }),
-        projected: await renderer.app.renderer.extract.base64({ target: field.flightSprite }),
+        projected: await renderer.app.renderer.extract.base64({ target: field.birdView.display }),
       };
     },
     async load(checkpoint) {
