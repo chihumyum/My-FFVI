@@ -69,6 +69,13 @@ export function sampleFieldClip(
   // unbounded loop, including saves restored hours into a map.
   while (normalized == null && clip.play_mode === 3 && clip.play_speed > 0) {
     if (at < clip.play_speed) break;
+    // PR UpdateLinkToMove wraps the phase; SwitchNextAnimation is a no-op
+    // when next_anim_name is empty. Keep cycling this clip, rather than
+    // treating the three opening armor clips (and vehicle loops) as broken.
+    if (!clip.next_anim_name) {
+      at %= clip.play_speed;
+      break;
+    }
     if (visited.has(clip.name)) {
       const cycle = visited.get(clip.name) - at;
       if (cycle > 0) at %= cycle;

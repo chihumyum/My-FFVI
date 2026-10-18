@@ -1397,6 +1397,7 @@ export class GameRenderer {
       resolution: this._resolution || 1,
       visibleTiles: this._visibleTiles,
       visibleActors: this._visibleActors,
+      actorFrames: this.frameActors || [],
       tileSprites: this._tileLayers.reduce((sum, layer) => sum + layer.sprites.length, 0),
       croppedTextures: this._crops.size,
       texturesReady: textures.filter((record) => record.texture).length,

@@ -109,6 +109,7 @@ class RegressionGame extends ObservedGame {
         `Executed program ${task.program} missing from map ${this.mapId} preload closure`,
       );
     const result = super.step(task);
+    appearanceAudit?.completedInstruction(this, task, sourceProgram, sourceIndex, sourceOp);
     if (sourceOp)
       assetAudit.instruction(this, {
         name: sourceOp[0],
@@ -497,4 +498,5 @@ const { visualRegression } = await import("./visual-regression.mjs"),
 result.visualRegression = { report: visualReportFile, status: visualResult.status };
 await writeFile(reportFile, JSON.stringify(result, null, 2));
 console.log(JSON.stringify({ visualRegression: visualResult.status, report: visualReportFile }));
-if (visualResult.status !== "passed") process.exitCode = 1;
+if (visualResult.status !== "passed" || appearanceAudit?.puppetVisibility.mismatches.length)
+  process.exitCode = 1;

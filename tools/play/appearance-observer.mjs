@@ -34,6 +34,26 @@ export class AppearanceObserver {
     this.samples = 0;
     this.counts = { checked: 0, matches: 0, mismatches: 0, unknown: 0 };
     this.maps = new Set();
+    this.puppetVisibility = { checked: 0, mismatches: [] };
+  }
+  completedInstruction(game, task, program, pc, op) {
+    if (op?.[0] !== "SetPuppet") return;
+    const selector = op[1][1];
+    if (selector > -1002 || selector < -1005) return;
+    const member = game.partySlots[game.partyIndex][-selector - 1001];
+    if (!member) return;
+    this.puppetVisibility.checked++;
+    // Read existing actors only; an audit must never create the missing body.
+    if (game.actors.get(String(-member))?.visible !== true)
+      this.puppetVisibility.mismatches.push({
+        mapId: game.mapId,
+        script: program.name,
+        instruction: pc,
+        selector,
+        member,
+        time: game.time,
+        reason: "An occupied party puppet is still hidden after binding",
+      });
   }
   instruction(game, task, program, pc, op) {
     if (!op || !program) return;
@@ -88,6 +108,7 @@ export class AppearanceObserver {
       samples: this.samples,
       maps: [...this.maps].sort((a, b) => a - b),
       field: {
+        puppetVisibility: this.puppetVisibility,
         ...this.counts,
         records: [...this.records.values()].sort((a, b) => b.count - a.count),
         inventory: this.field.inventory(),

@@ -376,6 +376,7 @@ for (const test of cases) {
           `Executed program ${task.program} missing from map ${this.mapId} preload closure`,
         );
       const result = super.step(task);
+      appearanceAudit?.completedInstruction(this, task, sourceProgram, sourceIndex, sourceOp);
       if (sourceOp)
         assetAudit.instruction(this, {
           name: sourceOp[0],
@@ -635,6 +636,7 @@ for (const test of cases) {
       mode: result.mode,
       stop,
     });
+  if (appearanceAudit?.puppetVisibility.mismatches.length) process.exitCode = 1;
   if (assetAudit) {
     const file = path.join(assetAuditDir, `${test.id}.json`);
     const audit = await assetAudit.write(

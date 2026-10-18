@@ -744,7 +744,14 @@ export class GameUI {
         row.gaugeFill.tint = u.ready ? 0xffdf80 : 0xffffff;
       }
     }
-    drawText(view, "hud-log", battle.log.slice(-1).join(" ").slice(0, 58), 0, height - 60, 24);
+    drawText(
+      view,
+      "hud-log",
+      this.get("targets")?.children.length ? "" : battle.log.slice(-1).join(" ").slice(0, 58),
+      0,
+      height - 60,
+      24,
+    );
   }
   render() {
     const options = this.get("battle-options");
@@ -823,9 +830,10 @@ export class GameUI {
         for (const node of this.get("commands").children)
           if (node.dataset.actorSwitch) node.hidden = true;
         if (targets.children.length) {
-          const cancel = targets.children.find((node) => node.dataset.targetCancel);
-          body = targets.children.filter((node) => node !== cancel);
-          pinned = cancel ? [cancel] : [];
+          pinned = targets.children.filter(
+            (node) => node.dataset.targetCancel || node.dataset.targetScope,
+          );
+          body = targets.children.filter((node) => !pinned.includes(node));
         } else body = options?.hidden ? [this.get("commands")] : [];
         bodyWidth = width === 1728 ? 432 : 600;
         this.battleStatus(v, width, height);

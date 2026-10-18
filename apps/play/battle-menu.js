@@ -11,6 +11,7 @@ export function createBattleMenu({
     index = -1,
     menu = null,
     selection = null,
+    targetAll = false,
     selectionMarker = "",
     marker = "",
     blitz = [],
@@ -79,6 +80,7 @@ export function createBattleMenu({
     return sides.includes(side) && !!unit && battle.eligibleTarget(unit, selection);
   };
   const chooseTarget = (action) => {
+    if (selection !== action) targetAll = !!action.all;
     selectionMarker = targetState(action);
     selection = action;
     targets.replaceChildren();
@@ -88,9 +90,12 @@ export function createBattleMenu({
       return;
     }
     const hint = createElement("strong");
-    hint.textContent = `${action.name}：点选目标`;
+    hint.textContent = `${action.name} · ${targetAll ? "全体" : "单体"}`;
     targets.append(hint);
-    for (const side of action.targetSides ?? [action.target === "ally" ? "player" : "enemy"]) {
+    const sides = action.targetSides ?? [action.target === "ally" ? "player" : "enemy"];
+    // Keep both group choices before individual names: the shallow battle
+    // window otherwise hides "enemy all" behind the entire allied roster.
+    for (const side of sides) {
       const pool = side === "player" ? battle.players : battle.enemies;
       if (action.all || action.selectableAll) {
         targets.append(
@@ -106,20 +111,34 @@ export function createBattleMenu({
           ),
         );
       }
+    }
+    for (const side of sides) {
+      const pool = side === "player" ? battle.players : battle.enemies;
       if (action.all && !action.selectableAll) continue;
       for (const [n, u] of pool.entries())
         targets.append(
           button(
             u.name + (side === "player" ? ` HP ${u.hp}/${u.maxHp}` : ""),
-            () => send(action, { side, index: n, all: false }),
+            () => send(action, { side, index: n, all: targetAll }),
             !battle.eligibleTarget(u, action),
           ),
         );
+    }
+    if (action.selectableAll) {
+      const scope = button(`目标：${targetAll ? "全体" : "单体"}（Shift 切换）`, toggleTargetAll);
+      scope.dataset.targetScope = "1";
+      targets.append(scope);
     }
     const cancel = button("取消", cancelTarget);
     cancel.dataset.targetCancel = "1";
     targets.append(cancel);
   };
+  function toggleTargetAll() {
+    if (!selection?.selectableAll) return false;
+    targetAll = !targetAll;
+    chooseTarget(selection);
+    return true;
+  }
   function open(command) {
     menu = command;
     selection = null;
@@ -305,10 +324,11 @@ export function createBattleMenu({
     canSelectTarget,
     selectTarget(side, n) {
       if (!canSelectTarget(side, n)) return false;
-      send(selection, { side, index: n, all: !!selection.all && !selection.selectableAll });
+      send(selection, { side, index: n, all: targetAll });
       return true;
     },
     handleKey(event) {
+      if (selection && event.key === "Shift" && !event.repeat) return toggleTargetAll();
       if (selection && event.key === "Escape") {
         cancelTarget();
         return true;

@@ -70,3 +70,40 @@ test("hidden or removed enemies cannot receive a battlefield target click", () =
   assert(targets.children.length > 0, "an invalid click keeps selection open");
   assert.equal(battle.players[0].ready, true);
 });
+
+test("group spells expose both sides before individual targets and battlefield clicks preserve all-target mode", () => {
+  const { battle, menu, targets, selectSpell } = fixture();
+  selectSpell(40);
+  const labels = targets.children.map((node) => node.textContent);
+  assert(
+    labels.indexOf("敌方全体") <
+      labels.indexOf(
+        battle.players[0].name + ` HP ${battle.players[0].hp}/${battle.players[0].maxHp}`,
+      ),
+  );
+  const hp = battle.enemies.map((unit) => unit.hp),
+    mp = battle.players[0].mp;
+  assert.equal(menu.handleKey({ key: "Shift" }), true);
+  assert(targets.children.some((node) => node.textContent.startsWith("目标：全体")));
+  assert(menu.selectTarget("enemy", 1));
+  assert(battle.enemies.every((unit, i) => unit.hp < hp[i]));
+  assert.equal(battle.players[0].mp, mp - data.abilities[40].mp, "one cast pays MP once");
+});
+
+test("all-target mode also heals the whole party, and cancelling resets the next spell", () => {
+  const { battle, menu, targets, selectSpell } = fixture();
+  for (const unit of battle.players) unit.hp = 1;
+  selectSpell(31);
+  targets.children.find((node) => node.dataset.targetScope).click();
+  assert(menu.selectTarget("player", 1));
+  assert(battle.players.every((unit) => unit.hp > 1));
+  battle.players[0].ready = true;
+  selectSpell(40);
+  menu.handleKey({ key: "Shift" });
+  menu.handleKey({ key: "Escape" });
+  selectSpell(40);
+  const hp = battle.enemies.map((unit) => unit.hp);
+  menu.selectTarget("enemy", 0);
+  assert(battle.enemies[0].hp < hp[0]);
+  assert.equal(battle.enemies[1].hp, hp[1]);
+});

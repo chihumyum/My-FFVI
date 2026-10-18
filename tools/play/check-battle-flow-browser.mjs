@@ -9,6 +9,47 @@ const output = path.resolve(
 );
 const catalog = JSON.parse(await readFile("build/web-data/battle-presentation.json"));
 const results = [];
+async function openingFrames(page, directory) {
+  // Actor coordinates and falling snow cannot prove the armors animate.
+  // Check the rendered sprite selections well after their first cycle.
+  await page.getByRole("button", { name: "自动行走：开", exact: true }).click();
+  const samples = [];
+  await mkdir(path.join(directory, "march-frames"), { recursive: true });
+  for (let i = 0; i < 16; i++) {
+    await page.waitForTimeout(200);
+    const sample = await page.evaluate(() => ({
+      time: window.ffvi.time,
+      actors: window.ffviRenderMetrics().actorFrames,
+      failed: window.ffviRenderMetrics().texturesFailed,
+    }));
+    samples.push(sample);
+    await page.locator("#screen").screenshot({
+      path: path.join(directory, "march-frames", `${String(i).padStart(2, "0")}.png`),
+    });
+  }
+  const actors = ["2", "3", "4"].map((id) => ({
+    id,
+    frames: [
+      ...new Set(
+        samples.flatMap((s) =>
+          s.actors.filter((a) => String(a.entityId) === id).map((a) => a.frame),
+        ),
+      ),
+    ],
+  }));
+  const report = { mode: "ordinary inputs; automatic walking/advance both off", samples, actors };
+  await writeFile(path.join(directory, "march-frames.json"), JSON.stringify(report, null, 2));
+  assert(
+    samples.every((s) => s.failed === 0 && s.actors.length === 3 && s.actors.every((a) => a.drawn)),
+  );
+  assert(
+    actors.every((a) => a.frames.length >= 6),
+    "each armor must keep stepping after its first cycle",
+  );
+  await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
+  await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
+  return report;
+}
 async function sceneAudioChecks(page, directory) {
   const fixtures = [
     { file: "build/play/stage1-checkpoints/befriend-gau.json", bgm: 19, slot: 1 },
@@ -205,6 +246,28 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
     }
     await page.waitForFunction(
+      () =>
+        window.ffvi?.mapId === 609 &&
+        window.ffvi.furthest?.script === "sc_e_0001_3" &&
+        [-1001, -31, -32].every((id) =>
+          window.ffviRenderMetrics().actorFrames.some((a) => Number(a.entityId) === id && a.drawn),
+        ),
+      null,
+      { timeout: 60000 },
+    );
+    await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
+    await page.getByRole("button", { name: "自动行走：开", exact: true }).click();
+    await page.waitForFunction(() => window.ffviRenderMetrics().texturesLoading === 0);
+    report.cliff = await page.evaluate(() => window.ffviRenderMetrics().actorFrames);
+    for (const id of [-1001, -31, -32])
+      assert(
+        report.cliff.some((a) => Number(a.entityId) === id && a.drawn),
+        `cliff actor ${id} must be drawn`,
+      );
+    await page.screenshot({ path: path.join(directory, "00-cliff-three-actors.png") });
+    report.checks.push("Cliff source party puppets display Terra and both soldiers");
+    await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
+    await page.waitForFunction(
       () => window.ffvi?.mapId === 572 && window.ffvi.actors.get("2")?.motion,
       null,
       { timeout: 120000 },
@@ -236,6 +299,16 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     report.checks.push(
       "Original 117-second opening puppets, PR scenery and moving armor in browser",
     );
+    report.marchAnimation = await openingFrames(page, directory);
+    report.checks.push(
+      "All three rendered armor sprites keep stepping with both automatic controls off",
+    );
+    if (process.env.PLAY_OPENING_ONLY === "1") {
+      assert.deepEqual(report.errors, []);
+      assert.deepEqual(report.failedResponses, []);
+      report.status = "passed";
+      continue;
+    }
     await page.getByRole("button", { name: "自动推进：关", exact: true }).click();
     await page.waitForFunction(() => !!window.ffvi?.battle, null, { timeout: 120000 });
     await page.getByRole("button", { name: "自动行走：开", exact: true }).click();

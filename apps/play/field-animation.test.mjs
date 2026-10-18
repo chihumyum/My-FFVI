@@ -77,6 +77,41 @@ test("PR one-shot clips hold their final frame while mode1 decor still loops", (
   );
 });
 
+test("PR movement loops without a next clip keep cycling, including all three opening armors", () => {
+  const warnings = [];
+  let checked = 0;
+  for (const [asset, character] of Object.entries(data.characters)) {
+    for (const clip of character.animation?.data?.animation || []) {
+      if (clip.play_mode !== 3 || clip.next_anim_name || !(clip.play_speed > 0)) continue;
+      for (const phase of [0.13, 0.47, 0.81]) {
+        const sample = (cycles) =>
+          sampleFieldClip(
+            character,
+            clip.name,
+            clip.play_speed * (cycles + phase),
+            null,
+            (...row) => warnings.push({ asset, row }),
+          );
+        assert.equal(sample(20).name, sample(0).name, `${asset}/${clip.name} must wrap`);
+      }
+      checked++;
+    }
+  }
+  assert(checked > 0);
+  assert.deepEqual(warnings, [], "an empty next clip is valid PR movement playback");
+  for (const name of ["DefaultC", "DefaultR", "DefaultL"]) {
+    const actor = { id: name, asset: "mo_ff6_n076_c00", animation: name, x: 0, y: 0, motion: {} };
+    const host = new FieldAnimations(),
+      frames = new Set();
+    for (let time = 0; time < 12; time += 0.1) {
+      actor.y -= 0.01;
+      const frame = host.sample(actor, data.characters[actor.asset], time);
+      if (time > 5) frames.add(frame.name);
+    }
+    assert(frames.size >= 10, `${name} must still show the complete step cycle after five seconds`);
+  }
+});
+
 test("a repeated source PlayAnim restarts without mutating the VM actor", () => {
   const animation = new FieldAnimations();
   const actor = { animation: "FingerUp", x: 0, y: 0 };

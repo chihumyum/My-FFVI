@@ -23,6 +23,8 @@ const menu = createBattleMenu({
   status: $("battle-status"),
   createElement: createWidget,
 });
+renderer.canSelectBattleTarget = (side, index) => menu.canSelectTarget(side, index);
+renderer.onBattleTarget = (side, index) => menu.selectTarget(side, index);
 for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 31, 32]) {
   const option = document.createElement("option");
   option.value = id;
@@ -30,9 +32,11 @@ for (const id of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 31,
   $("actor").append(option);
 }
 let battle,
+  actionEvents = [],
   preview = false,
   last = performance.now();
 function start() {
+  actionEvents = [];
   renderer.resetPresentation();
   preview = false;
   $("visual-result").textContent = "";
@@ -81,12 +85,22 @@ function start() {
     encounterId: Number($("formation").value),
     isVeldt: id === 12,
     context: { gil: 500000, settings: { atbMode: "wait", battleSpeed: 3 } },
-    event: (kind, event) => renderer.event({ kind, ...event }),
+    event: (kind, event) => {
+      renderer.event({ kind, ...event });
+      if (kind === "battle-action") {
+        const target = (event.targetSide === "player" ? battle.players : battle.enemies)[
+          event.targetIndex
+        ];
+        actionEvents.push({ ...event, targetHp: target.hp, targetMaxHp: target.maxHp });
+        if (actionEvents.length > 60) actionEvents.shift();
+      }
+    },
     onEnd: (result) => {
       $("result").textContent = `本次战斗：${result.outcome}。点击开始测试战斗可更换角色。`;
     },
   });
   for (const u of battle.players) {
+    if (document.getElementById("injured-party").checked) u.hp = Math.max(1, u.maxHp - 2000);
     u.atb = 100;
     u.ready = true;
   }
@@ -207,7 +221,11 @@ function loop(now) {
   }
   ui.render();
   renderer.render(battle ? { battle, time: battle.time } : null, null, data);
-  $("render-metrics").textContent = JSON.stringify(renderer.metrics(), null, 2);
+  $("render-metrics").textContent = JSON.stringify(
+    { ...renderer.metrics(), actionEvents },
+    null,
+    2,
+  );
   requestAnimationFrame(loop);
 }
 start();

@@ -1,12 +1,12 @@
 # FFVI Web 状态
 
 ## 能玩到哪
-- Cloudflare 私人站点 https://ffvi.chihum.dev/：登录后跨设备同步。修复 CSP 限制 Blob Worker 时贴图永久等待；不放宽 CSP，补充启动状态/失败重试。线上原页面、禁止 Worker、模块失败及现有普通云档读取共 8 项通过；内置浏览器直接打开通过。详 build/play/deployment/loading-csp/summary.json。
-- 本轮强化新游戏→结局：182 战，最终战 472 胜利；15 张当次现场标准图差异 0，未改标准图或阈值；443 测试通过。报告 build/play/deployment/loading-csp/main-regression.json。
-- PR 音频全量对照：649 地图（342 个非零默认曲）、105 音乐包、1062 阵型绑定；修复默认曲导出丢失、旧档条件选曲、新档续播、起播偏移和曲终等待。详 build/play/battle-flow/audio-configuration.json。
-- 公网 Chromium/WebKit 均通过：雪中行进、真实选招/点击敌人、ATB 暂停、结算、BGM2/6/7、地图曲19/剧情曲44及刷新存读档续播；443 测试通过。慢网时等新曲解码启动再推进，云档 API 在独立验收配置中被禁止调用。截图与报告：build/play/battle-flow/remote-final/。音乐仍为 93.10 MB，匿名资源保护与云档协议不变。
+- 私人站点 https://ffvi.chihum.dev/：登录后跨设备同步，保留 CSP 加载修复。补上群体施法切换/战场点击、机甲循环换帧、队伍位置演员显现；Chromium/WebKit 实际操作通过。普通新游戏关闭两种自动模式，走到纳尔谢第一战结算。报告 build/play/deployment/opening-confirm/。
+- 本轮强化新游戏→结局：182 战，最终战 472 胜利；261 次队伍演员绑定无隐藏错误；15 张当次标准图差异 0，未改标准图/阈值；449 测试通过。报告 accepted-main-regression.json。
+- 纳尔谢 187 张浏览器截图已逐格复核；黑色切图帧不算场景正确性证明。补拍剧情内部和普通输入实走，用于定位进一步的演员交接问题。
 
 ## 已知问题
+- 纳尔谢老人屋内：下机甲会错误恢复隐藏玩家；调用初始化脚本时演员位置交接及命名步行动画朝向仍待修复。本轮尚不宣称纳尔谢全部演出正确。
 - 手机真机尚未测；不提供整个游戏的离线缓存。不同域名/端口的旧本机存档须导出后导入；同步不会切换正在玩的进度。
 - 阶段 A 的 35 墙画面待查（22 中/13 低）、12 项数值版本/时钟残差仍保留；支线未逐帧 GPU 验收，其余 NPC 留用户实玩。详 build/play/acceptance/summary.json。
 - 账户未启用 Access，当前使用私人密码登录；密码仅本机私有文件与 Worker secret 保管。单条云档超过约 1.9 MB 会报错并保留本机版本；本轮真实结局快照约 226 KB。

@@ -639,10 +639,15 @@ export class PlayGame {
         t.wait = Math.max(0, r[0] || 0);
         return;
       case "SetPuppet": {
-        if (i[1] < 0 && i[1] > -1000) {
+        const partyPosition = i[1] <= -1002 && i[1] >= -1005 ? -i[1] - 1001 : null;
+        if (
+          (i[1] < 0 && i[1] > -1000) ||
+          (partyPosition !== null && this.partySlots[this.partyIndex][partyPosition])
+        ) {
           const puppet = this.actor(i[1]);
           puppet.visible = true;
-          if (-i[1] === this.partySlots[this.partyIndex][0]) this.player.visible = false;
+          if (partyPosition === null && -i[1] === this.partySlots[this.partyIndex][0])
+            this.player.visible = false;
         }
         t.bindings[i[0]] = { actor: i[1], target: i[2] };
         return;

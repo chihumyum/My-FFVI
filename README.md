@@ -145,7 +145,9 @@ npm run bundle
 
 音频消费者通过 `apps/play/presentation-events.js` 观察原始 PR 指令；PlayEnvSe 读取独立 environment 表。进场先应用 `map.csv` 的默认 BGM/环境音，再由真实初始化与剧情脚本按旗标覆盖；0 号地图 BGM 保留前曲。新存档保存当前/暂停曲目与环境音的位置；旧存档在隔离副本上求值原始初始化脚本的同步音频段，不改实时旗标、物品或进度，但无法重建此前临时剧情曲与秒数。PlayBGM 保留起播偏移与重播参数；浏览器等新曲下载解码并实际启动后再继续，避免慢网时演出先行。SyncBGM 在原指令完成处让出宿主，等待淡变和非循环曲播放完成，不注入 VM 等待或改写任务；开发用自动跑法可略过曲终等待。PR 原生音频总线/槽位仍是带日志的推断映射；复杂 SAB 的 21 项复合程序暂播放首条音流，逐项记警告。F9 报告包含当前音频状态与最近 40 条音频指令、地图和脚本位置。
 
-战斗播放由 `apps/play/battle-flow.js` 串行消费战斗事件，播放期间暂停浏览器的后续游戏 tick，显示技能横幅、胜利动作和实际奖励；确认结算后恢复剧情与入场前的音乐位置。战斗曲和胜负曲取自 PR 阵型及参数表，0 号战斗曲保留场景音乐。开场雪中行进等待源脚本的 117 秒机甲/相机移动，使用 PR 雪地、纳尔谢远景和专用动画；投影、飘雪与出招时长仍为有记录的近似。在静态服务器上运行 `PLAY_WEB_URL=http://127.0.0.1:4207/ npm run play:battle-flow-check` 可验证开场、实际选招/点击敌人、暂停、音乐和结算（Chromium/WebKit）；截图与报告位于 `build/play/battle-flow/browser/`。
+战斗播放由 `apps/play/battle-flow.js` 串行消费战斗事件，播放期间暂停浏览器的后续游戏 tick，显示技能横幅、胜利动作和实际奖励；确认结算后恢复剧情与入场前的音乐位置。战斗曲和胜负曲取自 PR 阵型及参数表，0 号战斗曲保留场景音乐。开场雪中行进等待源脚本的 117 秒机甲/相机移动，使用 PR 雪地、纳尔谢远景和专用动画；投影、飘雪与出招时长仍为有记录的近似。在静态服务器上运行 `PLAY_WEB_URL=http://127.0.0.1:4207/ npm run play:battle-flow-check` 可验证开场、实际选招/点击敌人、暂停、音乐和结算（Chromium/WebKit）；同时在关闭两种自动模式后检查三个机甲持续换帧，不能用坐标变化或飘雪代替行走动画验收。截图与报告位于 `build/play/battle-flow/browser/`。
+
+可选择范围的魔法在选目标时可点击常驻的单体／全体按钮，或按 Shift 切换，再直接点战场上的敌人或队员；也可直接点击“敌方全体／我方全体”。`PLAY_WEB_URL=http://127.0.0.1:8788/ npm run play:magic-target-check` 用真实 PR 测试阵型验证全体按钮、全体模式战场点击和单体施法（Chromium/WebKit）；私人服务器另设 `PLAY_HOST_PASSWORD_FILE`。
 
 启动和贴图加载不依赖 Blob Worker，保留现有 CSP；同源 PNG 在浏览器解码，避免 Worker 被限制时 Pixi 的能力检测一直等待。启动入口 `apps/play/bootstrap.js` 在初始化期间显示加载状态，模块或渲染器初始化失败时提供重试入口。`npm run play:loading-check` 验证线上原页面、禁止 Worker 的 CSP 情况和主模块网络失败（Chromium/WebKit）；读取本机私有登录文件，不改写原页面的云同步标记，并拦截验收配置内的云档写请求。报告默认位于 `build/play/deployment/loading-csp/current/`。
 
