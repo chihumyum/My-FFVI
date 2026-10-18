@@ -120,11 +120,11 @@ async function continueGame(page) {
   await panel(page, true);
   return page.evaluate(() => window.ffvi.snapshot());
 }
-async function saveFromRunning(page) {
+async function saveFromRunning(page, direction = "d") {
   await panel(page, false);
-  await page.keyboard.down("d");
+  await page.keyboard.down(direction);
   await page.waitForTimeout(350);
-  await page.keyboard.up("d");
+  await page.keyboard.up(direction);
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "存档", exact: true }).click();
   await page.getByRole("button", { name: "覆盖存档 1", exact: true }).click();
@@ -149,6 +149,11 @@ try {
   const contextA = await browser.newContext(options),
     contextB = await browser.newContext(options);
   const a = await login(contextA, "device-a");
+  const initialCloud = await (await contextA.request.get(new URL("/api/saves", base).href)).json();
+  assert.ok(
+    initialCloud.saves.length === 0 || process.env.PLAY_HOST_DISPOSABLE_DB === "1",
+    "Cloud acceptance requires an empty database; never overwrite player saves. Only a dedicated disposable test database may opt in with PLAY_HOST_DISPOSABLE_DB=1.",
+  );
   await a.screenshot({ path: path.join(output, "01-authenticated-title.png") });
   await panel(a, true);
   await a.locator('#cloud-panel input[type="file"]').setInputFiles({
@@ -178,7 +183,7 @@ try {
   await sync(a);
   const aCloud = await cloud(contextA);
   assert.deepEqual(aCloud.record.snapshot, wire(aSaved.snapshot));
-  const bSaved = await saveFromRunning(b);
+  const bSaved = await saveFromRunning(b, "a");
   assert.equal(bSaved.sync.dirty, true);
   assert.notDeepEqual(bSaved.snapshot, aSaved.snapshot, "the two real running games must differ");
   assert.deepEqual((await cloud(contextA)).record.snapshot, wire(aSaved.snapshot));

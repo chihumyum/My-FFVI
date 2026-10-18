@@ -16,3 +16,6 @@ backups/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+.wrangler/
+.dev.vars*
+worker-configuration.d.ts

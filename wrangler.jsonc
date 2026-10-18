@@ -1,0 +1,55 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ffvi-private",
+  "main": "cloudflare/worker.mjs",
+  "account_id": "8dc2a679b04b3b650f15668d148bb36b",
+  "compatibility_date": "2026-10-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "ffvi.chihum.dev",
+      "custom_domain": true,
+    },
+  ],
+  "assets": {
+    "directory": "./dist/cloudflare/web",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+  },
+  "vars": {
+    "FFVI_PUBLIC_URL": "https://ffvi.chihum.dev",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ffvi-saves",
+      "database_id": "f3e1958b-71d2-4ea6-bbe2-ef1d2ba15101",
+      "migrations_dir": "cloudflare/migrations",
+    },
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+  "env": {
+    "local": {
+      "name": "ffvi-private-local",
+      "routes": [],
+      "workers_dev": false,
+      "preview_urls": false,
+      "vars": {
+        "FFVI_PUBLIC_URL": "http://127.0.0.1:8788",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "ffvi-saves",
+          "database_id": "f3e1958b-71d2-4ea6-bbe2-ef1d2ba15101",
+          "migrations_dir": "cloudflare/migrations",
+        },
+      ],
+    },
+  },
+}

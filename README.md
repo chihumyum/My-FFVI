@@ -6,6 +6,32 @@
 
 ## 私人部署、手机游玩和云存档
 
+Cloudflare 版已绑定 `https://ffvi.chihum.dev/`：Workers Static Assets 分发约 541 MB 游戏文件，Worker 先验证登录，再读取资源或 D1 存档；不需要 VPS、Docker 或 R2。当前账户未启用 Access，因此沿用私人站点密码，初始密码保存在本机 `private-data/cloudflare-first-login.txt`，不进 Git。手机和电脑使用同一网址、密码，从标题读档接续；首次搬迁旧本机存档时，先导出备份，再到新域名导入并同步。
+
+更新线上版本（从本机已导出资源生成干净目录并上传，保留现有线上密码和 D1 数据）：
+
+```sh
+npm run cloudflare:deploy
+```
+
+首次部署到另一个账户，需要在 `wrangler.jsonc` 替换账户、D1 绑定和自定义域名，执行 `npx wrangler login`、创建 D1 并应用 `cloudflare/migrations`，再用 `npm run cloudflare:deploy:first` 一并设置本机生成的初始密码；不要对已有站点随意重设初始密码。密码校验值以 Worker secret 保存，修改后旧登录自动失效。普通更新命令不写 secret；换电脑时请单独安全保管原密码，不能把新机器生成的开发密码误认为线上密码。
+
+本地 Worker 开发先运行 `npm run cloudflare:prepare`，之后一条命令：
+
+```sh
+npm run cloudflare:dev
+```
+
+打开 `http://127.0.0.1:8788/`，使用上述本机密码；`local` 环境不绑定公网域名，D1 是本机模拟库，和线上数据分开。生产环境关闭 `workers.dev` 与版本预览地址，所有静态路径都先经过认证；音频支持有界流式 Range 请求。云端仍使用原子版本比较、离线队列与每槽 50 版历史；刷新或同步不替换正在运行的游戏。D1 存档单条记录上限约 1.9 MB，超出会明确报错并保留本机版本，不能静默截断。
+
+备份线上 D1（包含存档、历史和站点身份，输出到已忽略的 `backups/`）：
+
+```sh
+npm run cloudflare:backup
+```
+
+浏览器与接口验收在 `build/play/deployment/cloudflare/`。`node tools/play/check-cloudflare-http.mjs` 全局检查资源分类的匿名拒绝、登录、范围读取、来源校验与退出；`PLAY_WEB_URL=https://ffvi.chihum.dev/` 可指向公网验证。云存档验收仍使用 `play:host-check`；真实新游戏、音乐与存读档使用 `play:static-check`。云存档验收默认要求空库，防止覆盖玩家存档；只有专门的可丢弃测试库才能显式使用 `PLAY_HOST_DISPOSABLE_DB=1` 重跑，个人游玩库不要设置这个开关。
+
 在已导出游戏数据的工程里，一条命令生成完整分发包：
 
 ```sh

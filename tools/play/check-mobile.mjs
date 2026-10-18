@@ -107,6 +107,16 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     await page.locator(".touch-options-list").getByRole("button", { name, exact: true }).tap();
   };
   try {
+    if (staticMode && process.env.PLAY_MOBILE_STORAGE_STATE && results.length === 0) {
+      const response = await context.request.get(new URL("/api/saves", base).href);
+      if (response.ok()) {
+        const remote = await response.json();
+        assert.ok(
+          remote.saves.length === 0 || process.env.PLAY_HOST_DISPOSABLE_DB === "1",
+          "Mobile acceptance requires empty cloud saves or an explicitly disposable test database",
+        );
+      }
+    }
     await visit();
     assert.equal(await page.evaluate(() => window.ffvi.testBoost), false);
     const before = await page.evaluate(() => ({ ...window.ffvi.player }));
@@ -247,7 +257,9 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     const saveLabels = await page.locator(".touch-options-list button").allTextContents();
     assert.ok(saveLabels.some((label) => label.includes("存档 2")));
     assert.equal(new Set(saveLabels).size, saveLabels.length);
-    await choose(/(^| · )写入存档 2$/);
+    const saveAction = saveLabels.find((label) => /(写入|覆盖)存档 2$/.test(label));
+    assert.ok(saveAction, "Slot 2 must expose its actual write or overwrite control");
+    await choose(saveAction);
     await page
       .locator(".touch-options-list")
       .getByRole("button", { name: /(^| · )覆盖存档 2$/, exact: true })

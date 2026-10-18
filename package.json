@@ -10,7 +10,7 @@
   "scripts": {
     "export": "node tools/export/index.mjs",
     "dev": "vite --config vite.config.mjs",
-    "test": "node --test src/play/*.test.mjs apps/play/*.test.mjs tools/export/*.test.mjs tools/play/*.test.mjs server/*.test.mjs",
+    "test": "node --test src/play/*.test.mjs apps/play/*.test.mjs tools/export/*.test.mjs tools/play/*.test.mjs server/*.test.mjs cloudflare/*.test.mjs",
     "play:through": "node tools/play/playthrough.mjs",
     "play:optional-inventory": "node tools/play/optional-inventory.mjs",
     "play:optional": "node tools/play/optional-run.mjs",
@@ -28,19 +28,26 @@
     "play:numeric-check": "node tools/play/numeric-audit.mjs",
     "play:boss-check": "node tools/play/boss-health-check.mjs",
     "play:ability-audit": "node tools/play/audit-play-abilities.mjs",
-    "format": "prettier --write \"{src/play,apps/play,tools/export,tools/play,server}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
-    "format:check": "prettier --check \"{src/play,apps/play,tools/export,tools/play,server}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
+    "format": "prettier --write \"{src/play,apps/play,tools/export,tools/play,server,cloudflare}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs wrangler.jsonc",
+    "format:check": "prettier --check \"{src/play,apps/play,tools/export,tools/play,server,cloudflare}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs wrangler.jsonc",
     "predev": "node tools/export/web.mjs",
     "bundle": "node tools/play/bundle.mjs",
     "host": "node server/cli.mjs",
     "host:backup": "node server/cli.mjs backup",
     "package:host": "node tools/play/package-host.mjs",
-    "play:host-check": "node tools/play/check-host-browser.mjs"
+    "play:host-check": "node tools/play/check-host-browser.mjs",
+    "cloudflare:prepare": "node tools/play/prepare-cloudflare.mjs",
+    "cloudflare:dev": "wrangler d1 migrations apply ffvi-saves --local --env local && wrangler dev --env local --ip 127.0.0.1 --port 8788",
+    "cloudflare:deploy": "npm run cloudflare:prepare && wrangler d1 migrations apply ffvi-saves --remote && wrangler deploy",
+    "cloudflare:backup": "node tools/play/backup-cloudflare.mjs",
+    "cloudflare:deploy:first": "npm run cloudflare:prepare && wrangler d1 migrations apply ffvi-saves --remote && wrangler deploy --secrets-file private-data/cloudflare-secrets.json"
   },
   "devDependencies": {
+    "miniflare": "5.20261012.1-beta",
     "playwright": "1.64.1",
     "prettier": "3.9.10",
-    "vite": "8.3.4"
+    "vite": "8.3.4",
+    "wrangler": "4.151.1"
   },
   "dependencies": {
     "pixi.js": "8.22.0"

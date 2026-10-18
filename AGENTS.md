@@ -38,4 +38,5 @@ After the formatter is introduced, run npm run format:check before every commit.
 - apps/play: Pixi/WebGL rendering and game UI; read state/presentation events and dispatch ordinary game inputs. Never import this layer from src/play.
 - tools/play: static bundling and regression harnesses; load only already exported data. Vite provides development serving; the shipped game needs only a generic static HTTP server.
 - server: optional private self-host service, authentication, protected static resources and transactional SQLite saves; no gameplay rules. deploy/: portable Docker/Caddy templates, no credentials. Plain static mode remains supported without this service.
+- cloudflare: private Worker entry and D1 storage adapter; no gameplay rules. All static assets require authentication. Production secrets and original assets stay out of Git; local Wrangler bindings must not write to the production database. Preserve compare-and-write and history semantics across both storage adapters.
 - legacy/: archived old project; do not read.
