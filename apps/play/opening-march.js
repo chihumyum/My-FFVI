@@ -1,4 +1,13 @@
-import { Container, Filter, GlProgram, Graphics, Rectangle, Sprite, Texture } from "pixi.js";
+import {
+  Container,
+  Filter,
+  GlProgram,
+  Graphics,
+  Rectangle,
+  RenderTexture,
+  Sprite,
+  Texture,
+} from "pixi.js";
 
 const vertex = `
 in vec2 aPosition;
@@ -51,7 +60,6 @@ export class OpeningMarch {
     this.backdrop = new Sprite(Texture.WHITE);
     this.backdrop.width = 320;
     this.backdrop.height = 180;
-    this.backdrop.filterArea = new Rectangle(0, 0, 320, 180);
     this.container.addChild(this.backdrop);
     this.sprites = new Map();
     this.snow = new Graphics();
@@ -60,15 +68,18 @@ export class OpeningMarch {
   matches(game) {
     return game?.mapId === 572 && game.furthest?.script === "sc_e_0001_4";
   }
-  draw(game, data, catalog) {
+  draw(game, data, catalog, renderer) {
     const skyInfo = catalog?.sky.nalshe_op,
       groundURL = game.map.textures?.[game.map.tilesets?.[0]?.image],
       ground = this.getTexture(groundURL, { required: true, entityId: "opening-ground" }),
       sky = this.getTexture(skyInfo?.url, { required: true, entityId: "opening-sky" });
     this.container.visible = true;
+    this.backdrop.visible = !!(ground && sky);
     if (ground && sky) {
       if (!this.filter) {
         this.filter = new Filter({
+          resolution: 1,
+          antialias: false,
           glProgram: GlProgram.from({
             name: "pr-opening-snow",
             vertex: "#version 300 es\n" + vertex,
@@ -84,7 +95,17 @@ export class OpeningMarch {
             },
           },
         });
-        this.backdrop.filters = [this.filter];
+        // Bake this two-texture projection before the world's screen filter.
+        // Nesting its procedural filter under that pass sampled a cropped
+        // region of the backdrop instead of the complete sky/ground frame.
+        this.surface = new Sprite(Texture.WHITE);
+        this.surface.width = 320;
+        this.surface.height = 180;
+        this.surface.filterArea = new Rectangle(0, 0, 320, 180);
+        this.surface.filters = [this.filter];
+        this.target = RenderTexture.create({ width: 320, height: 180, resolution: 1 });
+        this.target.source.style.scaleMode = "nearest";
+        this.backdrop.texture = this.target;
       }
       this.filter.resources.uGround = ground.source;
       this.filter.resources.uSky = sky.source;
@@ -93,6 +114,7 @@ export class OpeningMarch {
         uSkyFrame: frame(sky),
         uTravel: (game.camera.y || 0) / 32,
       });
+      renderer.render({ container: this.surface, target: this.target, clear: true });
     }
     this.warn(
       "opening-projection",
@@ -153,5 +175,14 @@ export class OpeningMarch {
         .fill({ color: 0xd9e4ff, alpha: 0.3 + (i % 5) * 0.1 });
     }
     return records;
+  }
+  destroy() {
+    if (this.surface) {
+      this.surface.filters = null;
+      this.surface.destroy();
+    }
+    this.backdrop.texture = Texture.EMPTY;
+    this.filter?.destroy();
+    this.target?.destroy(true);
   }
 }

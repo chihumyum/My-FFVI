@@ -11,6 +11,7 @@ import {
 } from "pixi.js";
 
 import { BattlePresentation } from "./battle-presentation.js";
+import { FinalBattlePresentation } from "./final-battle.js";
 import { OpeningMarch } from "./opening-march.js";
 import { PRParticles } from "./particles.js";
 import { EffectLibrary } from "./effects.js";
@@ -156,6 +157,9 @@ export class GameRenderer {
       warn: (message) => this._warnOnce(`particles:${message}`, message),
     });
     this._battleSceneLayer = container("battle-background-prefab");
+    this.finalBattle = new FinalBattlePresentation({
+      warn: (message) => this._warnOnce("final-tower-scroll", message),
+    });
     this.backgroundParticles = new PRParticles({
       container: this._battleSceneLayer,
       diagnostics: this.diagnostics,
@@ -423,6 +427,8 @@ export class GameRenderer {
     this.particles.clear();
     this.backgroundParticles.clear();
     this._battleSceneBattle = null;
+    this.finalBattle.reset();
+    this._battleSceneLayer.position.set(0, 0);
     this._previewClock = null;
     this._battleExit = null;
     this._shake = null;
@@ -481,6 +487,7 @@ export class GameRenderer {
   event(event) {
     this.fieldAnimations.event(event);
     this.fieldPresentation.event(event);
+    if (event?.kind === "battle-effect" && this.finalBattle.event(event)) return;
     if (event?.kind === "battle-end" && this.battlePresentation.battle) {
       const battle = this.battlePresentation.battle;
       this._battleExit = {
@@ -1162,6 +1169,9 @@ export class GameRenderer {
 
   _drawBattle(game, battleData) {
     const battle = game.battle;
+    const tower = this.finalBattle.sample(battle);
+    this._finalTower = tower;
+    this._battleSceneLayer.position.set(tower.x, tower.y);
     const asset = this.backgroundLibrary?.catalog.backgrounds?.[battle.formation?.backgroundId];
     const authored = asset && this.backgroundLibrary.catalog.files[asset];
     this._battleSceneLayer.visible = !!authored;
@@ -1213,7 +1223,10 @@ export class GameRenderer {
     );
     this._battleBackground.visible = !!background && !authored;
     if (background) {
-      const key = `battle-background:${background.uid}`;
+      const cropY = tower.active
+        ? Math.max(0, background.height - this._height - Math.round(tower.offset))
+        : Math.floor((background.height - Math.min(this._height, background.height)) / 2);
+      const key = `battle-background:${background.uid}:${cropY}`;
       let texture = this._crops.get(key);
       if (!texture) {
         const width = Math.min(this._width, background.width);
@@ -1222,7 +1235,7 @@ export class GameRenderer {
           source: background.source,
           frame: new Rectangle(
             background.frame.x + Math.floor((background.width - width) / 2),
-            background.frame.y + Math.floor((background.height - height) / 2),
+            background.frame.y + cropY,
             width,
             height,
           ),
@@ -1323,6 +1336,8 @@ export class GameRenderer {
       if (this._battleSceneBattle) {
         this._battleSceneBattle = null;
         this.backgroundParticles.clear();
+        this.finalBattle.reset();
+        this._battleSceneLayer.position.set(0, 0);
       }
       if (this.battlePresentation.battle) {
         this.battlePresentation.clear();
@@ -1334,7 +1349,12 @@ export class GameRenderer {
       if (this.openingMarch.matches(game)) {
         hideUnused(this._fieldSprites, 0);
         this.layers.mapLayers.visible = this.layers.actors.visible = false;
-        this.frameActors = this.openingMarch.draw(game, data, this.fieldPresentation.catalog);
+        this.frameActors = this.openingMarch.draw(
+          game,
+          data,
+          this.fieldPresentation.catalog,
+          this.app.renderer,
+        );
         this._visibleActors = this.frameActors.filter((row) => row.drawn).length;
       } else {
         this._drawMap(game || {}, data);
@@ -1443,6 +1463,7 @@ export class GameRenderer {
           sprites: state.sprites.filter((s) => s.visible).length,
         })),
       backgroundParticles: this.backgroundParticles.metrics(),
+      finalTower: this._finalTower || null,
     };
   }
 
@@ -1450,6 +1471,7 @@ export class GameRenderer {
     this.battlePresentation.clear();
     this.particles.destroy();
     this.backgroundParticles.destroy();
+    this.openingMarch.destroy();
     this.fieldPresentation.destroy();
     for (const state of this._tileLayers) state.water?.destroy();
     this._backgroundShader?.destroy();

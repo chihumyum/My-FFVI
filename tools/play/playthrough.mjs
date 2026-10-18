@@ -74,7 +74,19 @@ const currentVisualDirectory =
         select: selectVisualPoints(visualConfig.scenes),
       }).open()
     : null,
-  checkpointObservers = [boundaryCheckpoints, currentVisualCheckpoints].filter(Boolean);
+  controlCheckpoints = process.env.PLAY_CONTROL_BOUNDARY_DIR
+    ? await new BoundaryCheckpoints(process.env.PLAY_CONTROL_BOUNDARY_DIR, assetAudit, {
+        handoffs: true,
+        select: (metadata) =>
+          ["control-return", "controlled-body-return", "control-walk"].includes(metadata.kind)
+            ? {}
+            : false,
+      }).open()
+    : null,
+  checkpointObservers = [boundaryCheckpoints, currentVisualCheckpoints, controlCheckpoints].filter(
+    Boolean,
+  );
+let captureControlWalk = false;
 if (appearanceAudit && !assetAudit)
   throw Error("Appearance acceptance requires presentation audit");
 let through = process.env.PLAY_THROUGH;
@@ -90,6 +102,15 @@ const coverage = process.env.PLAY_COVERAGE_REPORT
   : null;
 const ObservedGame = withPresentation(PlayGame);
 class RegressionGame extends ObservedGame {
+  move(direction) {
+    const moved = super.move(direction);
+    appearanceAudit?.movement(this, moved, direction);
+    if (moved && captureControlWalk && !this.loading && !this.battle) {
+      captureControlWalk = false;
+      controlCheckpoints?.capture(this, "control-walk", { direction });
+    }
+    return moved;
+  }
   enter(mapId, entrance, continuation) {
     boundaryCheckpoints?.beforeBoundary(this, "map", { nextMapId: mapId });
     return super.enter(mapId, entrance, continuation);
@@ -156,6 +177,11 @@ const game = new RegressionGame({
     packed ? packed.loadMap(id) : JSON.parse(await readFile(`${dataRoot}/maps/${id}.json`)),
   onEvent: (e) => {
     assetAudit?.event(game, e);
+    appearanceAudit?.event(game, e);
+    if (e.kind === "player-control-return") {
+      captureControlWalk = true;
+      controlCheckpoints?.capture(game, "controlled-body-return", { script: e.source });
+    }
     for (const observer of checkpointObservers) observer.event(game, e);
     if (["script", "map", "battle", "battle-end"].includes(e.kind)) {
       events.push(e);
@@ -507,7 +533,7 @@ const { visualRegression } = await import("./visual-regression.mjs"),
   visualResult = await visualRegression({
     reportFile: visualReportFile,
     dataRoot,
-    staticRoot: process.env.PLAY_STATIC_DIR,
+    staticRoot: process.env.PLAY_VISUAL_STATIC_DIR || process.env.PLAY_STATIC_DIR,
     boundaryDirectory: currentVisualDirectory,
   });
 result.visualRegression = { report: visualReportFile, status: visualResult.status };
@@ -515,8 +541,14 @@ await writeFile(reportFile, JSON.stringify(result, null, 2));
 console.log(JSON.stringify({ visualRegression: visualResult.status, report: visualReportFile }));
 if (
   visualResult.status !== "passed" ||
-  ["puppetVisibility", "vehicleVisibility", "puppetHandoff", "mobVisibility", "emptyPuppets"].some(
-    (key) => appearanceAudit?.[key].mismatches.length,
-  )
+  [
+    "puppetVisibility",
+    "vehicleVisibility",
+    "puppetHandoff",
+    "mobVisibility",
+    "emptyPuppets",
+    "ordinaryMovement",
+    "controlReturns",
+  ].some((key) => appearanceAudit?.[key].mismatches.length)
 )
   process.exitCode = 1;

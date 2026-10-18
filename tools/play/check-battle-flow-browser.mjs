@@ -13,6 +13,10 @@ async function openingFrames(page, directory) {
   // Actor coordinates and falling snow cannot prove the armors animate.
   // Check the rendered sprite selections well after their first cycle.
   await page.getByRole("button", { name: "自动行走：开", exact: true }).click();
+  await page.waitForFunction(() => {
+    const game = window.ffvi;
+    return !game.fade || game.time >= game.fade.start + game.fade.duration;
+  });
   const samples = [];
   await mkdir(path.join(directory, "march-frames"), { recursive: true });
   for (let i = 0; i < 16; i++) {
@@ -22,10 +26,32 @@ async function openingFrames(page, directory) {
       actors: window.ffviRenderMetrics().actorFrames,
       failed: window.ffviRenderMetrics().texturesFailed,
     }));
-    samples.push(sample);
-    await page.locator("#screen").screenshot({
+    // Read the compositor's screenshot, not a discarded WebGL back buffer.
+    const screenshot = await page.locator("#screen").screenshot({
       path: path.join(directory, "march-frames", `${String(i).padStart(2, "0")}.png`),
     });
+    sample.distantCityPixels = await page.evaluate(async (encoded) => {
+      const bitmap = await createImageBitmap(
+        new Blob([Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0))], { type: "image/png" }),
+      );
+      const copy = document.createElement("canvas");
+      copy.width = 320;
+      copy.height = 180;
+      const ctx = copy.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(bitmap, 0, 0, 320, 180);
+      bitmap.close();
+      const pixels = ctx.getImageData(0, 0, 320, 180).data;
+      let distantCityPixels = 0;
+      for (let y = 25; y < 94; y++)
+        for (let x = 50; x < 250; x++) {
+          const at = (y * 320 + x) * 4,
+            [r, g, b] = pixels.slice(at, at + 3);
+          if (r > 45 && r > g * 1.15 && g > b * 1.2) distantCityPixels++;
+        }
+      return distantCityPixels;
+    }, screenshot.toString("base64"));
+    samples.push(sample);
   }
   const actors = ["2", "3", "4"].map((id) => ({
     id,
@@ -45,6 +71,10 @@ async function openingFrames(page, directory) {
   assert(
     actors.every((a) => a.frames.length >= 6),
     "each armor must keep stepping after its first cycle",
+  );
+  assert(
+    samples.every((sample) => sample.distantCityPixels >= 12),
+    "The original distant Narshe lights must be present in the actual composed canvas",
   );
   await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
   await page.getByRole("button", { name: "自动推进：开", exact: true }).click();

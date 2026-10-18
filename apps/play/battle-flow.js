@@ -1,3 +1,5 @@
+import { isFinalTowerEvent } from "./final-battle.js";
+
 // Browser presentation barrier. Combat still settles exactly once in src/play;
 // subsequent host ticks wait while its emitted actions/results are displayed.
 const snapshot = (battle) => ({
@@ -66,11 +68,19 @@ export class BattleFlow {
     if (!this.battle) {
       // PR start-of-battle AI can emit hits inside Battle's constructor,
       // before PlayGame publishes its `battle` event and assigns the instance.
-      if ((event.kind === "battle-action" && event.result) || event.kind === "battle-party")
+      if (
+        (event.kind === "battle-action" && event.result) ||
+        event.kind === "battle-party" ||
+        (event.kind === "battle-effect" && isFinalTowerEvent(event))
+      )
         this.openingEvents.push(event);
       return;
     }
-    if (event.kind === "battle-action" && event.result) {
+    if (event.kind === "battle-effect" && isFinalTowerEvent(event)) {
+      const cue = { ...event, time: this.battle.elapsed };
+      if (this.current || this.queue.length) this.queue.push({ kind: "presentation", event: cue });
+      else this.emit(cue);
+    } else if (event.kind === "battle-action" && event.result) {
       const last = this.queue.at(-1);
       if (
         last?.kind === "action" &&
@@ -101,6 +111,14 @@ export class BattleFlow {
       };
     }
   }
+  // Source intermissions must retain their real Wait durations even when the
+  // debug automatic advance normally executes 4/16 simulation ticks per frame.
+  get realtimePresentation() {
+    return (
+      this.battle?.events?.program?.name === "sc_b_2022" &&
+      (this.battle.events.paused || !this.battle.events.interactive)
+    );
+  }
   get busy() {
     return !!(this.current || this.queue.length || this.ending);
   }
@@ -124,6 +142,10 @@ export class BattleFlow {
     }
     while (this.queue.length) {
       const next = this.queue.shift();
+      if (next.kind === "presentation") {
+        this.emit(next.event);
+        continue;
+      }
       if (next.kind === "party") {
         Object.assign(this.view, next.view);
         this.emit(next.event);
@@ -183,6 +205,7 @@ export class BattleFlow {
     return {
       phase: this.phase,
       busy: this.busy,
+      realtimePresentation: !!this.realtimePresentation,
       banner: this.banner,
       pending: this.queue.length,
       music: this.audio.current?.id || null,

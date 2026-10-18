@@ -39,7 +39,39 @@ export class AppearanceObserver {
     this.puppetHandoff = { checked: 0, mismatches: [] };
     this.mobVisibility = { checked: 0, mismatches: [] };
     this.emptyPuppets = { checked: 0, mismatches: [] };
+    this.ordinaryMovement = { checked: 0, mismatches: [] };
+    this.controlReturns = { checked: 0, mismatches: [] };
     this.before = new WeakMap();
+  }
+  movement(game, moved, direction) {
+    if (!moved || (game.map?.worldTerrain && game.player.vehicle > 1)) return;
+    this.ordinaryMovement.checked++;
+    if (game.player.visible === false)
+      this.ordinaryMovement.mismatches.push({
+        mapId: game.mapId,
+        script: game.lastInstruction?.script,
+        instruction: game.lastInstruction?.index,
+        time: game.time,
+        direction,
+        x: game.player.x,
+        y: game.player.y,
+        reason: "Ordinary field movement advanced an invisible controlled player",
+      });
+  }
+  event(game, event) {
+    if (event.kind !== "player-control-return") return;
+    this.controlReturns.checked++;
+    const puppet = game.actors.get(String(-event.characterId));
+    if (
+      game.player.visible === false ||
+      game.camera.manual ||
+      ["x", "y", "layer"].some((key) => game.player[key] !== event[key]) ||
+      (event.body === "leader-puppet" && puppet?.visible)
+    )
+      this.controlReturns.mismatches.push({
+        ...event,
+        reason: "Returning ordinary control lost the visible body, source pose or following camera",
+      });
   }
   completedInstruction(game, task, program, pc, op) {
     const before = this.before.get(task);
@@ -191,6 +223,8 @@ export class AppearanceObserver {
         puppetHandoff: this.puppetHandoff,
         mobVisibility: this.mobVisibility,
         emptyPuppets: this.emptyPuppets,
+        ordinaryMovement: this.ordinaryMovement,
+        controlReturns: this.controlReturns,
         ...this.counts,
         records: [...this.records.values()].sort((a, b) => b.count - a.count),
         inventory: this.field.inventory(),

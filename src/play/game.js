@@ -14,6 +14,13 @@ import {
   dispatchFieldInteraction,
 } from "./field-interaction.js";
 import { updateNpcMovement, tryNpcContact } from "./npc-movement.js";
+import {
+  bindFieldControl,
+  observeFieldControl,
+  returnFieldControl,
+  snapshotFieldControl,
+  restoreFieldControl,
+} from "./field-control.js";
 import { executePartyInput, autoPartyInput } from "./party-input.js";
 import { walkEncounter, worldCollisionAt } from "./encounters.js";
 import {
@@ -129,6 +136,7 @@ export class PlayGame {
     };
     this.actors = new Map();
     this.hiddenMobs = null;
+    this.fieldControl = null;
     this.dialogue = null;
     this.battle = null;
     this.pending = null;
@@ -218,6 +226,7 @@ export class PlayGame {
   }
   async enter(mapId, entrance = 1, continuation = "") {
     saveCooperativePosition(this);
+    this.fieldControl = null;
     this.loading = true;
     this.tasks = [];
     this.assignedRouteTasks = new Map();
@@ -523,6 +532,10 @@ export class PlayGame {
     this.tasks = this.tasks.filter(
       (t) => !t.done || this.tasks.some((o) => o.children.includes(t)),
     );
+    // Landing can finish in this VM pass. Return its walking body before a
+    // host can issue ordinary input at the newly idle boundary this same tick.
+    updateVehicleInput(this);
+    returnFieldControl(this);
     this.checkTriggers({ armedOnly: true });
     updateCooperativeInput(this);
     updateNpcMovement(this, dt);
@@ -544,6 +557,7 @@ export class PlayGame {
     const [name, i, r, s] = op,
       a = this.actor(t.actor);
     this.lastInstruction = { script: p.name, index: t.pc - 1, name };
+    observeFieldControl(this, t, name, name === "HidePlayer" ? this.player : a);
     if (
       executeVehicleInstruction(this, t, name, i, r, s) ||
       executeInstruction(this, t, name, i, r, s, a)
@@ -673,6 +687,7 @@ export class PlayGame {
         t.wait = Math.max(0, r[0] || 0);
         return;
       case "SetPuppet": {
+        bindFieldControl(this, t, i[1]);
         const partyPosition = i[1] <= -1002 && i[1] >= -1005 ? -i[1] - 1001 : null;
         if (
           (i[1] < 0 && i[1] > -1000) ||
@@ -683,8 +698,10 @@ export class PlayGame {
           if (
             partyPosition === null &&
             -i[1] === (this.partySlots[this.partyIndex][0] ?? this.player.characterId)
-          )
+          ) {
             this.player.visible = false;
+            observeFieldControl(this, t, "Hide", this.player);
+          }
         }
         t.bindings[i[0]] = { actor: i[1], target: i[2] };
         return;
@@ -705,6 +722,7 @@ export class PlayGame {
             this.startScript(p.name, { actor: b.actor, pc: b.target, background: !!i[0] }),
           )
           .filter(Boolean);
+        for (const child of t.children) child.fieldControlOwner = t.fieldControlOwner || t;
         t.bindings = {};
         if (!i[0]) t.waitFor = "children";
         return;
@@ -1295,6 +1313,7 @@ export class PlayGame {
   move(direction) {
     if (this.player.vehicle > 1 && this.map?.worldTerrain) return moveVehicle(this, direction);
     if (this.busy || !this.control || this.player.motion) return false;
+    returnFieldControl(this, { existingBody: true });
     const n = dirs.indexOf(direction);
     if (n < 0) return false;
     this.player.direction = direction;
@@ -1393,6 +1412,7 @@ export class PlayGame {
   }
   interact() {
     if (this.busy) return false;
+    returnFieldControl(this, { existingBody: true });
     const n = dirs.indexOf(this.player.direction),
       d = delta[n] || [0, 1];
     // PR kind21 is an explicit same-cell transportation action, such as
@@ -1462,6 +1482,7 @@ export class PlayGame {
       walkEncounterState: this.walkEncounterState,
       finalBattleOrder: this.finalBattleOrder,
       completedStoryObjectives: this.completedStoryObjectives || [],
+      ...(this.fieldControl ? { fieldControl: snapshotFieldControl(this) } : {}),
       testBoost: this.testBoost,
       mapId: this.mapId,
       player: { ...this.player, motion: null },
@@ -1560,5 +1581,6 @@ export class PlayGame {
       for (const unit of Object.values(this.roster)) applyTestBoost(unit);
       this.event("test-mode", { mode: "story-test" });
     }
+    restoreFieldControl(this, saved.fieldControl, saved);
   }
 }

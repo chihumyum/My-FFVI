@@ -33,3 +33,17 @@ test("every exported PR sprite spawn keeps its independent raw mapobject identit
   assert.equal(maps, 649);
   assert.equal(spawns, 3650);
 });
+
+test("ordinary movement audit rejects invisible control without changing the game", async () => {
+  const audit = await AppearanceObserver.open(),
+    game = new PlayGame({ data: { programs: {} } });
+  game.player.visible = false;
+  const before = structuredClone(game.snapshot());
+  audit.movement(game, true, "down");
+  assert.equal(audit.report().field.ordinaryMovement.mismatches.length, 1);
+  assert.deepEqual(game.snapshot(), before);
+  game.player.visible = true;
+  audit.movement(game, true, "up");
+  assert.equal(audit.report().field.ordinaryMovement.checked, 2);
+  assert.equal(audit.report().field.ordinaryMovement.mismatches.length, 1);
+});

@@ -144,7 +144,7 @@ function event(e) {
     for (const command of mapAudioCommands(data.maps[e.mapId]))
       presentation({ ...command, mapId: e.mapId, script: "map.csv", index: null });
   }
-  if (["battle", "battle-action", "battle-party", "battle-end"].includes(e.kind))
+  if (["battle", "battle-action", "battle-party", "battle-end", "battle-effect"].includes(e.kind))
     battleFlow.event(e, game?.battle);
   if ((e.kind === "bgm" || e.kind === "se") && !observingAudioInstruction(game)) {
     const engine = game?.battle?.events;
@@ -818,7 +818,11 @@ function loop(now) {
       !audio.musicPending &&
       (!battleDialogue || auto)
     ) {
-      for (let n = 0; n < (auto ? (game.testBoost ? 16 : 4) : 1); n++) {
+      for (
+        let n = 0;
+        n < (auto && !battleFlow.realtimePresentation ? (game.testBoost ? 16 : 4) : 1);
+        n++
+      ) {
         game.tick(dt, { auto });
         if (opera.busy || battleFlow.busy || audio.syncPending || audio.musicPending) {
           keys.clear();

@@ -360,6 +360,11 @@ for (const test of cases) {
   const executedPrograms = new Set(),
     executedOps = new Set();
   class ObservedGame extends PlayGame {
+    move(direction) {
+      const moved = super.move(direction);
+      appearanceAudit?.movement(this, moved, direction);
+      return moved;
+    }
     step(task) {
       const sourceIndex = task.pc,
         sourceProgram = assetAudit && this.data.programs[task.program],
@@ -405,6 +410,7 @@ for (const test of cases) {
       packed ? packed.loadMap(id) : json(path.join(dataRoot, `maps/${id}.json`)),
     onEvent: (event) => {
       assetAudit?.event(game, event);
+      appearanceAudit?.event(game, event);
       if (["map", "script", "battle", "battle-end"].includes(event.kind)) events.push(event);
     },
   });
@@ -643,6 +649,8 @@ for (const test of cases) {
       "puppetHandoff",
       "mobVisibility",
       "emptyPuppets",
+      "ordinaryMovement",
+      "controlReturns",
     ].some((key) => appearanceAudit?.[key].mismatches.length)
   )
     process.exitCode = 1;
