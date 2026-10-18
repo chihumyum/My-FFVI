@@ -1,0 +1,89 @@
+.cloud-controls {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
+  z-index: 110;
+  font-family: system-ui, sans-serif;
+}
+.cloud-controls > button {
+  font:
+    13px system-ui,
+    sans-serif;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid #7f94c5;
+  border-radius: 8px;
+  background: #101a2ee8;
+  color: #e8f1ff;
+  cursor: pointer;
+}
+.cloud-controls > button[data-state="conflict"] {
+  background: #704421;
+}
+.cloud-controls dialog {
+  box-sizing: border-box;
+  width: min(620px, calc(100vw - 24px));
+  max-height: calc(100svh - 32px);
+  overflow: auto;
+  padding: 24px;
+  background: #101a2e;
+  color: #e8f1ff;
+  border: 1px solid #7f94c5;
+  border-radius: 14px;
+  font:
+    15px/1.6 system-ui,
+    sans-serif;
+}
+.cloud-controls dialog::backdrop {
+  background: #000b;
+}
+.cloud-controls dialog button,
+.cloud-controls dialog select {
+  font: inherit;
+  min-height: 44px;
+  border: 1px solid #657da9;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #22375b;
+  color: #fff;
+  cursor: pointer;
+  margin: 4px;
+  max-width: 100%;
+}
+.cloud-controls h2 {
+  margin-top: 0;
+  font-size: 24px;
+}
+.cloud-controls p {
+  white-space: pre-line;
+}
+.cloud-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cloud-conflict {
+  position: static;
+  box-shadow: none;
+  background: #162440;
+  border: 1px solid #c99056;
+  border-radius: 8px;
+  padding: 12px;
+  margin-block: 12px;
+}
+.cloud-controls :focus-visible {
+  outline: 3px solid #b0d8ff;
+  outline-offset: 2px;
+}
+.cloud-close {
+  display: block;
+  margin-top: 24px !important;
+}
+@media (max-width: 600px) {
+  .cloud-controls dialog {
+    padding: 16px;
+  }
+  .cloud-controls > button {
+    font-size: 12px;
+  }
+}

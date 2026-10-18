@@ -1,6 +1,8 @@
 import { WebData, webIndexURL } from "./data.js";
 import { loadPresentation, loadBattlePresentation, presentText } from "./presentation.js";
 import { SaveLibrary, renderSaveSlots } from "./saves.js";
+import { CloudSaves } from "./cloud-saves.js";
+import { mountCloudUI } from "./cloud-ui.js";
 import { GameRenderer } from "./renderer.js";
 import { GameUI, createWidget } from "./ui.js";
 import { WebAudioPlayer } from "./audio.js";
@@ -13,6 +15,12 @@ import {
   isAudioInstruction,
 } from "./presentation-events.js";
 import { createBattleMenu } from "./battle-menu.js";
+import {
+  isTextEntry,
+  mountTouchControls,
+  touchActionLabels,
+  distinguishTouchActions,
+} from "./touch-controls.js";
 import { buyFromShop, closeShop, openShop } from "../../src/play/event-systems.js";
 import { submitPartyInput, cancelPartyInput } from "../../src/play/party-input.js";
 import { partyInputMembers } from "../../src/play/party-input.js";
@@ -65,7 +73,7 @@ renderer.onBattleSound = (id) =>
   audio
     .command({ name: "PlaySE", i: [id], r: [], s: [] })
     ?.catch?.((error) => audio.warn(error.message));
-const saveLibrary = new SaveLibrary();
+const saveLibrary = new SaveLibrary({ cloud: new CloudSaves() });
 const menuState = { page: "队伍" };
 const eventHistory = createEventHistory();
 let reportingBug = false;
@@ -143,6 +151,7 @@ async function start(saved = null, testBoost = false) {
   battleDialogue = null;
   $("new").disabled = true;
   try {
+    await saveLibrary.beginSession(testBoost || !!saved?.testBoost);
     repository = new WebData(webIndexURL());
     ({ data, battleData } = await repository.open(saved));
     opera.setRepository(repository);
@@ -204,7 +213,8 @@ async function openSaveMenu(write, boost = false) {
   $("save-heading").textContent = `${boost ? "剧情测试 · " : ""}${write ? "存档" : "读档"}`;
   $("save-status").textContent = "正在读取存档列表…";
   $("save-slots").replaceChildren();
-  const quick = localStorage.getItem(boost ? "ffvi-play-test" : "ffvi-play");
+  if (saveLibrary.cloud.enabled && navigator.onLine) await saveLibrary.sync();
+  const quick = await saveLibrary.quick(boost);
   const refresh = async () => {
     const records = await saveLibrary.list(boost);
     $("save-slots").replaceChildren(
@@ -217,7 +227,9 @@ async function openSaveMenu(write, boost = false) {
             await refresh();
           } else {
             const saved =
-              slot === "quick" ? JSON.parse(quick) : await saveLibrary.load(boost, slot);
+              slot === "quick"
+                ? await saveLibrary.quick(boost)
+                : await saveLibrary.load(boost, slot);
             if (saved) await start(saved, boost);
           }
         } catch (error) {
@@ -312,12 +324,13 @@ async function reportBug() {
   }
 }
 $("bug-report").onclick = reportBug;
-addEventListener("keydown", (e) => {
+function gameKeyDown(e) {
   if (e.key === "F9") {
     e.preventDefault();
     if (!e.repeat) reportBug();
     return;
   }
+  if (isTextEntry(e.target) || isTextEntry(document.activeElement)) return;
   if (extras.active) {
     if (e.key === "Escape") {
       extras.close();
@@ -375,8 +388,59 @@ addEventListener("keydown", (e) => {
     $("menu").hidden = !paused;
     renderMenu();
   }
+}
+function gameKeyUp(e) {
+  keys.delete(e.key);
+}
+addEventListener("keydown", gameKeyDown);
+addEventListener("keyup", gameKeyUp);
+addEventListener("blur", () => keys.clear());
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) keys.clear();
 });
-addEventListener("keyup", (e) => keys.delete(e.key));
+const accessibleIds = new WeakMap();
+let accessibleId = 0;
+mountTouchControls({
+  onKeyDown: gameKeyDown,
+  onKeyUp: gameKeyUp,
+  onRelease: () => keys.clear(),
+  onLayout: () => renderer.resize(),
+  getReadout: () =>
+    !ui.get("dialogue").hidden
+      ? [ui.get("speaker").textContent, ui.get("message").textContent].filter(Boolean).join("\n")
+      : "",
+  getActions: () => {
+    const labels = touchActionLabels(ui);
+    return distinguishTouchActions(
+      [...document.querySelectorAll(".pixi-accessibility button")]
+        .filter((button) => {
+          const rect = button.getBoundingClientRect();
+          return (
+            !button.disabled &&
+            rect.width > 0 &&
+            rect.height > 0 &&
+            rect.bottom > 0 &&
+            rect.right > 0 &&
+            rect.top < innerHeight &&
+            rect.left < innerWidth &&
+            getComputedStyle(button).visibility !== "hidden"
+          );
+        })
+        .map((button) => {
+          if (!accessibleIds.has(button)) accessibleIds.set(button, ++accessibleId);
+          return {
+            id: accessibleIds.get(button),
+            label:
+              labels.get(button.container) ||
+              button.getAttribute("aria-label") ||
+              button.title ||
+              button.textContent,
+            activate: () => button.click(),
+          };
+        }),
+    );
+  },
+});
 function renderMenu() {
   ui.scroll($("menu"), -Infinity);
   renderPartyMenu(
@@ -673,11 +737,10 @@ function loop(now) {
         }
       }
       if (autosavePending && !game.busy && !game.over) {
-        localStorage.setItem(
-          game.testBoost ? "ffvi-play-test" : "ffvi-play",
-          JSON.stringify(game.snapshot()),
-        );
         autosavePending = false;
+        saveLibrary.autosave(game, ui.presentation.mapNames?.[game.mapId]).catch((error) => {
+          saveLibrary.notify("error", `本机自动存档失败：${error.message}，请手动导出备份`);
+        });
       }
       if (titlePending && !game.busy) {
         titlePending = false;
@@ -921,4 +984,19 @@ if (import.meta.env.DEV) {
     $("location").textContent = `界面用例 · ${checkpoint} · ${panel || "地图"}（不计剧情覆盖）`;
   }
 }
+let cloudPause = false;
+mountCloudUI(saveLibrary, {
+  onOpen: () => {
+    cloudPause = paused;
+    paused = true;
+    keys.clear();
+  },
+  onClose: () => {
+    paused = cloudPause;
+    if (started) {
+      canvas.tabIndex = -1;
+      canvas.focus({ preventScroll: true });
+    }
+  },
+});
 requestAnimationFrame(loop);

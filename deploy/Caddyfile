@@ -1,0 +1,4 @@
+{$FFVI_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy game:8080
+}

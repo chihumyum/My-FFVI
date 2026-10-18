@@ -1,0 +1,9 @@
+.env
+private-data
+backups
+*.sqlite*
+*.tar.gz
+node_modules
+.git
+package-manifest.json
+README.md

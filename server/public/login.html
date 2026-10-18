@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>FFVI · 私人游戏库</title>
+  <link rel="stylesheet" href="/login.css" />
+  <main>
+    <p class="eyebrow">FINAL FANTASY VI · WEB</p>
+    <h1>继续你的旅程</h1>
+    <p>登录后，在这台设备上游玩。手动存档和自动存档会同步到你的私人服务器。</p>
+    <form id="login">
+      <label for="password">站点密码</label>
+      <input
+        id="password"
+        name="password"
+        type="password"
+        autocomplete="current-password"
+        required
+      />
+      <button type="submit">进入游戏</button>
+      <p id="status" role="status" aria-live="polite"></p>
+    </form>
+    <small>资源仅供私人使用。服务器初次启动后，密码在私有数据目录的 first-login.txt 中。</small>
+  </main>
+  <script type="module" src="/login.js"></script>
+</html>

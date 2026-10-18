@@ -1,0 +1,35 @@
+services:
+  game:
+    build: .
+    restart: unless-stopped
+    environment:
+      FFVI_PUBLIC_URL: https://${FFVI_DOMAIN:?Set FFVI_DOMAIN in .env}
+    volumes:
+      - saves:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  https:
+    image: caddy:2.11.2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      FFVI_DOMAIN: ${FFVI_DOMAIN:?Set FFVI_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - caddy-config:/config
+    depends_on:
+      game:
+        condition: service_healthy
+volumes:
+  saves:
+  certificates:
+  caddy-config:

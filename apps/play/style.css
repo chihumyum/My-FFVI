@@ -273,3 +273,228 @@ body.modern-menu canvas {
   outline: 2px solid #b9dcff;
   outline-offset: -2px;
 }
+
+/* The game camera stays pixel aligned. Touch controls live outside its viewport,
+   while readable action buttons mirror the active Pixi accessibility controls. */
+#touch-controls {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+#touch-controls button {
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+.touch-toolbar {
+  position: absolute;
+  right: max(8px, env(safe-area-inset-right, 0px));
+  top: calc(8px + var(--safe-top));
+  display: flex;
+  gap: 6px;
+}
+.touch-toolbar button {
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  background: #17243bea;
+}
+.touch-pad {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 10px max(18px, env(safe-area-inset-right, 0px)) calc(12px + var(--safe-bottom))
+    max(18px, env(safe-area-inset-left, 0px));
+  background: linear-gradient(#10182aef, #0d1424);
+  border-top: 1px solid #33445d;
+}
+.touch-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 48px);
+  grid-template-rows: repeat(3, 48px);
+  gap: 2px;
+}
+.touch-dpad button {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 12px;
+  font-size: 21px;
+}
+.touch-dpad [data-game-key="ArrowUp"] {
+  grid-area: 1 / 2;
+}
+.touch-dpad [data-game-key="ArrowLeft"] {
+  grid-area: 2 / 1;
+}
+.touch-dpad span {
+  grid-area: 2 / 2;
+  background: #152139;
+  border-radius: 12px;
+}
+.touch-dpad [data-game-key="ArrowRight"] {
+  grid-area: 2 / 3;
+}
+.touch-dpad [data-game-key="ArrowDown"] {
+  grid-area: 3 / 2;
+}
+.touch-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(52px, 1fr));
+  gap: 10px;
+  width: min(190px, 43vw);
+}
+.touch-actions button {
+  min-height: 54px;
+  padding: 8px 6px;
+  border-radius: 18px;
+  font-size: 15px;
+}
+.touch-actions .touch-small {
+  min-height: 38px;
+  font-size: 13px;
+}
+.touch-actions .touch-confirm {
+  background: #305a66;
+  border-color: #80b6b2;
+}
+.touch-actions .touch-cancel {
+  background: #3d3b5f;
+}
+#touch-controls [data-game-key] {
+  touch-action: none;
+}
+#touch-controls .pressed {
+  background: #6a8eb6;
+  box-shadow: inset 0 0 0 2px #d0e6ff;
+}
+.touch-options {
+  pointer-events: auto;
+  position: absolute;
+  top: calc(52px + var(--safe-top));
+  bottom: calc(var(--touch-controls-height, 176px) + 8px);
+  left: max(8px, env(safe-area-inset-left, 0px));
+  right: max(8px, env(safe-area-inset-right, 0px));
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid #536984;
+  border-radius: 16px;
+  background: #111d31fa;
+  box-shadow: 0 8px 35px #0008;
+  -webkit-overflow-scrolling: touch;
+}
+.touch-options-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.touch-options-heading button {
+  min-height: 44px;
+  padding: 8px 14px;
+}
+.touch-options p {
+  color: #adbed4;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.touch-readout {
+  margin-top: 14px;
+  padding: 12px;
+  background: #1c2a41;
+  border-radius: 10px;
+  font-size: 17px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.touch-options-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 8px;
+}
+.touch-options-list button {
+  min-height: 48px;
+  padding: 10px 12px;
+  font-size: 16px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+body.touch-enabled {
+  min-height: 100dvh;
+  height: var(--touch-viewport-height, 100dvh);
+  padding: calc(48px + env(safe-area-inset-top, 0px)) 8px var(--touch-controls-height, 176px);
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+body.touch-enabled main,
+body.touch-enabled.modern-menu main {
+  width: 100%;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+}
+body.touch-enabled canvas {
+  touch-action: none;
+  max-width: 100%;
+}
+body.touch-enabled footer {
+  display: none;
+}
+body.touch-enabled.touch-tools-open footer {
+  position: fixed;
+  z-index: 25;
+  display: flex;
+  left: 8px;
+  right: 8px;
+  top: calc(52px + env(safe-area-inset-top, 0px));
+  max-height: 50dvh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #536984;
+  border-radius: 14px;
+  background: #111d31fa;
+}
+body.touch-enabled footer button {
+  min-height: 44px;
+  font-size: 14px;
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .touch-pad {
+    padding-top: 6px;
+    padding-bottom: calc(6px + var(--safe-bottom));
+  }
+  .touch-dpad {
+    grid-template-columns: repeat(3, 40px);
+    grid-template-rows: repeat(3, 40px);
+  }
+  .touch-dpad button {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+  }
+  .touch-actions {
+    width: 240px;
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .touch-actions button {
+    min-height: 48px;
+  }
+  .touch-options {
+    bottom: 8px;
+    z-index: 1;
+  }
+  .touch-options-list {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+}

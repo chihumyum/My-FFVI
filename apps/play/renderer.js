@@ -252,7 +252,12 @@ export class GameRenderer {
     if (!this._ready) return;
     const parentWidth = this.canvas.parentElement?.clientWidth || window.innerWidth;
     const width = availableWidth ?? parentWidth;
-    const height = availableHeight ?? Math.max(HEIGHT, window.innerHeight - 40);
+    const touchHeight = Number(
+      this.canvas.parentElement?.style.getPropertyValue("--game-available-height"),
+    );
+    const height =
+      availableHeight ??
+      (touchHeight > 0 ? touchHeight : Math.max(HEIGHT, window.innerHeight - 40));
     const screenWidth = this._menuMode ? 1920 : this._width,
       screenHeight = this._menuMode ? 1080 : this._height,
       fit = Math.min(width / screenWidth, height / screenHeight),

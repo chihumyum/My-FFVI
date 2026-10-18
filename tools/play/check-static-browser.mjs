@@ -10,6 +10,22 @@ const output = path.resolve(
 const boosted = process.env.PLAY_COMPAT_BOOST === "1";
 await mkdir(output, { recursive: true });
 const results = [];
+async function clickPagedSaveButton(page, label) {
+  for (let pass = 0; pass < 12; pass++) {
+    const target = page.getByRole("button", { name: label, exact: true });
+    if (await target.count()) {
+      await target.click();
+      return;
+    }
+    const next = page.getByRole("button", { name: "↓ 下页", exact: true });
+    if (!(await next.count()) || !(await next.isEnabled())) break;
+    await next.click();
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+  }
+  throw Error(`Cannot reach save control through actual menu paging: ${label}`);
+}
 for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(",")) {
   assert.ok(["chromium", "webkit"].includes(engine));
   const folder = path.join(output, engine);
@@ -34,7 +50,19 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     const context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       acceptDownloads: true,
+      ignoreHTTPSErrors: process.env.PLAY_HOST_LOCAL_TLS === "1",
     });
+    if (process.env.PLAY_HOST_PASSWORD_FILE) {
+      const password = (await readFile(process.env.PLAY_HOST_PASSWORD_FILE, "utf8"))
+        .trim()
+        .split(/\r?\n/)
+        .at(-1);
+      const response = await context.request.post(new URL("/api/session", base).href, {
+        headers: { Origin: new URL(base).origin },
+        data: { password },
+      });
+      assert.equal(response.status(), 200, "Private host login failed");
+    }
     page = await context.newPage();
     page.on("pageerror", (error) => {
       result.errors.push(error.stack || error.message);
@@ -93,11 +121,43 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     await page.screenshot({ path: path.join(folder, "left-narshe.png") });
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "存档", exact: true }).click();
-    await page.getByRole("button", { name: "写入存档 1", exact: true }).click();
+    // The optional host synchronizes asynchronously before populating this menu.
+    await page
+      .getByRole("button", { name: /^(写入|覆盖)存档 \d+$/ })
+      .first()
+      .waitFor();
+    const used = await page.evaluate(async () => {
+      const db = await new Promise((resolve, reject) => {
+        const request = indexedDB.open("ffvi-pr-saves", 1);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const rows = await new Promise((resolve, reject) => {
+        const request = db.transaction("slots").objectStore("slots").getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      return rows
+        .filter(
+          (row) =>
+            row.mode === (window.ffvi.testBoost ? "story-test" : "normal") &&
+            Number.isInteger(row.slot),
+        )
+        .map((row) => row.slot);
+    });
+    const saveSlot = Array.from({ length: 12 }, (_, i) => i + 1).find(
+      (slot) => !used.includes(slot),
+    );
+    assert.ok(
+      saveSlot <= 12,
+      "No empty save slot; acceptance must not overwrite existing player saves",
+    );
+    await clickPagedSaveButton(page, `写入存档 ${saveSlot}`);
     // Game menus are Pixi widgets, not document nodes. The changed slot label
     // confirms the UI's completed write; inspect the actual IDB record below.
-    await page.getByRole("button", { name: "覆盖存档 1", exact: true }).waitFor();
-    const saved = await page.evaluate(async () => {
+    await page.getByRole("button", { name: `覆盖存档 ${saveSlot}`, exact: true }).waitFor();
+    const saved = await page.evaluate(async (saveSlot) => {
       const db = await new Promise((resolve, reject) => {
         const request = indexedDB.open("ffvi-pr-saves", 1);
         request.onsuccess = () => resolve(request.result);
@@ -107,13 +167,13 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
         const request = db
           .transaction("slots", "readonly")
           .objectStore("slots")
-          .get(`${window.ffvi.testBoost ? "story-test" : "normal"}:1`);
+          .get(`${window.ffvi.testBoost ? "story-test" : "normal"}:${saveSlot}`);
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
       db.close();
       return record.snapshot;
-    });
+    }, saveSlot);
     assert.equal(saved.mapId, 1);
     assert.equal(!!saved.testBoost, boosted);
     await writeFile(path.join(folder, "actual-save.json"), JSON.stringify(saved) + "\n");
@@ -122,7 +182,11 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     await page
       .getByRole("button", { name: boosted ? "继续剧情测试" : "继续游戏", exact: true })
       .click();
-    await page.getByRole("button", { name: "读取存档 1", exact: true }).click();
+    await page
+      .getByRole("button", { name: /^读取存档 \d+$/ })
+      .first()
+      .waitFor();
+    await clickPagedSaveButton(page, `读取存档 ${saveSlot}`);
     await page.waitForFunction(() => window.ffvi?.mapId === 1 && !window.ffvi.loading);
     const restored = await page.evaluate(() => window.ffvi.snapshot());
     await writeFile(path.join(folder, "restored-save.json"), JSON.stringify(restored) + "\n");
@@ -142,7 +206,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       battles: saved.battles.length,
       time: saved.time,
       over: false,
-      saveSlot: 1,
+      saveSlot,
       readAfterPageReload: true,
       savedPlotBanks: plotBanks,
     };

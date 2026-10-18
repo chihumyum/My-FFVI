@@ -2,7 +2,76 @@
 
 将 FF6 Pixel Remaster 迁移到浏览器。PR 提供全部地图、剧情、中文文本、图片、音乐和参数；行为参考 `~/ff6-snes-disasm` 的 `8130132`，PR 显式参数优先。不确定处记录警告并继续。
 
-原版素材与生成数据仅供本机私下使用，`build/`、`dist/` 不进入 Git，不部署到公开地址。
+原版素材与生成数据仅供私人使用，`build/`、`dist/` 不进入 Git。自托管版本对游戏和全部资源设置登录保护，不开放匿名资源下载。
+
+## 私人部署、手机游玩和云存档
+
+在已导出游戏数据的工程里，一条命令生成完整分发包：
+
+```sh
+npm run package:host
+```
+
+输出 `dist/ffvi-private-host.tar.gz` 与解开的 `dist/private-host/`，包含网站、全部运行资源、零依赖 Node 服务、Docker Compose 和 HTTPS 配置；不含密码、玩家存档、PR 安装文件、开发截图或报告。包里用 `npm run verify` 检查每个文件的 SHA256。代码仓库本身不含资源，换机器只克隆 Git 不能直接玩；复制这个私有包即可，不需要在服务器安装 UnityPy、FFmpeg 或重新导出。
+
+重新打包通过独立干净目录生成压缩包，保留现有输出目录中的 `private-data/`、`.env` 和 `backups/`；这些私人文件永不收录。原来已打开的页面需要的旧哈希资源也会保留到手动清理，避免更新时突然缺文件。
+
+先在本机试用（Node 24.4+；容器固定 Node 24.22.0）：
+
+```sh
+cd dist/private-host && npm start
+```
+
+打开 `http://127.0.0.1:4180/`。若端口已用，`npm start -- --port 4190`。初次启动自动生成长随机密码，保存在该目录的 `private-data/first-login.txt`，不写进包和日志。直接 Node 启动默认只监听本机；服务器远程访问使用下面的 HTTPS 部署。
+
+把压缩包私下复制到自己的服务器并解压。在解压的 `private-host/` 中复制 `.env.example` 为 `.env`，将 `FFVI_DOMAIN` 改为自己的域名；DNS 指向该服务器，开放 80/443 端口。然后启动：
+
+```sh
+docker compose up -d --build
+```
+
+Caddy 自动申请和续期 HTTPS 证书。查看初始密码：
+
+```sh
+docker compose exec game cat /data/first-login.txt
+```
+
+电脑、手机、平板打开同一个 `https://你的域名/`，用同一密码进入，即共享一套存档。可在浏览器里「添加到主屏幕」。这是单用户私人站点；登录会话有效 30 天，退出后该会话立即失效。未登录不能读取 JS、地图、图片、音频和存档，资源按需加载并支持音频 Range 请求。首次访问仍需要网络；不把整个游戏预缓存成离线包。
+
+触屏设备自动显示虚拟方向键、确认、菜单/B、战斗换人和分队切换；支持多指持有、松手/失焦/旋转清键。右上「选项」提供大字对白和当前可用按钮，点击的就是原游戏操作；小屏幕不必挤着点低分辨率菜单。「触控」可手动开关并记住选择，「工具」展开回归/F9 等开发按钮。桌面键鼠照常使用。竖屏可玩，横屏画面更大。
+
+左上「云存档」可查看状态、立即同步、处理冲突、导出/导入备份和恢复历史。手动 12 槽及自动存档分别同步，普通/强化模式分开。写档先进入 IndexedDB，再上传；离线写档排队，联网、重新聚焦或每 30 秒重试。打开读档列表时先同步。换设备后从标题读档继续，后台同步不会替换正在玩的游戏。
+
+同步用 SQLite 的原子版本比较；两台设备同时写同一槽会显示冲突，不按时间戳偷偷覆盖。旧游戏仍在运行时也保留其原始版本基线，后台拉取不能赋予它覆盖新云档的权限。可以采用云端（本机版本保留备份），或明确采用本机（云端旧版保留历史）。每槽云端保留最近 50 版；本机冲突/导入前版本可以单独下载恢复。服务器重启和重新构建不会清空 Docker 的 `saves` 卷，**不要用 `docker compose down -v` 删除它**。
+
+原先 `4173/4174` 的存档属于不同浏览器来源：刷新到新版后，在其「云存档」面板导出本机备份，再到新域名登录并导入；不会擅自访问或清空旧来源的存档。浏览器清理站点数据可能删除本机副本，建议保留导出的 JSON；「保留本机存档」会向支持的浏览器申请持久存储。
+
+服务器备份（包含当前槽、50 版历史及配套的站点身份/密码哈希文件）：
+
+```sh
+docker compose exec game node server/cli.mjs backup --output /data/backups/manual.sqlite
+docker compose cp game:/data/backups ./backups
+```
+
+直接 Node 运行时用 `npm run backup`，输出到 `backups/`。恢复必须先停掉游戏服务，用 `.sqlite` 替换 `private-data/saves.sqlite`（容器为 `/data/saves.sqlite`），并用同名 `.owner.json` 替换 `owner.json`；一并移除旧 `saves.sqlite-wal`/`-shm`，确保容器 node 用户对恢复文件有读写权限，再启动。保留恢复前的数据目录作为备份。站点身份随备份恢复，客户端不会把它误认成另一台服务器。
+
+容器恢复示例（先另外保留当前备份；把 `manual.sqlite` 换成所选备份名）：
+
+```sh
+docker compose stop game
+docker compose cp backups/manual.sqlite game:/data/saves.sqlite
+docker compose cp backups/manual.sqlite.owner.json game:/data/owner.json
+docker compose run --rm --no-deps --user root --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE game node -e 'const fs=require("node:fs"); for(const f of ["/data/saves.sqlite","/data/owner.json"]){fs.chownSync(f,1000,1000);fs.chmodSync(f,0o600)} for(const f of ["/data/saves.sqlite-wal","/data/saves.sqlite-shm"])fs.rmSync(f,{force:true})'
+docker compose start game
+```
+
+这些权限只授予临时离线恢复命令；游戏服务继续以 node 用户、只读根目录和去除全部能力运行。`docker compose cp` 默认写入 root 属主的文件，因此恢复时不能省略这一步。
+
+修改密码：向 `server/cli.mjs password` 提供 `FFVI_NEW_PASSWORD` 环境变量（至少 12 字符，推荐密码管理器生成）；容器用 `docker compose exec -e FFVI_NEW_PASSWORD game node server/cli.mjs password`。命令更新后所有旧会话立即失效，运行中的服务使用新密码，无需重建资源。初始明文密码文件会删除。
+
+KV 也能存档，但需要额外提供登录、条件写入/事务、版本冲突和备份；单纯 `set(slot, save)` 会丢进度。当前方案不依赖外部云产品，一台小服务器就能提供资源和存档，之后也可以在这个协议下替换存储。
+
+部署验收工具：`npm run play:host-check` 检查两个独立浏览器的实际导入/存读档、离线冲突、旧运行游戏保护、历史恢复及 WebKit 云端读档；`PLAY_MOBILE_STATIC=1 PLAY_WEB_URL=... node tools/play/check-mobile.mjs` 检查静态版真实触控。自托管测试通过 `PLAY_HOST_PASSWORD_FILE` 指向私有密码文件，测试不把密码写进报告。结果保存在 `build/play/deployment/`，不进 Git。普通静态网站模式仍可用，只提供本机存档/备份，不探测不存在的云 API。
 
 需要 Node.js 22.18+、Python 3、[vgmstream-cli](https://github.com/vgmstream/vgmstream) 和 [FFmpeg](https://ffmpeg.org/)。FFmpeg 必须包含 `libopus` 编码器（导出器启动时检查工具和编码器）。本机可用 `brew install vgmstream ffmpeg`；首次安装 JS 与 Python 依赖：
 

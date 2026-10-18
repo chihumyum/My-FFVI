@@ -1,0 +1,10 @@
+{
+  "name": "FFVI 私人游戏库",
+  "short_name": "FFVI",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#090e1b",
+  "theme_color": "#101a2e",
+  "icons": [{ "src": "/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

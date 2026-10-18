@@ -10,7 +10,7 @@
   "scripts": {
     "export": "node tools/export/index.mjs",
     "dev": "vite --config vite.config.mjs",
-    "test": "node --test src/play/*.test.mjs apps/play/*.test.mjs tools/export/*.test.mjs tools/play/*.test.mjs",
+    "test": "node --test src/play/*.test.mjs apps/play/*.test.mjs tools/export/*.test.mjs tools/play/*.test.mjs server/*.test.mjs",
     "play:through": "node tools/play/playthrough.mjs",
     "play:optional-inventory": "node tools/play/optional-inventory.mjs",
     "play:optional": "node tools/play/optional-run.mjs",
@@ -28,10 +28,14 @@
     "play:numeric-check": "node tools/play/numeric-audit.mjs",
     "play:boss-check": "node tools/play/boss-health-check.mjs",
     "play:ability-audit": "node tools/play/audit-play-abilities.mjs",
-    "format": "prettier --write \"{src/play,apps/play,tools/export,tools/play}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
-    "format:check": "prettier --check \"{src/play,apps/play,tools/export,tools/play}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
+    "format": "prettier --write \"{src/play,apps/play,tools/export,tools/play,server}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
+    "format:check": "prettier --check \"{src/play,apps/play,tools/export,tools/play,server}/**/*.{js,mjs,json,html,css}\" package.json vite.config.mjs",
     "predev": "node tools/export/web.mjs",
-    "bundle": "node tools/play/bundle.mjs"
+    "bundle": "node tools/play/bundle.mjs",
+    "host": "node server/cli.mjs",
+    "host:backup": "node server/cli.mjs backup",
+    "package:host": "node tools/play/package-host.mjs",
+    "play:host-check": "node tools/play/check-host-browser.mjs"
   },
   "devDependencies": {
     "playwright": "1.64.1",

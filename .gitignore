@@ -8,3 +8,11 @@ project.local.json
 *.log
 __pycache__/
 *.pyc
+private-data/
+backups/
+.env
+.env.*
+!deploy/.env.example
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

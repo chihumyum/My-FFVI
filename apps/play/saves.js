@@ -1,8 +1,36 @@
 // Browser-owned save slots; the original quick/autosave keys remain compatible.
 const mode = (boost) => (boost ? "story-test" : "normal");
+const slotId = /^(normal|story-test):(auto|[1-9]|1[0-2])$/;
+const quickKey = (boost) => (boost ? "ffvi-play-test" : "ffvi-play");
+const payload = (record) =>
+  Object.fromEntries(
+    ["id", "mode", "slot", "savedAt", "map", "party", "time", "snapshot"].map((key) => [
+      key,
+      record[key],
+    ]),
+  );
 export class SaveLibrary {
-  constructor() {
+  constructor({ cloud } = {}) {
     this.database = null;
+    this.cloud = cloud;
+    this.account = localStorage.getItem("ffvi-cloud-account");
+    this.status = {
+      state: cloud?.enabled ? "connecting" : "local",
+      message: cloud?.enabled ? "正在连接云存档…" : "仅本机存档，可导出备份",
+    };
+    this.listeners = new Set();
+    this.syncing = null;
+    this.session = null;
+    this.sessionRevisions = new Map();
+  }
+  subscribe(listener) {
+    this.listeners.add(listener);
+    listener(this.status);
+    return () => this.listeners.delete(listener);
+  }
+  notify(state, message) {
+    this.status = { state, message };
+    for (const fn of this.listeners) fn(this.status);
   }
   async open() {
     if (!this.database)
@@ -31,7 +59,72 @@ export class SaveLibrary {
   }
   async list(boost) {
     const records = await this.operation(false, (store) => store.getAll());
-    return records.filter((row) => row.mode === mode(boost)).sort((a, b) => a.slot - b.slot);
+    return records
+      .filter((row) => slotId.test(row.id) && row.mode === mode(boost))
+      .sort((a, b) => a.slot - b.slot);
+  }
+  async all() {
+    return this.operation(false, (store) => store.getAll());
+  }
+  async mutate(id, update) {
+    const db = await this.open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("slots", "readwrite"),
+        store = tx.objectStore("slots"),
+        request = store.get(id);
+      let value;
+      request.onsuccess = () => {
+        value = update(request.result, store);
+        if (value) store.put(value);
+      };
+      tx.oncomplete = () => resolve(value);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || Error("存档写入已取消"));
+    });
+  }
+  archive(record, store) {
+    if (record)
+      store.put({
+        ...record,
+        sourceId: record.id,
+        id: `backup:${crypto.randomUUID()}`,
+        archivedAt: Date.now(),
+      });
+  }
+  async beginSession(boost) {
+    this.session = crypto.randomUUID();
+    this.sessionMode = mode(boost);
+    this.sessionRevisions = new Map(
+      (await this.all())
+        .filter((row) => slotId.test(row.id) && row.sync?.account === this.account)
+        .map((row) => [row.id, row.sync.revision]),
+    );
+    if (this.loadedBase?.account === this.account)
+      this.sessionRevisions.set(this.loadedBase.id, this.loadedBase.revision);
+    this.loadedBase = null;
+  }
+  async write(record, fromGame = false) {
+    const value = await this.mutate(record.id, (before, store) => {
+      if (before?.sync?.conflict) this.archive(before, store);
+      return {
+        ...payload(record),
+        sync: {
+          account: this.account,
+          revision:
+            fromGame && this.sessionMode === record.mode
+              ? this.sessionRevisions.get(record.id) || 0
+              : before?.sync?.account === this.account
+                ? before.sync.revision
+                : 0,
+          session: fromGame ? this.session : null,
+          dirty: true,
+          mutation: crypto.randomUUID(),
+          conflict: before?.sync?.conflict,
+        },
+      };
+    });
+    this.schedule();
+    return value;
   }
   async save(game, slot, location = "当前地点") {
     if (game.busy || game.over) throw Error("剧情或战斗进行中，请稍后保存。");
@@ -46,16 +139,265 @@ export class SaveLibrary {
       time: game.time,
       snapshot,
     };
-    await this.operation(true, (store) => store.put(record));
+    await this.write(record, true);
+    if (slot !== "auto")
+      await this.write({ ...record, id: `${record.mode}:auto`, slot: "auto" }, true);
     // Existing retry/continue and autosave keep their established single-slot API.
     localStorage.setItem(game.testBoost ? "ffvi-play-test" : "ffvi-play", JSON.stringify(snapshot));
     return record;
   }
-  async load(boost, slot) {
+  async autosave(game, location) {
+    return this.save(game, "auto", location);
+  }
+  async quick(boost) {
     return (
-      (await this.operation(false, (store) => store.get(`${mode(boost)}:${slot}`)))?.snapshot ||
-      null
+      (await this.load(boost, "auto")) ||
+      JSON.parse(localStorage.getItem(quickKey(boost)) || "null")
     );
+  }
+  async load(boost, slot) {
+    const record = await this.operation(false, (store) => store.get(`${mode(boost)}:${slot}`));
+    if (record?.sync)
+      this.loadedBase = {
+        id: record.id,
+        account: record.sync.account,
+        revision: record.sync.revision,
+      };
+    return record?.snapshot || null;
+  }
+  schedule() {
+    if (!this.cloud?.enabled) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.sync(), 700);
+  }
+  async initialize() {
+    // One-time import of pre-cloud quick saves; never replace an existing slot.
+    for (const boost of [false, true]) {
+      const snapshot = JSON.parse(localStorage.getItem(quickKey(boost)) || "null");
+      if (snapshot && !(await this.load(boost, "auto")))
+        await this.write({
+          id: `${mode(boost)}:auto`,
+          mode: mode(boost),
+          slot: "auto",
+          savedAt: Date.now(),
+          map: `地图 ${snapshot.mapId}`,
+          party: [],
+          time: snapshot.time || 0,
+          snapshot,
+        });
+    }
+    return this.sync();
+  }
+  async sync() {
+    if (!this.cloud?.enabled) return;
+    if (this.syncing) return this.syncing;
+    this.syncing = this.synchronize()
+      .catch((error) => {
+        this.notify(
+          error.status === 401 ? "login" : "offline",
+          `${error.message}；本机进度已保留，联网后重试`,
+        );
+      })
+      .finally(() => {
+        this.syncing = null;
+      });
+    return this.syncing;
+  }
+  async synchronize() {
+    this.notify("syncing", "正在同步存档…");
+    await this.cloud.connect();
+    this.account = this.cloud.serverId;
+    localStorage.setItem("ffvi-cloud-account", this.account);
+    const remote = await this.cloud.list(),
+      rows = await this.all();
+    const ids = new Set([
+      ...remote.map((row) => row.id),
+      ...rows.filter((row) => slotId.test(row.id)).map((row) => row.id),
+    ]);
+    for (const id of ids) {
+      let local = await this.operation(false, (store) => store.get(id));
+      const summary = remote.find((row) => row.id === id);
+      if (local?.sync?.conflict) continue;
+      if (
+        local &&
+        !summary &&
+        ((local.sync?.account && local.sync.account !== this.account) || local.sync?.revision > 0)
+      ) {
+        await this.mutate(id, (current) => ({
+          ...current,
+          sync: { ...current.sync, conflict: { id, revision: 0, record: null } },
+        }));
+        continue;
+      }
+      if (
+        summary &&
+        (!local || local.sync?.account !== this.account || local.sync.revision !== summary.revision)
+      ) {
+        const cloud = await this.cloud.get(id);
+        await this.mutate(id, (current) => {
+          if (current?.sync?.conflict) return;
+          // Timestamp ordering is deliberately irrelevant. An old offline device
+          // cannot overwrite another device's newer progress.
+          if (
+            current &&
+            (current.sync?.dirty !== false ||
+              current.sync?.account !== this.account ||
+              current.sync?.revision > cloud.revision)
+          ) {
+            if (JSON.stringify(payload(current)) !== JSON.stringify(cloud.record))
+              return { ...current, sync: { ...current.sync, conflict: cloud } };
+          }
+          const clean = {
+            ...cloud.record,
+            sync: { account: this.account, revision: cloud.revision, dirty: false },
+          };
+          if (clean.slot === "auto")
+            localStorage.setItem(
+              quickKey(clean.mode === "story-test"),
+              JSON.stringify(clean.snapshot),
+            );
+          return clean;
+        });
+      }
+      local = await this.operation(false, (store) => store.get(id));
+      if (!local || local.sync?.conflict || local.sync?.dirty === false) continue;
+      const mutation = local.sync?.mutation || crypto.randomUUID();
+      const result = await this.cloud.put(
+        payload(local),
+        local.sync?.account === this.account ? local.sync.revision || 0 : 0,
+        mutation,
+      );
+      if (!result.conflict && local.sync?.session === this.session)
+        this.sessionRevisions.set(id, result.value.revision);
+      await this.mutate(id, (current) => {
+        if (!current) return;
+        if (result.conflict)
+          return { ...current, sync: { ...current.sync, conflict: result.value } };
+        // A new local save may arrive while this upload is in flight. Advance its
+        // base revision but leave that newer snapshot queued for the next pass.
+        return {
+          ...current,
+          sync: {
+            ...current.sync,
+            account: this.account,
+            revision: result.value.revision,
+            dirty: current.sync?.mutation !== local.sync?.mutation,
+          },
+        };
+      });
+    }
+    const after = (await this.all()).filter((row) => slotId.test(row.id));
+    const conflicts = after.filter((row) => row.sync?.conflict).length,
+      pending = after.filter((row) => row.sync?.dirty && !row.sync.conflict).length;
+    this.notify(
+      conflicts ? "conflict" : pending ? "pending" : "synced",
+      conflicts
+        ? `${conflicts} 个存档冲突；两份均保留，请打开云存档处理`
+        : pending
+          ? `${pending} 个本机存档等待上传`
+          : `已同步 · ${new Date().toLocaleTimeString("zh-CN")}`,
+    );
+    if (pending) this.schedule();
+  }
+  async resolve(id, choice) {
+    const local = await this.operation(false, (store) => store.get(id));
+    if (!local?.sync?.conflict) return;
+    if (choice === "cloud") {
+      const cloud = await this.cloud.get(id);
+      await this.mutate(id, (current, store) => {
+        // Do not discard a save written while the request was in flight.
+        this.archive(current, store);
+        return {
+          ...cloud.record,
+          sync: { account: this.account, revision: cloud.revision, dirty: false },
+        };
+      });
+      if (cloud.record.slot === "auto")
+        localStorage.setItem(
+          quickKey(cloud.record.mode === "story-test"),
+          JSON.stringify(cloud.record.snapshot),
+        );
+    } else if (choice === "local") {
+      const result = await this.cloud.put(
+        payload(local),
+        local.sync.conflict.revision,
+        crypto.randomUUID(),
+      );
+      if (!result.conflict && local.sync?.session === this.session)
+        this.sessionRevisions.set(id, result.value.revision);
+      await this.mutate(id, (current, store) => {
+        if (result.conflict)
+          return { ...current, sync: { ...current.sync, conflict: result.value } };
+        this.archive({ ...local.sync.conflict.record, label: "冲突前云端版本" }, store);
+        return {
+          ...current,
+          sync: {
+            account: this.account,
+            revision: result.value.revision,
+            session: current.sync?.session,
+            dirty: current.sync?.mutation !== local.sync?.mutation,
+          },
+        };
+      });
+    }
+    await this.sync();
+  }
+  async export() {
+    return {
+      format: "ffvi-reweb-saves",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      records: await this.all(),
+    };
+  }
+  async import(backup) {
+    if (
+      backup?.format !== "ffvi-reweb-saves" ||
+      backup.version !== 1 ||
+      !Array.isArray(backup.records) ||
+      backup.records.length > 10000
+    )
+      throw Error("不是有效的 FFVI 存档备份");
+    const records = backup.records.filter((row) => slotId.test(row.id));
+    for (const row of records) {
+      if (
+        !Number.isInteger(row.snapshot?.mapId) ||
+        !Array.isArray(row.party) ||
+        !Number.isFinite(row.savedAt) ||
+        !Number.isFinite(row.time) ||
+        row.id !== `${row.mode}:${row.slot}` ||
+        !!row.snapshot.testBoost !== (row.mode === "story-test")
+      )
+        throw Error("备份包含无效存档，未导入");
+    }
+    for (const row of records) {
+      await this.mutate(row.id, (before, store) => {
+        this.archive(before, store);
+        return {
+          ...payload(row),
+          sync: {
+            account: this.account,
+            revision: before?.sync?.account === this.account ? before.sync.revision : 0,
+            dirty: true,
+            mutation: crypto.randomUUID(),
+            conflict: before?.sync?.conflict,
+          },
+        };
+      });
+      if (row.slot === "auto")
+        localStorage.setItem(quickKey(row.mode === "story-test"), JSON.stringify(row.snapshot));
+    }
+    this.schedule();
+    return records.length;
+  }
+  async restore(id, revision) {
+    const historical = await this.cloud.get(id, revision);
+    await this.mutate(id, (before, store) => {
+      this.archive(before, store);
+      return before;
+    });
+    await this.write(historical.record);
+    await this.sync();
   }
 }
 export function renderSaveSlots(records, { write, boost, quick }, createElement, choose) {
