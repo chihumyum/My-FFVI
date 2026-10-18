@@ -61,6 +61,21 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       await page.screenshot({ path: path.join(directory, `${name}-result.png`) });
       return { name, actions, log };
     }
+    async function clickEnemy() {
+      await page.waitForFunction(() => {
+        const m = JSON.parse(document.querySelector("#render-metrics").textContent);
+        return m.actorFrames.some((a) => a.side === "enemy" && a.drawn);
+      });
+      const m = JSON.parse(await page.locator("#render-metrics").textContent());
+      const enemy = m.actorFrames.find((a) => a.side === "enemy" && a.drawn);
+      const box = await page.locator("#screen").boundingBox();
+      await page.locator("#screen").click({
+        position: {
+          x: (enemy.screen.x / m.logicalWidth) * box.width,
+          y: ((enemy.screen.y - 8) / m.logicalHeight) * box.height,
+        },
+      });
+    }
     report.cases.push(
       await cast("enemy-all-button", () =>
         page.getByRole("button", { name: "敌方全体", exact: true }).click(),
@@ -70,22 +85,10 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       await cast("enemy-all-field-click", async () => {
         await page.keyboard.press("Shift");
         await page.getByRole("button", { name: "目标：全体（Shift 切换）", exact: true }).waitFor();
-        const m = JSON.parse(await page.locator("#render-metrics").textContent());
-        const enemy = m.actorFrames.find((a) => a.side === "enemy" && a.drawn);
-        await page
-          .locator("#screen")
-          .click({ position: { x: enemy.screen.x * 2, y: (enemy.screen.y - 8) * 2 } });
+        await clickEnemy();
       }),
     );
-    report.cases.push(
-      await cast("single-field-click", async () => {
-        const m = JSON.parse(await page.locator("#render-metrics").textContent());
-        const enemy = m.actorFrames.find((a) => a.side === "enemy" && a.drawn);
-        await page
-          .locator("#screen")
-          .click({ position: { x: enemy.screen.x * 2, y: (enemy.screen.y - 8) * 2 } });
-      }),
-    );
+    report.cases.push(await cast("single-field-click", clickEnemy));
     assert.equal(report.cases[0].actions.length, 3);
     assert.equal(report.cases[1].actions.length, 3);
     assert.equal(report.cases[2].actions.length, 1);

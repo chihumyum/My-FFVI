@@ -188,7 +188,12 @@ void main() {
     }
   }
   if(uMode==7.0) {
-    if(uWater1.z>0.5)rgb=uColor.rgb*uWater2.z+uBlack.rgb*inputColor.g*uWater2.w;
+    if(uWater1.z>0.5){
+      rgb=uColor.rgb*uWater2.z+uBlack.rgb*inputColor.g*uWater2.w;
+      // PR's opaque ocean shader uses the texture as wave controls. Its
+      // transparent gaps are calm water, never holes exposing black or sky.
+      alpha=1.0;
+    }
     else {rgb=rgb*uColor.rgb*uWater2.z+uBlack.rgb;alpha*=uWater2.w;}
   }
   if(alpha<uScene.y)alpha=0.0;
@@ -635,6 +640,35 @@ export class PRFilter extends Filter {
 }
 
 /** One offscreen result per material, shared by every particle using it. */
+export function materialRasterSize(material, source, limit = 2048) {
+  const f = material.floats || {},
+    textures = material.textures || {},
+    number = (value, fallback = 1) => (Number.isFinite(Number(value)) ? Number(value) : fallback),
+    layers = [
+      [textures._MainTex, f._TileX, f._TileY],
+      ...(f._UseMask ? [[textures._MaskTex, f._MTileX, f._MTileY]] : []),
+      ...(f._UseNoise ? [[textures._NoiseTex, f._NTileX, f._NTileY]] : []),
+    ];
+  let width = source.width,
+    height = source.height;
+  for (const [texture, x, y] of layers) {
+    if (!texture) continue;
+    width = Math.max(
+      width,
+      (texture.width || source.width) * Math.abs(number(x) * number(texture.scale?.[0])),
+    );
+    height = Math.max(
+      height,
+      (texture.height || source.height) * Math.abs(number(y) * number(texture.scale?.[1])),
+    );
+  }
+  return {
+    width: Math.max(1, Math.min(limit, Math.ceil(width))),
+    height: Math.max(1, Math.min(limit, Math.ceil(height))),
+    limited: width > limit || height > limit,
+  };
+}
+
 export class PRMaterialCache {
   constructor({
     renderer,
@@ -680,8 +714,14 @@ export class PRMaterialCache {
       return null;
     }
     if (!entry) {
-      const width = Math.max(1, Math.round(main?.width || texture.width)),
-        height = Math.max(1, Math.round(main?.height || texture.height));
+      // Baking repeated UVs into the unscaled source dimensions aliases away
+      // detail: the river's 64px texture tiled 10x9 became six pixels per tile.
+      // Preserve source texels for every authored base/mask/noise repeat.
+      const { width, height, limited } = materialRasterSize(material, texture);
+      if (limited)
+        this.warn(
+          `[PR shader] ${material.name}: tiled material exceeds the 2048px cache edge; raster resolution is capped.`,
+        );
       const target = RenderTexture.create({
         width,
         height,
@@ -697,6 +737,8 @@ export class PRMaterialCache {
         warn: this.warn,
       });
       const sprite = new Sprite({ texture, roundPixels: true });
+      sprite.width = width;
+      sprite.height = height;
       sprite.filters = [filter];
       sprite.filterArea = new Rectangle(0, 0, width, height);
       entry = {

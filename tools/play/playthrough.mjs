@@ -58,7 +58,9 @@ const assetAudit = assetAuditFile
   : null;
 const appearanceAudit = appearanceAuditFile ? await AppearanceObserver.open({ dataRoot }) : null;
 const boundaryCheckpoints = process.env.PLAY_BOUNDARY_DIR
-  ? await new BoundaryCheckpoints(process.env.PLAY_BOUNDARY_DIR, assetAudit).open()
+  ? await new BoundaryCheckpoints(process.env.PLAY_BOUNDARY_DIR, assetAudit, {
+      handoffs: true,
+    }).open()
   : null;
 const currentVisualDirectory =
     process.env.PLAY_TEST_BOOST === "1" &&
@@ -88,6 +90,19 @@ const coverage = process.env.PLAY_COVERAGE_REPORT
   : null;
 const ObservedGame = withPresentation(PlayGame);
 class RegressionGame extends ObservedGame {
+  enter(mapId, entrance, continuation) {
+    boundaryCheckpoints?.beforeBoundary(this, "map", { nextMapId: mapId });
+    return super.enter(mapId, entrance, continuation);
+  }
+  startScript(name, options = {}) {
+    if (!options.init && options.actor == null)
+      boundaryCheckpoints?.beforeBoundary(this, "script", { nextScript: name });
+    return super.startScript(name, options);
+  }
+  encounter(id, ...args) {
+    boundaryCheckpoints?.beforeBoundary(this, "battle", { encounterId: id });
+    return super.encounter(id, ...args);
+  }
   step(task) {
     const sourceIndex = task.pc,
       sourceProgram = assetAudit && this.data.programs[task.program],
@@ -498,5 +513,10 @@ const { visualRegression } = await import("./visual-regression.mjs"),
 result.visualRegression = { report: visualReportFile, status: visualResult.status };
 await writeFile(reportFile, JSON.stringify(result, null, 2));
 console.log(JSON.stringify({ visualRegression: visualResult.status, report: visualReportFile }));
-if (visualResult.status !== "passed" || appearanceAudit?.puppetVisibility.mismatches.length)
+if (
+  visualResult.status !== "passed" ||
+  ["puppetVisibility", "vehicleVisibility", "puppetHandoff", "mobVisibility", "emptyPuppets"].some(
+    (key) => appearanceAudit?.[key].mismatches.length,
+  )
+)
   process.exitCode = 1;

@@ -105,6 +105,15 @@ function host() {
     },
   };
 }
+
+test("story vehicle changes preserve a hidden walking leader while its puppet is on stage", () => {
+  const game = host();
+  game.player.visible = false;
+  executeVehicleSyscall(game, null, "乗り物に乗る：魔導アーマー");
+  assert.equal(game.player.visible, false);
+  executeVehicleSyscall(game, null, "乗り物から降りる");
+  assert.equal(game.player.visible, false);
+});
 const place = (game, id = 4, x = 1, y = 0) =>
   executeVehicleInstruction(game, null, "SetVehicle", [id, 1, x, y, 1, 3]);
 

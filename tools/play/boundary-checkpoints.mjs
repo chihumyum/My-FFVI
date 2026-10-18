@@ -6,6 +6,7 @@ const boundaries = new Set(["map", "script", "battle", "battle-end"]);
 const animationCommands = new Set([
   "CueAnim",
   "PlayAnim",
+  "LookAt",
   "SetPos",
   "Move",
   "MoveBirdView",
@@ -18,7 +19,7 @@ const animationCommands = new Set([
 // random, cursors, inputs or the regression policy. Bytes are frozen synchronously
 // at the event; filesystem writes may finish later.
 export class BoundaryCheckpoints {
-  constructor(directory, presentationAudit, { select } = {}) {
+  constructor(directory, presentationAudit, { select, handoffs = false } = {}) {
     this.directory = directory;
     this.presentation = presentationAudit;
     this.entries = [];
@@ -29,6 +30,12 @@ export class BoundaryCheckpoints {
     this.programEntries = new Set();
     this.select = select;
     this.sequence = 0;
+    this.handoffs = handoffs;
+    this.before = new Map();
+    this.switches = new WeakMap();
+    this.unresolved = [];
+    this.wasBusy = false;
+    this.dialogueScenes = new Set();
   }
   async open() {
     await mkdir(this.directory, { recursive: true });
@@ -40,6 +47,18 @@ export class BoundaryCheckpoints {
   }
   instruction(game, task, program, index) {
     if (!program) return;
+    const op = program.ops[index];
+    if (this.handoffs && op?.[0] === "SysCall" && /キー入力待ち/.test(op[3]?.[0] || ""))
+      this.capture(game, "story-input", {
+        script: program.name,
+        instructionIndex: index,
+        taskId: task.id,
+        programId: String(task.program),
+      });
+    if (this.handoffs && task.actor === null && op?.[0] === "ChangeScript") {
+      const before = this.beforeBoundary(game, "script", { nextScript: op[3]?.[0] });
+      this.switches.set(task, { before, program: task.program });
+    }
     // Every foreground story start is already captured via its event. Also
     // sample each executed helper/initializer/actor program once, to expose
     // sources that have no foreground event without photographing every NPC
@@ -60,16 +79,32 @@ export class BoundaryCheckpoints {
     if (this.recentEvents.length > 20) this.recentEvents.shift();
     if (event.kind === "battle") this.lastBattle = game.battle;
     if (!boundaries.has(event.kind)) return;
+    const before = this.before.get(event.kind);
+    this.before.delete(event.kind);
     const entry = this.capture(
       game,
       event.kind,
-      event,
+      { ...event, before: before?.sequence },
       event.kind === "battle-end" ? this.lastBattle : null,
     );
-    this.pending.push({ parent: entry.sequence, at: game.time + 0.5, mapId: game.mapId });
+    this.pending.push({
+      parent: entry.sequence,
+      before: before?.sequence,
+      at: game.time + 0.5,
+      mapId: game.mapId,
+    });
     if (event.kind === "battle-end") this.lastBattle = null;
   }
   observe(game) {
+    if (this.handoffs && this.wasBusy && !game.busy) {
+      this.capture(game, "control-return", { script: game.furthest?.script });
+    }
+    this.wasBusy = game.busy;
+    const departed = this.pending.filter((row) => row.mapId !== game.mapId);
+    this.unresolved.push(
+      ...departed.map((row) => ({ ...row, reason: "map-left-before-visible-context" })),
+    );
+    this.pending = this.pending.filter((row) => row.mapId === game.mapId);
     const fade = game.fade,
       progress = fade
         ? Math.max(0, Math.min(1, (game.time - fade.start) / (fade.duration || 0.000001)))
@@ -77,18 +112,54 @@ export class BoundaryCheckpoints {
       alpha = fade ? fade.from + (fade.to - fade.from) * progress : 0;
     // Retain black boundary frames; wait for a visible companion rather than
     // treating the first half-second of a long fade as the scene composition.
-    if (alpha > 0.1) {
-      this.pending = this.pending.filter((row) => row.mapId === game.mapId);
-      return;
+    if (alpha > 0.1 || game.loading || (this.handoffs && game.camera?.motion)) return;
+    // The first visible context can precede the cast's arrival (the opening
+    // camera pan is one example). Also retain the first visible spoken pose
+    // of every foreground script occurrence, without capturing every line.
+    if (this.handoffs && game.dialogue) {
+      const task =
+          game.dialogue.task || game.tasks.find((task) => !task.done && task.actor === null),
+        key = `${game.mapId}:${task?.id}:${task?.program}`;
+      if (!this.dialogueScenes.has(key)) {
+        this.dialogueScenes.add(key);
+        this.capture(game, "story-ready", { script: game.data.programs[task?.program]?.name });
+      }
     }
     const ready = this.pending.filter((row) => row.at <= game.time && row.mapId === game.mapId);
     this.pending = this.pending.filter((row) => row.at > game.time && row.mapId === game.mapId);
     if (ready.length) {
-      const context = this.capture(game, "context", { parents: ready.map((row) => row.parent) });
+      const context = this.capture(game, "context", {
+        parents: ready.flatMap((row) => [row.before, row.parent]).filter(Boolean),
+      });
       if (this.select && !context.file) this.missedContext = context;
     }
   }
   completedInstruction(game, task, program, index) {
+    if (this.handoffs) {
+      const switched = this.switches.get(task);
+      this.switches.delete(task);
+      if (
+        switched &&
+        task.program !== switched.program &&
+        this.before.get("script") === switched.before
+      ) {
+        this.before.delete("script");
+        const entry = this.capture(game, "script-switch", {
+          script: game.data.programs[task.program]?.name,
+          before: switched.before?.sequence,
+        });
+        this.pending.push({
+          parent: entry.sequence,
+          before: switched.before?.sequence,
+          at: game.time + 0.5,
+          mapId: game.mapId,
+        });
+      }
+      if (task.actor === null && task.done && program?.ops[index]?.[0] === "Exit") {
+        const entry = this.capture(game, "script-return", { script: program.name });
+        this.pending.push({ parent: entry.sequence, at: game.time + 0.5, mapId: game.mapId });
+      }
+    }
     // A half-second context can coincide with a child puppet's Exit rather
     // than the foreground Exit requested by a reviewed reference. Preserve
     // the exact configured source point by also observing its real completion;
@@ -104,6 +175,12 @@ export class BoundaryCheckpoints {
       return;
     this.capture(game, "context", { script: program.name, parents: missed.parents });
   }
+  beforeBoundary(game, kind, event = {}) {
+    if (!this.handoffs || !game.map) return null;
+    const entry = this.capture(game, `${kind}-before`, event);
+    this.before.set(kind, entry);
+    return entry;
+  }
   capture(game, kind, event = {}, displayBattle = null) {
     const sequence = ++this.sequence,
       battle = displayBattle || game.battle;
@@ -111,6 +188,9 @@ export class BoundaryCheckpoints {
       sequence,
       kind,
       parents: event.parents || [],
+      before: event.before ?? null,
+      nextScript: event.nextScript ?? null,
+      nextMapId: event.nextMapId ?? null,
       time: game.time,
       mapId: game.mapId,
       map: this.presentation?.shared.catalogs.presentation.mapNames?.[game.mapId] || game.map?.name,
@@ -181,19 +261,38 @@ export class BoundaryCheckpoints {
   async finish(run) {
     await this.flush();
     const counts = Object.fromEntries(
-      [...boundaries, "program-entry", "context"].map((kind) => [
-        kind,
-        this.entries.filter((row) => row.kind === kind).length,
-      ]),
+      [
+        ...boundaries,
+        "program-entry",
+        "context",
+        ...(this.handoffs
+          ? [
+              "map-before",
+              "script-before",
+              "battle-before",
+              "script-switch",
+              "script-return",
+              "control-return",
+              "story-ready",
+              "story-input",
+            ]
+          : []),
+      ].map((kind) => [kind, this.entries.filter((row) => row.kind === kind).length]),
     );
     const manifest = {
       schema: "ffvi-boundary-checkpoints",
       run,
       counts,
+      unresolved: this.handoffs
+        ? [
+            ...this.unresolved,
+            ...this.pending.map((row) => ({ ...row, reason: "run-ended-before-visible-context" })),
+          ]
+        : [],
       selection: this.select ? "Explicit current-run visual reference points" : "Every boundary",
       scope: this.select
         ? "Selected source points from this actual regression run; other boundaries still participate in context timing and occurrence counting but are not serialized. No old state, normalization or story input is substituted. Frozen VM/battle/presentation frames, not playable saves."
-        : "Every emitted map/story-script/battle start/end, a supplementary first-entry frame for each executed program (including initializer, NPC/actor and called programs), plus visible context frames after at least half a second. Frozen VM/battle/presentation state, not playable saves. Exact black/faded boundaries are retained. Context frames may be absent when the source leaves the map earlier. No game simulation occurs during screenshot restore.",
+        : "Every emitted map/story-script/battle start/end and program first entry, with pre-map/script/battle frames, ChangeScript switches, script/control returns and first visible dialogue per foreground program when handoffs are enabled. Each boundary also requests a visible context after at least half a second, completed camera motion and fade-in; unresolved contexts retain map-left/run-ended reasons. Frozen VM/battle/presentation state, not playable saves. Exact black/faded boundaries are retained. No game simulation occurs during screenshot restore.",
       entries: this.entries,
     };
     await writeFile(path.join(this.directory, "manifest.json"), JSON.stringify(manifest, null, 2));

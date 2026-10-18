@@ -35,8 +35,60 @@ export class AppearanceObserver {
     this.counts = { checked: 0, matches: 0, mismatches: 0, unknown: 0 };
     this.maps = new Set();
     this.puppetVisibility = { checked: 0, mismatches: [] };
+    this.vehicleVisibility = { checked: 0, mismatches: [] };
+    this.puppetHandoff = { checked: 0, mismatches: [] };
+    this.mobVisibility = { checked: 0, mismatches: [] };
+    this.emptyPuppets = { checked: 0, mismatches: [] };
+    this.before = new WeakMap();
   }
   completedInstruction(game, task, program, pc, op) {
+    const before = this.before.get(task);
+    this.before.delete(task);
+    const context = { mapId: game.mapId, script: program?.name, instruction: pc, time: game.time };
+    if (before?.kind === "vehicle") {
+      this.vehicleVisibility.checked++;
+      if (before.hidden && game.player.visible !== false)
+        this.vehicleVisibility.mismatches.push({
+          ...context,
+          reason: "Vehicle appearance revealed a hidden story player",
+        });
+    }
+    if (before?.kind === "handoff") {
+      this.puppetHandoff.checked++;
+      if (
+        game.player.visible !== true ||
+        ["x", "y", "layer"].some((key) => game.player[key] !== before.pose[key])
+      )
+        this.puppetHandoff.mismatches.push({
+          ...context,
+          expected: before.pose,
+          actual: { x: game.player.x, y: game.player.y, layer: game.player.layer },
+          reason: "Retiring a leader puppet lost its authored control pose",
+        });
+    }
+    if (before?.kind === "restore-mobs") {
+      for (const [actor, visible] of before.actors) {
+        if (game.actors.get(String(actor.id)) !== actor) continue;
+        this.mobVisibility.checked++;
+        if (actor.visible !== visible)
+          this.mobVisibility.mismatches.push({
+            ...context,
+            entityId: actor.id,
+            expected: visible,
+            actual: actor.visible,
+          });
+      }
+    }
+    if (before?.kind === "empty-puppets") {
+      this.emptyPuppets.checked += before.selectors.length;
+      for (const selector of before.selectors)
+        if (task.children.some((child) => child.actor === selector))
+          this.emptyPuppets.mismatches.push({
+            ...context,
+            selector,
+            reason: "An empty party position dispatched a body callback",
+          });
+    }
     if (op?.[0] !== "SetPuppet") return;
     const selector = op[1][1];
     if (selector > -1002 || selector < -1005) return;
@@ -57,6 +109,32 @@ export class AppearanceObserver {
   }
   instruction(game, task, program, pc, op) {
     if (!op || !program) return;
+    if (op[0] === "RestoreMob" && game.hiddenMobs?.mapId === game.mapId)
+      this.before.set(task, { kind: "restore-mobs", actors: [...game.hiddenMobs.actors] });
+    if (op[0] === "ExecPuppet") {
+      const selectors = Object.values(task.bindings)
+        .map((binding) => binding.actor)
+        .filter(
+          (actor) =>
+            actor <= -1002 && actor >= -1005 && !game.partySlots[game.partyIndex][-actor - 1001],
+        );
+      if (selectors.length) this.before.set(task, { kind: "empty-puppets", selectors });
+    }
+    if (op[0] === "SysCall" && /^乗り物(?:に乗る|から降りる)/.test(op[3]?.[0] || ""))
+      this.before.set(task, { kind: "vehicle", hidden: game.player.visible === false });
+    if (
+      op[0] === "ChangeScript" &&
+      op[3]?.[0] === game.map?.initializer &&
+      game.player.visible === false
+    ) {
+      const leader = game.partySlots[game.partyIndex][0] ?? game.player.characterId,
+        puppet = game.actors.get(String(-leader));
+      if (puppet?.visible)
+        this.before.set(task, {
+          kind: "handoff",
+          pose: { x: puppet.x, y: puppet.y, layer: puppet.layer },
+        });
+    }
     if (
       op[0] !== "SetPuppet" &&
       op[0] !== "RideVehicleNPC" &&
@@ -109,6 +187,10 @@ export class AppearanceObserver {
       maps: [...this.maps].sort((a, b) => a - b),
       field: {
         puppetVisibility: this.puppetVisibility,
+        vehicleVisibility: this.vehicleVisibility,
+        puppetHandoff: this.puppetHandoff,
+        mobVisibility: this.mobVisibility,
+        emptyPuppets: this.emptyPuppets,
         ...this.counts,
         records: [...this.records.values()].sort((a, b) => b.count - a.count),
         inventory: this.field.inventory(),

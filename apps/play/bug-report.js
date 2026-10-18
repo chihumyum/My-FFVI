@@ -99,6 +99,7 @@ export function describeBugState(game, renderer, events, mapNames = {}) {
           encounterId: game.battle.encounterId,
           pattern: game.battle.pattern,
           phase: game.battle.phase,
+          uiVisible: game.battle.events?.uiVisible !== false,
           enemies: game.battle.enemies.map((unit) => ({
             id: unit.id,
             name: unit.name,

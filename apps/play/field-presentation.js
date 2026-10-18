@@ -43,8 +43,6 @@ uniform sampler2D uTexture;
 uniform vec4 uInputClamp;
 uniform vec4 uFlight;
 uniform sampler2D uWorldTexture;
-uniform vec4 uWaterBase;
-uniform vec4 uWaterAdd;
 void main() {
   vec2 uv = vLocalCoord;
   float horizon = 0.22;
@@ -55,8 +53,6 @@ void main() {
   p = mat2(cs,-sn,sn,cs) * p;
   vec2 sampleUV = (p + vec2(320.0)) / 640.0;
   vec4 c = texture(uWorldTexture, clamp(sampleUV,vec2(0.001),vec2(0.999)));
-  vec3 water = uWaterBase.rgb + uWaterAdd.rgb * (0.5 + 0.5 * sin(p.y * 0.14 + p.x * 0.02 + uFlight.y));
-  c = vec4(c.rgb + water * (1.0-c.a),1.0);
   float fog = pow(1.0-clamp((uv.y-horizon)/0.78,0.0,1.0), 4.0) * 0.7;
   c.rgb = mix(c.rgb, vec3(0.40,0.63,0.77),fog);
   finalColor = c;
@@ -131,8 +127,6 @@ export class FieldPresentation {
     this.projected.addChild(this.flightActor);
     this.flightFilter = filter("pr-bird-view-projection", flightFragment, {
       uFlight: { value: new Float32Array(4), type: "vec4<f32>" },
-      uWaterBase: { value: [0.1, 0.1, 0.25, 1], type: "vec4<f32>" },
-      uWaterAdd: { value: [0.26, 0.09, 0.39, 1], type: "vec4<f32>" },
     });
     this.flightFilter.resources.uWorldTexture = Texture.EMPTY.source;
     this.flightSprite.filters = [this.flightFilter];
@@ -359,9 +353,7 @@ export class FieldPresentation {
     const water = binding.far.find((row) =>
       /Warter|Water|Ocean/.test(row.properties?.opaque_shader),
     );
-    this.waterPlane.visible = !!water && !this.flight;
-    const waterBase = color(water?.properties.ocean_surface_base_color, [0.1, 0.1, 0.25, 1]);
-    const waterAdd = color(water?.properties.ocean_surface_add_color, [0.26, 0.09, 0.39, 1]);
+    this.waterPlane.visible = !!water;
     if (this.waterPlane.visible) {
       this.waterPlane.tint = 0xffffff;
       const sea = water.textures[0] || water.image;
@@ -387,8 +379,8 @@ export class FieldPresentation {
       }
       this.waterFilter.update(this.clock, { width: 320, height: 180 });
     }
-    this.flightFilter.resources.properties.uniforms.uWaterBase = waterBase;
-    this.flightFilter.resources.properties.uniforms.uWaterAdd = waterAdd;
+    this._flightWater = !!water && this.waterPlane.visible;
+    this.waterPlane.visible &&= !this.flight;
     const chosen = this.farEnabled
       ? binding.far.filter(
           (row) =>
@@ -422,15 +414,18 @@ export class FieldPresentation {
           entityId: "scene:sky",
           resource: worldName,
         });
+      const visible = game.player.visible !== false;
       const char = data?.characters?.[game.player.asset?.toLowerCase()];
-      const frame = char && this.sampleActor?.(game.player, char, game.time);
+      const frame = visible && char && this.sampleActor?.(game.player, char, game.time);
       const info = frame?.info;
-      const texture = this.getTexture(info?.file, {
-        required: true,
-        entityId: game.player.id,
-        asset: game.player.asset,
-        animation: game.player.animation,
-      });
+      const texture =
+        visible &&
+        this.getTexture(info?.file, {
+          required: true,
+          entityId: game.player.id,
+          asset: game.player.asset,
+          animation: game.player.animation,
+        });
       this.flightActor.visible = !!texture;
       this.flightFrame = {
         side: "field",
@@ -447,9 +442,11 @@ export class FieldPresentation {
         layer: game.player.layer,
         screen: { x: 160, y: 137 + Math.round(Math.sin(this.clock * 3)) },
         drawn: Boolean(texture),
-        ...(!texture
-          ? { reason: char?.sprites ? "missing-texture" : "missing-character-data" }
-          : {}),
+        ...(!visible
+          ? { reason: "hidden-player" }
+          : !texture
+            ? { reason: char?.sprites ? "missing-texture" : "missing-character-data" }
+            : {}),
       };
       if (texture) {
         this.flightActor.texture = texture;
@@ -546,7 +543,23 @@ export class FieldPresentation {
     const previous = layers.mapLayers.filterArea;
     layers.mapLayers.filters = null;
     layers.mapLayers.filterArea = new Rectangle(0, 0, 640, 640);
-    renderer.render({ container: layers.mapLayers, target: this.planeTexture, clear: true });
+    // The projected ocean uses the same PR water material as the field plane.
+    // A fabricated sine fill previously became enormous purple horizon bands.
+    // Preserve the real scene pass and project it together with the map tiles.
+    if (this._flightWater) {
+      this.waterPlane.visible = true;
+      this.waterPlane.width = this.waterPlane.height = 640;
+      this.waterFilter.update(this.clock, { width: 640, height: 640 });
+      renderer.render({ container: this.waterPlane, target: this.planeTexture, clear: true });
+      this.waterPlane.visible = false;
+      this.waterPlane.width = 320;
+      this.waterPlane.height = 180;
+    }
+    renderer.render({
+      container: layers.mapLayers,
+      target: this.planeTexture,
+      clear: !this._flightWater,
+    });
     renderer.render({ container: layers.actors, target: this.planeTexture, clear: false });
     layers.mapLayers.filterArea = previous;
     layers.mapLayers.visible = layers.actors.visible = false;

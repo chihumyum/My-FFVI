@@ -897,7 +897,10 @@ function loop(now) {
     renderVehicle();
     const dialogue = battleFlow.busy ? null : battleDialogue || game.dialogue;
     $("battle").hidden =
-      !(game.battle || battleFlow.view) || !!dialogue || battleFlow.phase === "result";
+      !(game.battle || battleFlow.view) ||
+      (battleFlow.view || game.battle)?.events?.uiVisible === false ||
+      !!dialogue ||
+      battleFlow.phase === "result";
     $("over").hidden = !game.over || battleFlow.busy;
     $("switch").hidden = !game.rts?.active;
     $("dialogue").hidden = !dialogue;
@@ -1048,12 +1051,14 @@ if (new URLSearchParams(location.search).get("acceptance") === "1") {
         else if (pass > 1) break;
       }
       await new Promise(requestAnimationFrame);
-      if (renderer._renderedGame !== game)
+      const renderedGame = game.titleScreen ? null : game;
+      if (renderer._renderedGame !== renderedGame)
         throw Error(
           `The game render loop did not draw checkpoint ${checkpoint.metadata.sequence}; stale screenshots are forbidden`,
         );
       return {
         metadata: checkpoint.metadata,
+        titleScreen: !!game.titleScreen,
         state: describeBugState(game, renderer, eventHistory.read(), ui.presentation.mapNames),
         ui: {
           ...ui.diagnostics(),

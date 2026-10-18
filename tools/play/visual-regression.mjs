@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile, mkdir, access } from "node:fs/promises";
+import { readFile, writeFile, mkdir, access, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { build, preview } from "vite";
@@ -51,10 +51,13 @@ export async function visualRegression({
     baseline.scenes.map((row) => row.sequence),
     config.scenes.map((row) => row.sequence),
   );
+  await mkdir(path.join(project, "dist"), { recursive: true });
   const manifest = JSON.parse(await readFile(path.join(directory, "manifest.json"))),
     mapEvents = manifest.entries.filter((row) => row.kind === "map"),
     engine = process.env.PLAY_BROWSER || "chromium",
-    webRoot = path.resolve(staticRoot || path.join(project, "dist/visual-regression"));
+    webRoot = staticRoot
+      ? path.resolve(staticRoot)
+      : await mkdtemp(path.join(project, "dist/visual-regression-"));
   let server, browser;
   const results = [],
     report = {
@@ -225,6 +228,7 @@ export async function visualRegression({
   } finally {
     await browser?.close();
     await new Promise((resolve) => (server ? server.httpServer.close(resolve) : resolve()));
+    if (!staticRoot) await rm(webRoot, { recursive: true, force: true });
     await writeFile(reportFile, JSON.stringify(report, null, 2) + "\n");
   }
   return report;

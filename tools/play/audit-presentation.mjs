@@ -27,6 +27,7 @@ const silentLog = () => {
 };
 const sorted = (values) => [...values].sort((a, b) => String(a).localeCompare(String(b)));
 const animationInstructions = new Set([
+  "LookAt",
   "CueAnim",
   "PlayAnim",
   "SetPos",

@@ -29,6 +29,7 @@ const visualInstructions = new Set([
   "BackdropColor",
   "CueAnim",
   "PlayAnim",
+  "LookAt",
   "SetPos",
   "Move",
   "MoveBirdView",
@@ -99,6 +100,7 @@ export function withPresentation(Base) {
             ...([
               "CueAnim",
               "PlayAnim",
+              "LookAt",
               "SetPos",
               "Move",
               "MoveBirdView",

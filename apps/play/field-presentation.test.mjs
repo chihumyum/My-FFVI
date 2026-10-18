@@ -322,3 +322,93 @@ test("reloading the same source world map ends the flight camera before walking"
   prepare(5);
   assert.equal(view.flight, false, "An explicit source top-down view still overrides a vehicle");
 });
+
+test("flight projection respects hidden players, including unmounted scripted flyovers", () => {
+  const actor = new Sprite(Texture.EMPTY),
+    texture = new Texture({ source: Texture.EMPTY.source }),
+    view = {
+      catalog: { maps: { 1: { far: [], near: [] } }, gps: {}, sky: {} },
+      backdropPlane: {},
+      waterPlane: {},
+      flightFilter: { resources: { properties: { uniforms: {} } } },
+      flightActor: actor,
+      flight: true,
+      near: {},
+      gps: { visible: false },
+      gpsSprites: [],
+      farPlanes: [],
+      nearPlanes: [],
+      _metrics: {},
+      _sprites: () => 0,
+      diagnostics: { record() {} },
+      getTexture: () => texture,
+      sampleActor: () => ({ info: { file: "rider.png", width: 16, height: 32 }, flip: false }),
+      clock: 1,
+    },
+    game = {
+      mapId: 1,
+      map: { name: "Map_10010" },
+      time: 1,
+      player: { id: -1001, visible: true, asset: "mo_ff6_p009" },
+    },
+    draw = () =>
+      FieldPresentation.prototype.draw.call(view, game, undefined, {
+        characters: { mo_ff6_p009: { sprites: {} } },
+      });
+  draw();
+  assert.equal(actor.visible, true);
+  game.player.visible = false;
+  draw();
+  assert.equal(actor.visible, false);
+  assert.equal(view.flightFrame.drawn, false);
+  assert.equal(view.flightFrame.reason, "hidden-player");
+  game.player.vehicle = 5;
+  draw();
+  assert.equal(actor.visible, false, "A vehicle never overrides an authored HidePlayer");
+  game.player.visible = true;
+  draw();
+  assert.equal(actor.visible, true);
+  actor.destroy();
+  texture.destroy();
+});
+
+test("the projected world renders PR water before land rather than inventing horizon colors", () => {
+  const calls = [],
+    water = { visible: false, width: 320, height: 180 },
+    map = { filters: [], filterArea: null },
+    actors = {},
+    target = {},
+    view = {
+      flight: true,
+      _flightWater: true,
+      clock: 5,
+      planeTexture: target,
+      waterPlane: water,
+      waterFilter: { update: (time, size) => calls.push({ time, size }) },
+      flightSprite: {},
+      flightFilter: { resources: { properties: { uniforms: {} } } },
+    };
+  FieldPresentation.prototype.project.call(
+    view,
+    {
+      render: (command) =>
+        calls.push({
+          ...command,
+          visible: command.container.visible,
+          width: command.container.width,
+        }),
+    },
+    { mapLayers: map, actors },
+    { player: { direction: "up" } },
+  );
+  assert.equal(calls[1].container, water);
+  assert.equal(calls[1].clear, true);
+  assert.equal(calls[1].visible, true);
+  assert.equal(calls[1].width, 640);
+  assert.equal(calls[2].container, map);
+  assert.equal(calls[2].clear, false);
+  assert.equal(calls[3].container, actors);
+  assert.equal(water.visible, false);
+  assert.equal(water.width, 320);
+  assert.equal(water.height, 180);
+});

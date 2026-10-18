@@ -17,10 +17,12 @@ const characterTokens = {
   UMARO: 14,
 };
 export function presentText(game, value) {
-  return String(value ?? "").replace(/\(([A-Z]+)\)/g, (token, key) => {
-    const id = characterTokens[key];
-    return id ? game.roster[id]?.name || game.battleData.characters[id]?.name || token : token;
-  });
+  return String(value ?? "")
+    .replace(/\(FULL_SPACE\)/g, "　")
+    .replace(/\(([A-Z]+)\)/g, (token, key) => {
+      const id = characterTokens[key];
+      return id ? game.roster[id]?.name || game.battleData.characters[id]?.name || token : token;
+    });
 }
 export async function loadBattlePresentation(repository, renderer) {
   const index = repository.index || (await repository.json(webIndexURL().href));

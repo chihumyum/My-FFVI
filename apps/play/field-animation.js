@@ -156,6 +156,7 @@ export class FieldAnimations {
     this.actors = new WeakMap();
     this.cues = new WeakMap();
     this.custom = new WeakMap();
+    this.poses = new WeakMap();
   }
   // Host-owned playback is included only in diagnostic still frames. A normal
   // game save remains independent of rendering and contains none of this.
@@ -166,20 +167,34 @@ export class FieldAnimations {
         actor,
         states: this.actors.get(actor),
         cue: this.cues.get(actor),
+        pose: this.poses.get(actor),
         custom: custom && { source: custom.source, script: custom.script, cache: custom.cache },
       };
     });
   }
   restore(rows) {
     this.reset();
-    for (const { actor, states, cue, custom } of rows || []) {
+    for (const { actor, states, cue, pose, custom } of rows || []) {
       if (states) this.actors.set(actor, states);
       if (cue) this.cues.set(actor, cue);
+      if (pose) this.poses.set(actor, pose);
       if (custom) this.custom.set(actor, { ...custom, catalogs: new WeakMap() });
     }
   }
   event(event) {
     if (!event?.animationActor) return;
+    if (event.name === "LookAt") {
+      this.poses.set(event.animationActor, {
+        animation: event.animationActor.animation,
+        directional: true,
+      });
+      return;
+    }
+    if (event.s?.[0])
+      this.poses.set(event.animationActor, {
+        animation: event.animationActor.animation,
+        direction: event.animationActor.direction,
+      });
     const cue = ["CueAnim", "PlayAnim"].includes(event.name);
     if (!cue && !event.s?.[0]) return;
     if (event.customAnimations) {
@@ -233,7 +248,23 @@ export class FieldAnimations {
     }
     const clips = this.clips(actor, character);
     const locomotion = walking.test(actor.animation || "Default") && clips.has("WalkB");
-    const name = locomotion ? facing[actor.direction] || "Default" : actor.animation || "Default";
+    let pose = this.poses.get(actor);
+    if (
+      state?.requested === actor.animation &&
+      state.direction !== actor.direction &&
+      pose === state.pose
+    ) {
+      pose = { animation: actor.animation, directional: true };
+      this.poses.set(actor, pose);
+    }
+    // Native PlayAnimation/CueAnimation select the authored clip independently
+    // of the entity's direction. LookAt or later player movement can take over.
+    const authored =
+      pose?.animation === actor.animation &&
+      !pose.directional &&
+      pose.direction === actor.direction;
+    const name =
+      locomotion && !authored ? facing[actor.direction] || "Default" : actor.animation || "Default";
     if (!state || state.name !== name || state.cue !== cue || time < state.lastTime) {
       state = { name, cue, start: cue?.time ?? time, x: actor.x, y: actor.y, movedAt: -Infinity };
       states.set(asset, state);
@@ -246,6 +277,9 @@ export class FieldAnimations {
     state.x = actor.x;
     state.y = actor.y;
     state.lastTime = time;
+    state.requested = actor.animation;
+    state.direction = actor.direction;
+    state.pose = pose;
     const moving = !!actor.motion || time - state.movedAt < 0.18;
     const idle = locomotion && !moving && !cue;
     // Walking clips end on the neutral pose; standing does not keep marching.

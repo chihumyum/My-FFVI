@@ -17,6 +17,7 @@ import { EffectLibrary } from "./effects.js";
 import { FieldPresentation } from "./field-presentation.js";
 import { PRFilter } from "./pr-filters.js";
 import { WaterMaterial } from "./water-material.js";
+import { fieldCameraFrame } from "./field-camera.js";
 import { sceneFadeAlpha } from "./field-screen-effects.js";
 import { RenderDiagnostics } from "./render-diagnostics.js";
 import { sceneTextureBindings, detachTextureSource } from "./texture-ownership.js";
@@ -28,6 +29,8 @@ import {
 } from "./field-animation.js";
 import {
   fieldTilePlane,
+  fieldFloorOrder,
+  fieldTileIsFloor,
   fieldTileOrder,
   fieldActorPlane,
   fieldActorOrder,
@@ -54,6 +57,7 @@ function pooledSprite(pool, parent, index) {
     parent.addChild(sprite);
     pool[index] = sprite;
   }
+  if (pool[index].parent !== parent) parent.addChild(pool[index]);
   return pool[index];
 }
 
@@ -813,7 +817,10 @@ export class GameRenderer {
   _drawMap(game, data) {
     const map = game.map;
     if (!map) {
-      for (const layer of this._tileLayers) layer.container.visible = false;
+      for (const layer of this._tileLayers) {
+        layer.container.visible = false;
+        if (layer.floor) layer.floor.visible = false;
+      }
       hideUnused(this._fieldSprites, 0);
       return;
     }
@@ -825,33 +832,29 @@ export class GameRenderer {
     const wrapX = !!(loop & 1),
       wrapY = !!(loop & 2);
     const focus = game.camera?.manual ? game.camera : game.player;
-    const ox = Math.floor(
-      wrapX
-        ? (focus?.x || 0) * tile - viewWidth / 2
-        : Math.max(
-            0,
-            Math.min(map.width * tile - viewWidth, (focus?.x || 0) * tile - viewWidth / 2),
-          ),
-    );
-    const oy = Math.floor(
-      wrapY
-        ? (focus?.y || 0) * tile - viewHeight / 2
-        : Math.max(
-            0,
-            Math.min(map.height * tile - viewHeight, (focus?.y || 0) * tile - viewHeight / 2),
-          ),
-    );
+    const view = fieldCameraFrame(map, focus, viewWidth, viewHeight);
+    const ox = view.x,
+      oy = view.y;
+    this._fieldCamera = { mapId: game.mapId, ...view };
     const metadata = this._metadata(map);
     const tileRegions = fieldTileRegions(game);
     for (let li = 0; li < (map.layers || []).length; li++) {
       const layer = map.layers[li];
       let state = this._tileLayers[li];
       if (!state) {
-        state = { container: container(`tile-layer-${li}`), sprites: [] };
+        state = {
+          container: container(`tile-layer-${li}`),
+          floor: container(`tile-floor-${li}`),
+          sprites: [],
+        };
         this._tileLayers[li] = state;
       }
       const parent = this.layers.mapLayers;
       if (state.container.parent !== parent) parent.addChild(state.container);
+      if (state.floor.parent !== parent) parent.addChild(state.floor);
+      state.floor.zIndex = fieldFloorOrder(layer);
+      state.floor.visible = layer.visible !== false;
+      state.floor.alpha = layer.opacity ?? 1;
       state.container.zIndex = fieldTileOrder(layer);
       state.container.visible = layer.visible !== false;
       state.container.alpha = layer.opacity ?? 1;
@@ -934,7 +937,11 @@ export class GameRenderer {
               },
             );
             if (!texture) continue;
-            const sprite = pooledSprite(state.sprites, state.container, count++);
+            const sprite = pooledSprite(
+              state.sprites,
+              fieldTileIsFloor(map, layer, sx, sy) ? state.floor : state.container,
+              count++,
+            );
             sprite.texture = texture;
             sprite.anchor.set(0.5);
             sprite.position.set(x * tile + tile / 2 - ox, y * tile + tile / 2 - oy);
@@ -962,12 +969,20 @@ export class GameRenderer {
     for (let i = (map.layers || []).length; i < this._tileLayers.length; i++) {
       const state = this._tileLayers[i];
       state.container.visible = false;
+      state.floor.visible = false;
       if (state.water) {
         state.container.filters = null;
         state.water.destroy();
         state.water = null;
       }
     }
+    this._fieldPlanes = (map.layers || []).map((layer, index) => ({
+      name: layer.name,
+      plane: fieldTilePlane(layer),
+      sourceGroup: layer.sourceGroup,
+      floorOrder: this._tileLayers[index].floor.zIndex,
+      foregroundOrder: this._tileLayers[index].container.zIndex,
+    }));
     let count = 0;
     const actors = [...(game.actors?.values() || []), game.player]
       .filter((actor) => actor && actor.visible !== false && actor !== game.camera)
@@ -1051,7 +1066,7 @@ export class GameRenderer {
           asset,
           resource: asset,
           reason:
-            "PR Head/Body materials and explicit map body_threshold are preserved; cropped passes straddle the matching tile plane. Native one/two-upper-texture masking and depth offsets remain approximated. Maps without a declared threshold keep their existing full sprite.",
+            "PR Head/Body materials and explicit map body_threshold are preserved. Collision-zero walking terrain renders below the body; same-plane furniture stays above it. This floor/mask classification and native one/two-upper-texture depth offsets remain inferred. Maps without a declared threshold keep their existing full sprite.",
         });
       for (const segment of segments) {
         const parent = (segment.name === "body" ? this._fieldBodyLayers : this._fieldActorLayers)[
@@ -1398,6 +1413,8 @@ export class GameRenderer {
       visibleTiles: this._visibleTiles,
       visibleActors: this._visibleActors,
       actorFrames: this.frameActors || [],
+      fieldPlanes: this._fieldPlanes || [],
+      fieldCamera: this._fieldCamera || null,
       tileSprites: this._tileLayers.reduce((sum, layer) => sum + layer.sprites.length, 0),
       croppedTextures: this._crops.size,
       texturesReady: textures.filter((record) => record.texture).length,
@@ -1418,7 +1435,13 @@ export class GameRenderer {
       field: this.fieldPresentation.metrics(),
       waterLayers: this._tileLayers
         .filter((state) => state.container.visible && state.water)
-        .map((state) => ({ ready: state.water.ready, warnings: [...state.water.warnings] })),
+        .map((state) => ({
+          ready: state.water.ready,
+          warnings: [...state.water.warnings],
+          layer: state.container.label,
+          order: state.container.zIndex,
+          sprites: state.sprites.filter((s) => s.visible).length,
+        })),
       backgroundParticles: this.backgroundParticles.metrics(),
     };
   }

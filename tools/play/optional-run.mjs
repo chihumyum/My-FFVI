@@ -636,7 +636,16 @@ for (const test of cases) {
       mode: result.mode,
       stop,
     });
-  if (appearanceAudit?.puppetVisibility.mismatches.length) process.exitCode = 1;
+  if (
+    [
+      "puppetVisibility",
+      "vehicleVisibility",
+      "puppetHandoff",
+      "mobVisibility",
+      "emptyPuppets",
+    ].some((key) => appearanceAudit?.[key].mismatches.length)
+  )
+    process.exitCode = 1;
   if (assetAudit) {
     const file = path.join(assetAuditDir, `${test.id}.json`);
     const audit = await assetAudit.write(

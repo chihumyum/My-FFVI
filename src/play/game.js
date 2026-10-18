@@ -128,6 +128,7 @@ export class PlayGame {
       animation: "Default",
     };
     this.actors = new Map();
+    this.hiddenMobs = null;
     this.dialogue = null;
     this.battle = null;
     this.pending = null;
@@ -238,6 +239,7 @@ export class PlayGame {
       this.visited.push(+mapId);
       this.groups = new Set(["entity_default"]);
       this.actors = new Map();
+      this.hiddenMobs = null;
       if (this.banks.PlaySystems?.vehicleActive === false) {
         this.banks.PlaySystems.vehicleActive = true;
         this.warn(
@@ -586,6 +588,38 @@ export class PlayGame {
         }
         t.stack = [];
         if (s[0] === this.map.initializer) {
+          const leader = this.partySlots[this.partyIndex][0] ?? this.player.characterId,
+            puppet = this.actors.get(String(-leader));
+          if (this.player.visible === false && puppet?.visible) {
+            // The initializer retires the scene's puppets. Return the leader
+            // at its authored pose instead of reviving the map entrance body.
+            for (const key of [
+              "x",
+              "y",
+              "layer",
+              "direction",
+              "animation",
+              "asset",
+              "vehicle",
+              "walkAsset",
+            ])
+              if (Object.hasOwn(puppet, key)) this.player[key] = puppet[key];
+            this.player.motion = null;
+            const direction = { WalkB: "up", WalkR: "right", WalkL: "left", Default: "down" }[
+              puppet.animation?.replace(/-S$/, "")
+            ];
+            if (direction) this.player.direction = direction;
+            this.player.visible = true;
+            this.event("puppet-player-transfer", {
+              characterId: leader,
+              x: this.player.x,
+              y: this.player.y,
+            });
+            this.warn(
+              t,
+              "Map initialization retires the leader puppet and returns control at its authored pose; native control-callback timing is inferred.",
+            );
+          }
           this.groups = new Set(["entity_default"]);
           this.actors = new Map();
           this.refreshActors();
@@ -646,7 +680,10 @@ export class PlayGame {
         ) {
           const puppet = this.actor(i[1]);
           puppet.visible = true;
-          if (partyPosition === null && -i[1] === this.partySlots[this.partyIndex][0])
+          if (
+            partyPosition === null &&
+            -i[1] === (this.partySlots[this.partyIndex][0] ?? this.player.characterId)
+          )
             this.player.visible = false;
         }
         t.bindings[i[0]] = { actor: i[1], target: i[2] };
@@ -654,6 +691,16 @@ export class PlayGame {
       }
       case "ExecPuppet": {
         t.children = Object.values(t.bindings)
+          .filter((binding) => {
+            const position =
+              binding.actor <= -1002 && binding.actor >= -1005 ? -binding.actor - 1001 : null;
+            if (position === null || this.partySlots[this.partyIndex][position]) return true;
+            this.warn(
+              t,
+              "An empty party slot has no puppet; its callback is skipped instead of controlling a duplicate leader. PR null-puppet dispatch is inferred.",
+            );
+            return false;
+          })
           .map((b) =>
             this.startScript(p.name, { actor: b.actor, pc: b.target, background: !!i[0] }),
           )
@@ -922,10 +969,17 @@ export class PlayGame {
         t.pc = i[dirs.indexOf(this.player.direction)] || 0;
         return;
       case "HideMob":
-        for (const e of this.actors.values()) e.visible = false;
+        this.hiddenMobs ??= {
+          mapId: this.mapId,
+          actors: [...this.actors.values()].map((actor) => [actor, actor.visible]),
+        };
+        for (const e of this.actors.values()) if (Number(e.id) !== i[0]) e.visible = false;
         return;
       case "RestoreMob":
-        for (const e of this.actors.values()) e.visible = true;
+        if (this.hiddenMobs?.mapId === this.mapId)
+          for (const [actor, visible] of this.hiddenMobs.actors)
+            if (this.actors.get(String(actor.id)) === actor) actor.visible = visible;
+        this.hiddenMobs = null;
         return;
       case "SysCall":
         this.syscall(t, s[0] || "", i, r);

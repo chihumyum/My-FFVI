@@ -137,7 +137,9 @@ function changeVehicle(game, id, task, silent = false) {
     records(game)[id] = { ...pose(game), enabled: true };
   appearance(game, game.player, id);
   system.currentVehicle = id;
-  game.player.visible = true;
+  // Appearance changes must not reveal a leader hidden behind a story puppet.
+  // Ordinary boarding starts from a visible player; landing has its own
+  // explicit control callback below.
   if (id === 6 || previous === 6) for (const member of game.party ?? []) member.magitek = id === 6;
   if (id > 1) {
     const row = definition(game, id);

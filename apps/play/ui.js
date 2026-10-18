@@ -287,6 +287,8 @@ export class GameUI {
   scroll(root, delta) {
     this.clearHover();
     const range = this.ranges?.get(root) || 0;
+    if (root.id === "dialogue")
+      delta = Math.sign(delta) * Math.max(42, Math.round(Math.abs(delta) / 42) * 42);
     this.scrolls.set(root, Math.max(0, Math.min(range, (this.scrolls.get(root) || 0) + delta)));
     revision++;
   }
@@ -388,6 +390,21 @@ export class GameUI {
       node.dataset.card ? height - 56 : interactive ? 6 : 0,
     );
     v.text.visible = !["progress", "img", "viewer"].includes(node.tag);
+    if (node.id === "message" && clip) {
+      // A scrollable dialogue may contain more lines than the window. Clip
+      // only at line boundaries, rather than exposing half of the next line.
+      const first = Math.max(0, Math.ceil((clip[0] - y) / 42) * 42),
+        last = Math.min(height, Math.floor((clip[1] - y) / 42) * 42);
+      if (!v.lineMask) {
+        v.lineMask = new Graphics();
+        c.addChild(v.lineMask);
+        v.text.mask = v.lineMask;
+      }
+      v.lineMask
+        .clear()
+        .rect(0, first, width, Math.max(0, last - first))
+        .fill(0xffffff);
+    }
     if (node.dataset.card) {
       v.text.style.wordWrapWidth = width - 24;
       v.text.style.breakWords = true;
@@ -906,7 +923,8 @@ export class GameUI {
         .fill(0xffffff);
       const end = this.flow(body, v.content, bodyX, bodyY - scroll, bodyWidth, [bodyY, pinY - 12]);
       this.flow(pinned, v.container, 24, pinY, width - (root.id === "dialogue" ? 48 : 480));
-      const range = Math.max(0, end + scroll - pinY + 24);
+      let range = Math.max(0, end + scroll - pinY + 24);
+      if (root.id === "dialogue") range = Math.ceil(range / 42) * 42;
       this.ranges.set(root, range);
       if (scroll > range) {
         this.scrolls.set(root, range);

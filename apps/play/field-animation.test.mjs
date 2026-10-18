@@ -61,6 +61,32 @@ test("idle facing remains stable, movement resumes both authored walking halves"
   assert.match(animation.sample(actor, edgar, 9).name, /^WalkB_/);
 });
 
+test("an authored left pose wins over stale direction until a real LookAt instruction", () => {
+  const animation = new FieldAnimations();
+  const actor = {
+    id: -1,
+    asset: "mo_ff6_p001",
+    x: 13,
+    y: 10,
+    direction: "down",
+    animation: "WalkL",
+  };
+  const character = data.characters[actor.asset];
+  animation.event({ name: "SetPos", animationActor: actor, time: 0, s: ["WalkL"] });
+  assert.match(animation.sample(actor, character, 0).name, /^WalkL_/);
+  const captured = animation.capture([actor]);
+  animation.reset();
+  animation.restore(captured);
+  assert.match(animation.sample(actor, character, 0.1).name, /^WalkL_/);
+  animation.event({ name: "LookAt", animationActor: actor, time: 0.2 });
+  assert.match(animation.sample(actor, character, 0.2).name, /^Default_/);
+  actor.direction = "up";
+  actor.animation = "Default";
+  animation.event({ name: "PlayAnim", animationActor: actor, time: 1, s: ["Default"] });
+  assert.match(animation.sample(actor, character, 1).name, /^Default_/);
+  assert.equal(actor.direction, "up", "rendering must not rewrite the logical direction");
+});
+
 test("PR one-shot clips hold their final frame while mode1 decor still loops", () => {
   const once = edgar.animation.data.animation.find((clip) => clip.name === "FingerUp");
   const last = once.frames.at(-1).sprite_name;

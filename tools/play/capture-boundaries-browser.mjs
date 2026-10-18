@@ -14,9 +14,7 @@ const directory = path.resolve(
   manifest = JSON.parse(
     await readFile(path.join(directory, process.env.PLAY_FRAME_MANIFEST || "manifest.json")),
   ),
-  mapEvents = JSON.parse(await readFile(path.join(directory, "manifest.json"))).entries.filter(
-    (entry) => entry.kind === "map",
-  ),
+  mapEvents = manifest.entries.filter((entry) => entry.kind === "map"),
   range = (process.env.PLAY_FRAME_RANGE || "1:999999").split(":").map(Number),
   maps = process.env.PLAY_FRAME_MAPS?.split(",").map(Number),
   browser = await { chromium, webkit }[engine].launch({
@@ -60,15 +58,17 @@ try {
       assert.equal(rendered.state.map.id, entry.mapId);
       assert.equal(
         rendered.renderedFrame.mapId,
-        entry.mapId,
+        rendered.titleScreen ? null : entry.mapId,
         "The GPU must draw the requested map",
       );
       assert.equal(
         rendered.renderedFrame.time,
-        entry.time,
+        rendered.titleScreen ? null : entry.time,
         "The GPU must draw the frozen game time",
       );
       if (rendered.renderedFrame.inBattle) {
+        if (rendered.state.battle?.uiVisible === false)
+          assert.equal(rendered.ui.panels.battle.hidden, true, "PR HideBattleUI hides the HUD");
         assert.equal(
           rendered.renderedFrame.fieldFadeAlpha,
           0,
@@ -81,6 +81,13 @@ try {
             "Dialogue must not be covered by the battle HUD",
           );
       }
+      if (rendered.state.player?.visible === false)
+        assert.ok(
+          rendered.state.actors.every(
+            (actor) => actor.entityId !== rendered.state.player.id || !actor.drawn,
+          ),
+          "A hidden player cannot reappear through an alternate rendering path",
+        );
       assert.equal(
         rendered.metrics.texturesLoading,
         0,
@@ -91,6 +98,39 @@ try {
         0,
         "No requested source texture may fail to load",
       );
+      const camera = rendered.metrics.fieldCamera;
+      for (const water of !rendered.renderedFrame.inBattle && camera?.mapId === entry.mapId
+        ? rendered.metrics.fieldPlanes || []
+        : [])
+        if (water.sourceGroup === "WaterGroup")
+          for (const tile of rendered.metrics.fieldPlanes)
+            if (tile.plane === water.plane && tile.sourceGroup === "TileGroup")
+              assert.ok(
+                water.foregroundOrder > tile.foregroundOrder,
+                "Water must composite after its source pool floor regardless of the previous map",
+              );
+      if (!rendered.renderedFrame.inBattle && camera?.mapId === entry.mapId)
+        for (const [axis, extent, wrap] of [
+          ["x", "width", 1],
+          ["y", "height", 2],
+        ]) {
+          if (camera.loop & wrap) continue;
+          const position = camera[axis],
+            start = camera.range[axis],
+            size = camera.range[extent],
+            viewport = camera[extent];
+          if (size >= viewport) {
+            assert.ok(position >= start - 1, "Camera cannot reveal padding before PR MapRange");
+            assert.ok(
+              position + viewport <= start + size,
+              "Camera cannot reveal padding after PR MapRange",
+            );
+          } else
+            assert.ok(
+              Math.abs(position + viewport / 2 - (start + size / 2)) < 1,
+              "A small PR map is centered inside the viewport",
+            );
+        }
       for (const actor of rendered.state.actors) {
         const segments = [...(actor.segments || [])].sort((a, b) => a.top - b.top);
         for (const [i, segment] of segments.entries()) {
@@ -100,6 +140,29 @@ try {
             i ? segments[i - 1].top + segments[i - 1].height : 0,
             "Head/body crops must have no gaps or overlap",
           );
+        }
+        const body = segments.find((segment) => segment.name === "body"),
+          head = segments.find((segment) => segment.name === "head");
+        if (body && head) {
+          const plane = Math.max(0, Math.min(3, Math.floor(actor.layer ?? 1)));
+          for (const layer of rendered.metrics.fieldPlanes || []) {
+            if (layer.plane === plane && layer.sourceGroup === "TileGroup") {
+              assert.ok(
+                body.order > layer.floorOrder,
+                "A walking floor cannot bury the actor body",
+              );
+              assert.ok(body.order < layer.foregroundOrder, "Furniture must retain the body mask");
+              assert.ok(
+                head.order > layer.foregroundOrder,
+                "The head must remain above same-floor furniture",
+              );
+            }
+            if (layer.plane === plane + 1)
+              assert.ok(
+                head.order < layer.floorOrder,
+                "The next floor still covers the lower-floor actor",
+              );
+          }
         }
       }
       const missing = rendered.state.actors.filter(
@@ -116,6 +179,7 @@ try {
       result.diagnostics = await page.evaluate(() => window.ffviRenderDiagnostics());
       result.ui = rendered.ui;
       result.renderedFrame = rendered.renderedFrame;
+      result.titleScreen = rendered.titleScreen;
       await page.locator("#screen").screenshot({ path: path.join(output, result.screenshot) });
       result.completed = true;
     } catch (error) {
