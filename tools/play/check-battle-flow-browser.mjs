@@ -114,7 +114,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
   const directory = path.join(output, engine);
   await mkdir(directory, { recursive: true });
   const report = { engine, base, checks: [], errors: [], failedResponses: [], status: "running" };
-  let browser;
+  let browser, page;
   try {
     browser = await { chromium, webkit }[engine].launch({
       headless: true,
@@ -157,7 +157,11 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       });
       report.cloud = "Disabled only in isolated acceptance profile; production saves untouched";
     }
-    const page = await context.newPage();
+    page = await context.newPage();
+    report.audioWarnings = [];
+    page.on("console", (message) => {
+      if (message.text().startsWith("[audio]")) report.audioWarnings.push(message.text());
+    });
     page.on("pageerror", (error) => report.errors.push(error.stack || error.message));
     page.on("response", (r) => {
       if (r.status() >= 400) report.failedResponses.push({ url: r.url(), status: r.status() });
@@ -322,6 +326,19 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
   } catch (error) {
     report.status = "failed";
     report.failure = error.stack || String(error);
+    if (page) {
+      report.failureState = await page
+        .evaluate(() => ({
+          mapId: window.ffvi?.mapId,
+          loading: window.ffvi?.loading,
+          instruction: window.ffvi?.lastInstruction,
+          audio: window.ffviBattleFlow?.(),
+          cloudEnabled: !!document.querySelector('meta[name="ffvi-host"]'),
+          buttons: [...document.querySelectorAll("button")].map((button) => button.textContent),
+        }))
+        .catch(() => null);
+      await page.screenshot({ path: path.join(directory, "failure.png") }).catch(() => {});
+    }
     process.exitCode = 1;
   } finally {
     await browser?.close();
