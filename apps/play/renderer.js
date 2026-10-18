@@ -18,6 +18,7 @@ import { PRFilter } from "./pr-filters.js";
 import { WaterMaterial } from "./water-material.js";
 import { sceneFadeAlpha } from "./field-screen-effects.js";
 import { RenderDiagnostics } from "./render-diagnostics.js";
+import { sceneTextureBindings, detachTextureSource } from "./texture-ownership.js";
 import {
   FieldAnimations,
   fieldActorParts,
@@ -681,6 +682,11 @@ export class GameRenderer {
 
   _evictPage(page) {
     const source = page.texture.source;
+    // Inactive pools can remain in Pixi's cached batch instructions. Notify
+    // their setters before destroying atlas views or their shared source.
+    this._detachedTextureBindings =
+      (this._detachedTextureBindings || 0) +
+      detachTextureSource(this.app.stage, source, Texture.EMPTY);
     this._textureSources.delete(page.url);
     this._estimatedTextureBytes -= page.bytes;
     for (const [url, record] of this._textures)
@@ -714,6 +720,15 @@ export class GameRenderer {
   _trimTextureCache() {
     this._textureBudgetDirty = false;
     if (this._estimatedTextureBytes <= TEXTURE_BUDGET) return;
+    const held = new Set(
+      sceneTextureBindings(this.app.stage, { visibleOnly: true }).map((binding) => binding.source),
+    );
+    this._retainedRenderPages = 0;
+    for (const page of this._textureSources.values())
+      if (held.has(page.texture?.source)) {
+        if (page.lastUsed !== this._frameCount) this._retainedRenderPages++;
+        page.lastUsed = this._frameCount;
+      }
     const unused = [...this._textureSources.values()]
       .filter((page) => !page.pending && page.texture && page.lastUsed !== this._frameCount)
       .sort((a, b) => a.lastUsed - b.lastUsed || a.url.localeCompare(b.url));
@@ -1367,6 +1382,8 @@ export class GameRenderer {
         "decoded page pixelWidth * pixelHeight * 4; excludes GPU copies, browser overhead and UI text",
       cachedPages: [...this._textureSources.values()].filter((page) => page.texture).length,
       evictedPages: this._evictedPages,
+      retainedRenderPages: this._retainedRenderPages || 0,
+      detachedTextureBindings: this._detachedTextureBindings || 0,
       atlasImages: this._atlasViews.size,
       warnings: [...this._warnings],
       particles: this.particles.metrics(),

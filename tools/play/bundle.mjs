@@ -3,8 +3,9 @@ import { prepareWeb } from "../export/web.mjs";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 const root = path.resolve(import.meta.dirname, "../..");
+const output = path.resolve(process.env.PLAY_BUNDLE_OUT || path.join(root, "dist/web"));
 await prepareWeb();
-await build({ configFile: path.join(root, "vite.config.mjs") });
+await build({ configFile: path.join(root, "vite.config.mjs"), build: { outDir: output } });
 const files = [];
 async function walk(directory, prefix = "") {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -14,8 +15,8 @@ async function walk(directory, prefix = "") {
     else files.push({ file, bytes: (await stat(full)).size });
   }
 }
-await walk(path.join(root, "dist/web"));
-const manifest = JSON.parse(await readFile(path.join(root, "dist/web/.vite/manifest.json")));
+await walk(output);
+const manifest = JSON.parse(await readFile(path.join(output, ".vite/manifest.json")));
 const initial = new Set(["index.html"]);
 function moduleAssets(key) {
   const value = manifest[key];
@@ -30,11 +31,11 @@ moduleAssets("index.html");
 const initialAssets = new Set(
   files.filter((f) => f.file === "index.html" || /\.(js|css)$/.test(f.file)).map((f) => f.file),
 );
-const index = JSON.parse(await readFile(path.join(root, "dist/web/data/index.json")));
+const index = JSON.parse(await readFile(path.join(output, "data/index.json")));
 if (index.presentation) {
   initialAssets.add("data/index.json");
   initialAssets.add(index.presentation);
-  const ui = JSON.parse(await readFile(path.join(root, "dist/web", index.presentation)));
+  const ui = JSON.parse(await readFile(path.join(output, index.presentation)));
   const font = ui.fonts.find((f) => f.primary) || ui.fonts[0];
   if (font) initialAssets.add(index.assets.fonts[font.url]);
   // All UI image pages form a conservative upper bound, even though only the
@@ -49,6 +50,7 @@ if (index.presentation) {
 }
 const initialFiles = files.filter((f) => initialAssets.has(f.file));
 const report = {
+  output,
   totalBytes: files.reduce((s, f) => s + f.bytes, 0),
   initialBytes: initialFiles.reduce((s, f) => s + f.bytes, 0),
   initialStaticBytes: files.filter((f) => initial.has(f.file)).reduce((s, f) => s + f.bytes, 0),

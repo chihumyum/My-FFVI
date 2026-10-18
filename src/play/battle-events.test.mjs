@@ -11,7 +11,7 @@ test("the real Cultists Tower event replaces special commands and its restrictio
       readFileSync(new URL("../../build/web-data/battle.json", import.meta.url)),
     ),
     data = { ...source, aiPrograms: {} },
-    edgar = createCharacter(data, 5, true);
+    edgar = createCharacter(data, 5);
   edgar.abilities.push(31);
   const battle = new Battle({ data, party: [edgar], encounterId: 355, random: () => 0.35 });
   assert.equal(battle.events.program.name, "sc_b_2024");

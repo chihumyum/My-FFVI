@@ -50,7 +50,7 @@ export function effectiveCommandIds(data, unit) {
   if (unit.id === 14) return [];
   if (unit.trance) ids = ids.map((id) => (id === 8 ? 9 : id));
   else ids = ids.filter((id) => id !== 9);
-  if (unit.magicOnly)
+  if (unit.magicOnly && !unit.testBoost)
     // SNES InitCmdList: Fight becomes Magic, Gau's Rage follows Fight,
     // Item/Mimic remain, and other authored slots disappear. Apply PR relic
     // replacements afterwards, so Soul of Thamasa still supplies Dualcast.

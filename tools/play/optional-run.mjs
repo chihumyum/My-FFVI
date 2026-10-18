@@ -18,6 +18,7 @@ import { extraOptionalCases } from "./optional-extra-cases.mjs";
 import { recruitOptionalCases } from "./optional-recruit-cases.mjs";
 import { esperOptionalCases } from "./optional-esper-cases.mjs";
 import { questOptionalCases } from "./optional-quest-cases.mjs";
+import { recordedOptionalInput, recordedInputJournal } from "./optional-recorded-inputs.mjs";
 import { PresentationAudit } from "./audit-presentation.mjs";
 import { AppearanceObserver } from "./appearance-observer.mjs";
 import {
@@ -66,6 +67,8 @@ const selected = option("--cases", "all").split(","),
     ? []
     : optionalCases.filter((c) => selected.includes("all") || selected.includes(c.id));
 if (!cases.length && !summarizeOnly) throw Error("No matching optional content cases");
+if (args.includes("--resume-report") && cases.length !== 1)
+  throw Error("A continuation report belongs to exactly one optional case");
 const json = async (file) => JSON.parse(await readFile(file));
 const packed = process.env.PLAY_STATIC_DIR
   ? new WebData(pathToFileURL(path.resolve(process.env.PLAY_STATIC_DIR, "data/index.json")), {
@@ -320,11 +323,38 @@ for (const test of cases) {
     caseStart = path.join(out, `${dependency}-save.json`);
   }
   const caseSaved = caseStart === startFile ? saved : await json(caseStart);
+  const resumeFile = option("--resume-report", null);
+  const prior = resumeFile ? await json(path.resolve(resumeFile)) : null;
+  if (prior) {
+    const snapshot = caseSaved.snapshot || caseSaved;
+    if (
+      prior.content !== test.id ||
+      path.resolve(resumeFile.replace(/\.json$/, "-save.json")) !== caseStart ||
+      snapshot.mapId !== prior.endMap ||
+      ["x", "y", "layer"].some((key) => snapshot.player[key] !== prior.position?.[key])
+    )
+      throw Error(
+        "Continuation must use the exact real final snapshot belonging to its case report",
+      );
+    if (
+      [...(prior.completed || []), ...(prior.skipped || [])].some(
+        (id) => !test.objectives.some((o) => o.id === id),
+      )
+    )
+      throw Error("Continuation report contains an objective absent from the unchanged case");
+  }
   const began = performance.now(),
     events = [],
     inputs = {},
     visits = new Map(),
     fixedRoutes = new Map();
+  // Resume only the host's literal-input cursor from the paired real report.
+  // No game state is reconstructed from acceptance objectives or this cursor.
+  for (const recorded of prior?.recordedInputs || []) {
+    if (!String(recorded.route).startsWith("ordinary-recorded:")) continue;
+    const { route, observedIndex, historyStart, script, ...cursor } = recorded;
+    fixedRoutes.set(route, structuredClone(cursor));
+  }
   let current = null,
     state = 1;
   const executedPrograms = new Set(),
@@ -418,9 +448,9 @@ for (const test of cases) {
     storyChoice(host, 0, [
       { id: test.id, title: test.title, objectives: current ? [current] : [] },
     ]);
-  const alreadyComplete = [],
-    completed = [],
-    skipped = [];
+  const alreadyComplete = [...(prior?.completed || [])],
+    completed = [...(prior?.completed || [])],
+    skipped = [...(prior?.skipped || [])];
   const nextObjective = () =>
     test.objectives.find((o) => !completed.includes(o.id) && !skipped.includes(o.id));
   const recordCompletions = (initial = false) => {
@@ -499,6 +529,7 @@ for (const test of cases) {
     }
     game.storyObjective = current;
     const cooperative =
+      recordedOptionalInput(game, current, fixedRoutes, { pathTo, followTarget }) ||
       fixedStoryInput(game, current) ||
       cooperativeStoryInput(game, current, {
         condition,
@@ -528,7 +559,9 @@ for (const test of cases) {
       input.status,
       input.target?.id,
     ]);
-    const waiting = input.status === "wait-event" && input.timer?.advancing;
+    const waiting =
+      (input.status === "wait-event" && input.timer?.advancing) ||
+      input.status === "recorded-ordinary-wait";
     const count = waiting ? 0 : (visits.get(cell) || 0) + 1;
     visits.set(cell, count);
     if (count >= 80) {
@@ -545,10 +578,11 @@ for (const test of cases) {
     assetAudit: assetAuditDir ? path.join(assetAuditDir, `${test.id}.json`) : null,
     acceptanceNote: assetAuditDir
       ? null
-      : "Asset audit explicitly disabled; development probe only, not formal acceptance.",
+      : "Source-route acceptance only: asset-reference audit explicitly disabled; no GPU or pixel validation is claimed.",
     content: test.id,
     title: test.title,
     startSave: path.relative(root, caseStart),
+    continuationOf: resumeFile ? path.relative(root, path.resolve(resumeFile)) : null,
     mode: "boosted-regression",
     executionBudget: { maxTicks, maxWallSeconds: maxSeconds },
     stop,
@@ -564,6 +598,7 @@ for (const test of cases) {
     requiredMembers: test.members || [],
     availableMembers,
     inspectionNotes: test.notes || [],
+    recordedInputs: recordedInputJournal(fixedRoutes),
     unresolvedBeforeRun: test.unresolved || [],
     executedPrograms: [...executedPrograms].map((id) => ({ id, name: data.programs[id]?.name })),
     executedOpCount: executedOps.size,
@@ -776,11 +811,19 @@ await writeFile(
 );
 if (results.some((r) => r.stop !== "passed")) process.exitCode = 1;
 
-const { visualRegression } = await import("./visual-regression.mjs"),
-  visualResult = await visualRegression({
-    reportFile: path.join(out, "visual-regression/report.json"),
-    dataRoot: process.env.PLAY_DATA_DIR || "build/web-data",
-    staticRoot: process.env.PLAY_STATIC_DIR,
-  });
-console.log(JSON.stringify({ visualRegression: visualResult.status }));
-if (visualResult.status !== "passed") process.exitCode = 1;
+if (!args.includes("--no-visual")) {
+  const { visualRegression } = await import("./visual-regression.mjs"),
+    visualResult = await visualRegression({
+      reportFile: path.join(out, "visual-regression/report.json"),
+      dataRoot: process.env.PLAY_DATA_DIR || "build/web-data",
+      staticRoot: process.env.PLAY_STATIC_DIR,
+    });
+  console.log(JSON.stringify({ visualRegression: visualResult.status }));
+  if (visualResult.status !== "passed") process.exitCode = 1;
+} else
+  console.log(
+    JSON.stringify({
+      visualRegression: "not-run",
+      reason: "Headless optional-route evidence only; root owns static browser acceptance.",
+    }),
+  );

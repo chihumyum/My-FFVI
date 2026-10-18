@@ -147,7 +147,7 @@ action("test", async () => {
       results
         .map((r) => `${r.id}: ${r.passed ? "PASS" : "FAIL"} / 误差 ${r.maxError.toExponential(4)}`)
         .join("\n");
-    player.playMusic(0);
+    await player.playMusic(0);
   } finally {
     $("test").disabled = false;
   }

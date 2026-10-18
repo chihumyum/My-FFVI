@@ -14,7 +14,7 @@ import wave
 from sab import environment_program
 
 RATE = 48000
-PROFILES = {'bgm': {'bitrate': 96000, 'channels': 2}, 'se': {'bitrate': 64000}}
+PROFILES = {'bgm': {'bitrate': 48000, 'channels': 2}, 'se': {'bitrate': 64000}}
 
 
 def write_json(path, value):
@@ -69,7 +69,8 @@ def usage_sets(out, tables, result):
         seconds = sum(t['durationSeconds'] for t in tracks)
         return {'ids': sorted(map(int, ids)), 'tracks': len(ids), 'seconds': seconds,
                 'bytes': sum((out/t['file'].removeprefix('/web-data/')).stat().st_size for t in tracks),
-                'theoreticalBytesAt96k': seconds * 96000 / 8}
+                'targetBitrate': PROFILES['bgm']['bitrate'],
+                'theoreticalBytesAtTargetBitrate': seconds * PROFILES['bgm']['bitrate'] / 8}
     return {'source': summarize(source), 'musicPlayer': summarize(music),
             'gameplayReferenced': summarize(maps | battles | scripts),
             'references': {'maps': sorted(map(int, source & maps)), 'battles': sorted(map(int, source & battles)),
@@ -90,7 +91,7 @@ def export(out, aac=False):
     decoder = json.loads(subprocess.run(['vgmstream-cli', '-V'], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout)['version']
     ffmpeg_version = subprocess.check_output(['ffmpeg', '-version'], text=True)
     helpers = Path(__file__).read_bytes() + Path(__file__).with_name('sab.py').read_bytes()
-    config = {'version': 'opus-1', 'sampleRate': RATE, 'profiles': PROFILES, 'vbr': {'bgm': 'constrained', 'se': 'on'},
+    config = {'version': 'opus-2-compact-bgm', 'sampleRate': RATE, 'profiles': PROFILES, 'vbr': {'bgm': 'constrained', 'se': 'on'},
               'application': 'audio', 'frameDurationMs': 20, 'compressionLevel': 10, 'aac': aac}
     profile = json.dumps(config, sort_keys=True).encode() + decoder.encode() + ffmpeg_version.encode() + hashlib.sha256(helpers).digest()
     requests = []
@@ -185,6 +186,8 @@ def export(out, aac=False):
     summary = {'profile': config, 'decoder': decoder, 'ffmpeg': ffmpeg_version.splitlines()[0],
                'tracks': len(requests), 'cached': len(cached), 'warnings': sum(bool(t['warnings']) for catalog in [result['bgm'], result['se']] for t in catalog['tracks'].values()),
                'usage': usage_sets(out, tables, result)}
+    if summary['usage']['source']['bytes'] > 100_000_000:
+        raise RuntimeError('Delivered Opus music exceeds the 100 MB budget; adjust the BGM encoding profile.')
     write_json(out/'audio-profile.json', summary)
     print(json.dumps(summary, ensure_ascii=False), flush=True)
     return result

@@ -16,6 +16,20 @@ async function write(file, value) {
   }
 }
 
+// PR package declarations omit .json, while extracted TextAssets include it.
+export function palettePlaneProperties(sources, sourcePath, waterLayerName) {
+  const raw = sources.get(sourcePath?.replace(/(?:\.json)?$/, ".json"));
+  const visit = (node) => {
+    for (const layer of node?.layers || []) {
+      if (layer.name === waterLayerName.replace("Water", "Layer")) return layer;
+      const found = visit(layer);
+      if (found) return found;
+    }
+  };
+  const layer = visit(raw);
+  return { layer: layer?.name ?? null, properties: properties(layer || {}) };
+}
+
 /** Post-process only PR maps containing water palette inputs, never rebuild map geometry. */
 export async function compileWaterControls(
   out,
@@ -58,13 +72,6 @@ export async function compileWaterControls(
       throw Error(`Water source escapes output directory: ${url}`);
     return file;
   }
-  function layerList(node, result = []) {
-    for (const layer of node?.layers || []) {
-      result.push(layer);
-      if (layer.layers) layerList(layer, result);
-    }
-    return result;
-  }
   for (const row of tables["map.csv"]) {
     const id = Number(row.id),
       map = await read(path.join(out, `maps/${id}.json`));
@@ -74,10 +81,12 @@ export async function compileWaterControls(
         delete layer.waterMaterial.palette;
         maps.set(id, map);
       }
-      const raw = sources.get(layer.waterMaterial?.source?.assetPath),
-        rawLayers = layerList(raw),
-        sourcePlane = rawLayers.find((item) => item.name === layer.name.replace("Water", "Layer")),
-        rawProperties = properties(sourcePlane || {}),
+      const sourcePlane = palettePlaneProperties(
+          sources,
+          layer.waterMaterial?.source?.assetPath,
+          layer.name,
+        ),
+        rawProperties = sourcePlane.properties,
         speed = Number(rawProperties.pal_anim_speed ?? 1);
       for (const set of map.tilesets) {
         const paletteName = set.image.replace(/\.png$/i, "_pal_anim.png"),
@@ -116,7 +125,7 @@ export async function compileWaterControls(
           image: set.image,
           key,
           speed,
-          sourceSpeedLayer: rawProperties.pal_anim_speed != null ? sourcePlane.name : null,
+          sourceSpeedLayer: rawProperties.pal_anim_speed != null ? sourcePlane.layer : null,
           tiles: Object.fromEntries(
             [
               ...new Set(

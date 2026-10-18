@@ -2,6 +2,9 @@
 // zero evasion and authored 100% remain 100%, rather than SNES's 255/256
 // boundary. Blind halves physical accuracy (SNES CheckHit @2352 fallback).
 export function hitChance(actor, target, ability, data = {}) {
+  // Explicit story-test mode skips tower combat strategy, including the
+  // PR tower monsters' high evade. Ordinary authored accuracy is unchanged.
+  if (actor.testBoost && actor.magicOnly && target.side === "enemy") return 100;
   const accuracy = Number.isFinite(Number(ability.accuracy))
     ? Number(ability.accuracy)
     : (actor.accuracy ?? 100);

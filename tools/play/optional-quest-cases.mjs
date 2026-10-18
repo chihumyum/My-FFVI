@@ -24,8 +24,10 @@ const ancientExit = [
 ];
 const coralChests = [
   { script: "sc_e_0948", flag: 224, rooms: [1] },
-  { script: "sc_e_0948_1", flag: 223, rooms: [4, 7] },
-  { script: "sc_e_0948_2", flag: 222, rooms: [6, 8, 9] },
+  // AreaLocalVariable3 is the random branch value, not the entrance ID:
+  // source0947 branches7→entrance9 (right-bottom),9→entrance7 (left-bottom).
+  { script: "sc_e_0948_1", flag: 223, rooms: [4, 9] },
+  { script: "sc_e_0948_2", flag: 222, rooms: [6, 8, 7] },
   { script: "sc_e_0948_3", flag: 225, rooms: [2, 5] },
   { script: "sc_e_0948_4", flag: 221, rooms: [3] },
 ];

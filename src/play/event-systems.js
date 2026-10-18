@@ -3,6 +3,7 @@ import { equipmentDefinition, emptyEquipment, recalculateEquipment } from "./pro
 import { optimizeEquipment, resetTreasureGroup } from "./resources.js";
 import { openColosseum } from "./colosseum.js";
 import { executeFlightEncounterSyscall } from "./flight-encounters.js";
+import { setTileFrame } from "./field-collision.js";
 const bank = (game, name) => (game.banks[name] ??= {});
 const systems = (game) => bank(game, "PlaySystems");
 const pose = (actor) => ({
@@ -125,6 +126,13 @@ export function finishSyscallTimer(game) {
 export function updateSyscallSystems(game, seconds) {
   const state = systems(game),
     dt = Math.max(0, Number(seconds) || 0);
+  const owzer = state.owzerDoors;
+  if (owzer && owzer.mapId !== game.mapId) delete state.owzerDoors;
+  else if (owzer?.active && !game.busy && !game.loading) {
+    owzer.elapsed += dt;
+    const index = Math.floor(owzer.elapsed / owzer.period) % owzer.doors.length;
+    if (index !== owzer.index) updateOwzerDoors(game, owzer, index);
+  }
   let timer = state.timer;
   if (timer?.gimmickMapId != null && timer.gimmickMapId !== game.mapId) {
     state.timer = timer = null;
@@ -199,6 +207,65 @@ export function updateSyscallSystems(game, seconds) {
     if (!previous || point[0] !== previous[0] || point[1] !== previous[1])
       state.lightPath.trail.push(point);
   }
+}
+
+function updateOwzerDoors(game, state, index) {
+  state.index = index;
+  for (const [n, binding] of state.doors.entries()) {
+    const collider = game.entities.find((e) => e.kind === 19 && String(e.id) === binding.collider);
+    const region = game.entities.find((e) => e.kind === 1 && String(e.id) === binding.region);
+    if (!collider || !region) continue;
+    game.actor(collider.id).visible = n !== index;
+    setTileFrame(game, region, Number(n === index));
+  }
+}
+
+function startOwzerDoors(game, warn) {
+  const unique = new Map();
+  for (const collider of game.entities || []) {
+    if (collider.kind !== 19 || collider.collider?.type !== 0) continue;
+    const trigger = game.entities.find(
+      (e) =>
+        e.kind === 2 &&
+        e.script &&
+        e.x === collider.x &&
+        e.y === collider.y &&
+        e.layer === collider.layer,
+    );
+    const region = game.entities.find(
+      (e) =>
+        e.kind === 1 &&
+        e.tileAnimation?.allLayers &&
+        e.width === 1 &&
+        e.x === collider.x &&
+        e.y + e.height - 1 === collider.y,
+    );
+    if (trigger && region)
+      unique.set(String(collider.id), {
+        collider: String(collider.id),
+        region: String(region.id),
+        x: collider.x,
+      });
+  }
+  const doors = [...unique.values()].sort((a, b) => a.x - b.x);
+  if (!doors.length) {
+    warn(
+      "PR Owzer door gimmick has no source collider/trigger/animation bindings; no opening was invented.",
+    );
+    return;
+  }
+  const state = (systems(game).owzerDoors = {
+    mapId: game.mapId,
+    active: true,
+    elapsed: 0,
+    period: 3,
+    index: -1,
+    doors,
+  });
+  updateOwzerDoors(game, state, 0);
+  warn(
+    "PR Owzer start/end selectors animate the actual source doors and their colliders. Native interval/order is not exported: three seconds per door, left-to-right cycling is inferred; no plot flag or unrelated wall is changed.",
+  );
 }
 
 const shopGroups = {
@@ -576,6 +643,23 @@ export function executeEventSystem(game, task, name, i, r, { characterSelectors,
   if (/^ギミック(開始|解除)：/.test(name)) {
     state.gimmicks ??= {};
     state.gimmicks[subject] = name.startsWith("ギミック開始");
+    if (subject === "アウザーの館") {
+      if (state.gimmicks[subject]) startOwzerDoors(game, warn);
+      else if (state.owzerDoors?.mapId === game.mapId) {
+        updateOwzerDoors(game, state.owzerDoors, -1);
+        state.owzerDoors.active = false;
+        // The temporary cycling gates must stop owning collision once the
+        // source removes the gimmick. Authored kind8 doors and tile walls
+        // continue to govern normal opening; keeping these gates active
+        // would make the source's return corridor permanently impassable.
+        for (const binding of state.owzerDoors.doors) game.actor(binding.collider).visible = false;
+        warn(
+          "PR Owzer stop releases only its three temporary cycling colliders to ordinary source-door control; native removal timing is inferred.",
+        );
+      }
+      game.event("gimmick", { name: subject, active: state.gimmicks[subject] });
+      return true;
+    }
     const callback = `${subject}_t`,
       program = game.data.programs[game.resolve(callback)],
       repeat = program?.ops?.find((op) => op[0] === "SetTimer" && op[3].includes(callback));

@@ -40,6 +40,7 @@ const canvas = document.getElementById("screen");
 const renderer = new GameRenderer(canvas);
 renderer.diagnostics.acceptance = new URLSearchParams(location.search).get("acceptance") === "1";
 window.ffviRenderDiagnostics = () => renderer.diagnostics.summary();
+window.ffviRenderMetrics = () => renderer.metrics();
 await renderer.init();
 const ui = new GameUI(renderer.layers.ui, (url, details) => renderer.getTexture(url, details));
 window.ffviUIDiagnostics = () => ui.diagnostics();

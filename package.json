@@ -24,6 +24,7 @@
     "play:asset-decode": "node tools/play/check-asset-decode.mjs",
     "play:extras-check": "node tools/play/check-extras-browser.mjs",
     "play:visual-check": "node tools/play/visual-regression.mjs",
+    "play:static-check": "node tools/play/check-static-browser.mjs",
     "play:numeric-check": "node tools/play/numeric-audit.mjs",
     "play:boss-check": "node tools/play/boss-health-check.mjs",
     "play:ability-audit": "node tools/play/audit-play-abilities.mjs",

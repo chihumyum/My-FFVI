@@ -918,6 +918,10 @@ export class BattleEvents {
     if (name === "狂信者の塔状態異常付与") {
       state.magicOnly = true;
       for (const unit of b.players) unit.magicOnly = true;
+      if (b.players.some((unit) => unit.testBoost))
+        this.warning(
+          "Explicit story-test boost retains ordinary Fight inside the Cultists Tower to skip combat strategy; ordinary characters still receive the source magic-only command restriction.",
+        );
       this.warning(
         "Cultists Tower command replacement follows SNES InitCmdList with PR command/relic rows; exact native Gogo custom-slot behavior is inferred.",
       );
