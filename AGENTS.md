@@ -1,4 +1,4 @@
-# FFVI Reweb
+# My-FFVI
 
 Goal: port FF6 Pixel Remaster to the Web, playable from a new game to the ending. Automatic play is regression only: boosted fresh new game through the ending, and normal stats through the three story branches (M3). HD-2D comes later.
 

@@ -1,6 +1,8 @@
-# FFVI Reweb
+# My-FFVI
 
 将 FF6 Pixel Remaster 迁移到浏览器。PR 提供全部地图、剧情、中文文本、图片、音乐和参数；行为参考 `~/ff6-snes-disasm` 的 `8130132`，PR 显式参数优先。不确定处记录警告并继续。
+
+源码仓库：[chihumyum/My-FFVI](https://github.com/chihumyum/My-FFVI)。本地项目目录为 `My-FFVI/`，npm 包标识使用小写 `my-ffvi`。改名保留原有存档、身份备份格式及存储命名空间，已有存档可继续使用。
 
 源代码与游戏资源分开：Git 仓库不包含原版图片、音频、剧情文本、提取数据或存档。Cloudflare 部署将约 540 MB 的导出资源存放到独立 R2 桶，Worker 静态包只含页面与程序；`npm run bundle` 仍可生成自带资源的普通静态包。
 
