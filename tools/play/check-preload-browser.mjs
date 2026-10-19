@@ -166,7 +166,8 @@ try {
       await page.waitForFunction(() => window.ffviLoading().state === "failed");
       assert.equal(await page.evaluate(() => window.ffvi.mapId), 1);
       failMap = false;
-      await page.getByRole("button", { name: "重试", exact: true }).click();
+      await page.getByRole("button", { name: "重试", exact: true }).focus();
+      await page.keyboard.press("Enter");
       row.retriedDataWithoutReset = true;
       await page.waitForFunction(
         () => window.ffvi.mapId === 3 && !window.ffvi.loading && window.ffviLoading().active,

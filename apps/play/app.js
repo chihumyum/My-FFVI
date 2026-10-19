@@ -397,6 +397,7 @@ function gameKeyDown(e) {
   }
   if (loading.active) {
     keys.clear();
+    if (e.target?.closest?.("#boot-status") || e.key === "Tab") return;
     if (!isTextEntry(e.target)) e.preventDefault();
     return;
   }
