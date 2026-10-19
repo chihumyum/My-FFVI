@@ -61,13 +61,11 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
     await page.goto(base);
     await page.locator("#cloud-toggle").waitFor({ timeout: 60000 });
     await page.locator("#cloud-toggle").click();
-    await page
-      .locator('#cloud-panel input[type="file"]')
-      .setInputFiles({
-        name: "actual-save.json",
-        mimeType: "application/json",
-        buffer: Buffer.from(JSON.stringify(backup)),
-      });
+    await page.locator('#cloud-panel input[type="file"]').setInputFiles({
+      name: "actual-save.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(backup)),
+    });
     await page.waitForFunction(() =>
       document.getElementById("cloud-panel").textContent.includes("已完成"),
     );
