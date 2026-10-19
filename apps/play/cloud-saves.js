@@ -1,4 +1,5 @@
 // Optional same-origin host adapter. Plain static websites never probe an absent API.
+import { activeIdentity } from "./identity.js";
 export class CloudSaves {
   constructor({
     enabled = !!document.querySelector('meta[name="ffvi-host"]'),
@@ -6,7 +7,8 @@ export class CloudSaves {
   } = {}) {
     this.enabled = enabled;
     this.fetcher = fetcher.bind(globalThis);
-    this.serverId = null;
+    this.serverId = activeIdentity()?.serverId || null;
+    this.identity = activeIdentity();
   }
   async request(url, options) {
     const response = await this.fetcher(url, {
@@ -14,7 +16,11 @@ export class CloudSaves {
       cache: "no-store",
       signal: AbortSignal.timeout(15000),
       ...options,
-      headers: { "Content-Type": "application/json", ...options?.headers },
+      headers: {
+        "Content-Type": "application/json",
+        ...(this.serverId ? { "X-FFVI-Account": this.serverId } : {}),
+        ...options?.headers,
+      },
     });
     const value = await response.json();
     if (!response.ok && response.status !== 409)
@@ -28,7 +34,10 @@ export class CloudSaves {
     const { value } = await this.request("/api/session");
     if (!value.authenticated)
       throw Object.assign(Error("登录已过期，请重新登录；本机存档仍保留"), { status: 401 });
+    if (this.serverId && this.serverId !== value.serverId)
+      throw Object.assign(Error("存档身份已切换，请刷新此页；本机进度仍保留"), { status: 403 });
     this.serverId = value.serverId;
+    this.identity = value;
     return true;
   }
   async list() {
@@ -53,5 +62,16 @@ export class CloudSaves {
   }
   async logout() {
     await this.request("/api/logout", { method: "POST", body: "{}" });
+  }
+  async recover(recoveryKey) {
+    return (
+      await this.request("/api/session", {
+        method: "POST",
+        body: JSON.stringify({ recoveryKey: recoveryKey.trim() }),
+      })
+    ).value;
+  }
+  async createIdentity() {
+    return (await this.request("/api/identity", { method: "POST", body: "{}" })).value;
   }
 }

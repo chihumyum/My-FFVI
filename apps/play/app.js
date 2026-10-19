@@ -1,3 +1,4 @@
+import { quickSaveKey } from "./identity.js";
 import { WebData, webIndexURL } from "./data.js";
 import { loadPresentation, loadBattlePresentation, presentText } from "./presentation.js";
 import { SaveLibrary, renderSaveSlots } from "./saves.js";
@@ -309,12 +310,12 @@ $("walk").onclick = async () => {
 };
 $("switch").onclick = () => game?.switchParty();
 $("retry").onclick = () => {
-  const bytes = localStorage.getItem(game?.testBoost ? "ffvi-play-test" : "ffvi-play");
+  const bytes = localStorage.getItem(quickSaveKey(game?.testBoost));
   if (bytes) start(JSON.parse(bytes));
   else start(null, game?.testBoost);
 };
 $("retrytest").onclick = () => {
-  const bytes = localStorage.getItem("ffvi-play");
+  const bytes = localStorage.getItem(quickSaveKey(false));
   start(bytes ? JSON.parse(bytes) : null, true);
 };
 $("test").onclick = () => start(null, true);

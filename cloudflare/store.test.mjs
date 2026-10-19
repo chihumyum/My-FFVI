@@ -21,6 +21,11 @@ test("D1 saves atomically preserve competing devices, retries and fifty historic
     const binding = await mf.getD1Database("DB");
     const schema = await readFile(new URL("./migrations/0001_saves.sql", import.meta.url), "utf8");
     await binding.exec(schema.replaceAll("\n", " "));
+    await binding.exec(
+      (await readFile(new URL("./migrations/0002_profiles.sql", import.meta.url), "utf8"))
+        .replace(/^--.*$/gm, "")
+        .replaceAll("\n", " "),
+    );
     const store = () => openD1Store(binding);
     const record = (time) => ({
       id: "normal:1",

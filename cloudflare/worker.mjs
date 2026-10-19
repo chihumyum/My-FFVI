@@ -1,6 +1,7 @@
 import assetSizes from "../dist/cloudflare/asset-sizes.json" with { type: "json" };
 import { slotPattern } from "../server/save-schema.mjs";
 import { openD1Store } from "./store.mjs";
+import { serveResource } from "./resources.mjs";
 import { rangeResponse } from "./ranges.mjs";
 
 const encoder = new TextEncoder();
@@ -76,7 +77,8 @@ async function verify(password, encoded) {
 export default {
   async fetch(request, env, ctx) {
     try {
-      if (!env.FFVI_PASSWORD) return json(503, { error: "私人站点尚未设置密码" });
+      const publicSite = env.FFVI_PUBLIC_SITE === "1";
+      if (!publicSite && !env.FFVI_PASSWORD) return json(503, { error: "私人站点尚未设置密码" });
       const url = new URL(request.url),
         route = decodeURIComponent(url.pathname);
       const origin = env.FFVI_PUBLIC_URL || url.origin;
@@ -104,45 +106,84 @@ export default {
         );
         return json(403, { error: "请求来源不匹配" });
       }
-      const store = openD1Store(env.DB),
-        db = store.db;
+      if (publicSite && route.startsWith("/resources/") && ["GET", "HEAD"].includes(request.method))
+        return serveResource(request, env.RESOURCES, { headers: securityHeaders, publicSite, ctx });
+      const db = env.DB.withSession("first-primary");
       const token = request.headers.get("cookie")?.match(/(?:^|;\s*)ffvi_session=([\w-]+)/)?.[1];
-      const digest = token && (await sha(token + "\0" + env.FFVI_PASSWORD));
+      const digest = token && (await sha("session\0" + token));
+      const legacyDigest = token && (await sha(token + "\0" + env.FFVI_PASSWORD));
       const session =
-        digest &&
-        (await db.prepare("SELECT expires FROM sessions WHERE token=?").bind(digest).first());
-      const authenticated = session?.expires > Date.now();
+        token &&
+        (await db
+          .prepare(
+            "SELECT token,expires,owner FROM profile_sessions WHERE token=? AND expires>? UNION ALL SELECT token,expires,'legacy' AS owner FROM sessions WHERE token=? AND expires>?",
+          )
+          .bind(digest, Date.now(), legacyDigest, Date.now())
+          .first());
+      const authenticated = !!session;
+      const store = openD1Store(env.DB, session?.owner || "legacy");
       const cookie = (value, age = 30 * 86400) =>
         `ffvi_session=${value}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${age}${url.protocol === "https:" ? "; Secure" : ""}`;
-      if (route === "/api/session" && request.method === "GET")
-        return json(200, { authenticated: !!authenticated, serverId: await store.serverId() });
-      if (route === "/api/session" && request.method === "POST") {
-        const input = await body(request),
-          now = Date.now(),
-          ip = await sha(request.headers.get("cf-connecting-ip") || "local");
-        const limit = await db
-          .prepare(
-            "INSERT INTO login_attempts VALUES (?,1,?) ON CONFLICT(ip) DO UPDATE SET attempts=CASE WHEN expires<? THEN 1 ELSE attempts+1 END,expires=CASE WHEN expires<? THEN excluded.expires ELSE expires END RETURNING attempts",
-          )
-          .bind(ip, now + 600000, now, now)
-          .first();
-        if (limit.attempts > 10)
-          return json(429, { error: "尝试过多，请 10 分钟后再试" }, { "Retry-After": "600" });
-        if (!(await verify(input.password, env.FFVI_PASSWORD)))
-          return json(401, { error: "密码不正确" });
-        const fresh = hex(crypto.getRandomValues(new Uint8Array(32)));
+      const identity = async (owner = session?.owner) => ({
+        authenticated: !!owner,
+        publicSite,
+        serverId: owner ? await openD1Store(env.DB, owner).serverId() : null,
+        profileId: owner === "legacy" ? "原私人存档" : owner?.slice(0, 12),
+        legacy: owner === "legacy",
+      });
+      const establish = async (owner, recoveryKey) => {
+        const fresh = hex(crypto.getRandomValues(new Uint8Array(32))),
+          now = Date.now();
         await db.batch([
-          db.prepare("DELETE FROM login_attempts WHERE ip=? OR expires<?").bind(ip, now),
-          db.prepare("DELETE FROM sessions WHERE expires<?").bind(now),
-          db
-            .prepare("INSERT INTO sessions VALUES (?,?)")
-            .bind(await sha(fresh + "\0" + env.FFVI_PASSWORD), now + 30 * 86400000),
+          db.prepare("DELETE FROM login_attempts WHERE expires<?").bind(now),
+          db.prepare("DELETE FROM profile_sessions WHERE expires<?").bind(now),
+          owner === "legacy"
+            ? db
+                .prepare("INSERT INTO sessions VALUES (?,?)")
+                .bind(await sha(fresh + "\0" + env.FFVI_PASSWORD), now + 30 * 86400000)
+            : db
+                .prepare("INSERT INTO profile_sessions (token,expires,owner) VALUES (?,?,?)")
+                .bind(await sha("session\0" + fresh), now + 30 * 86400000, owner),
         ]);
         return json(
           200,
-          { authenticated: true, serverId: await store.serverId() },
+          { ...(await identity(owner)), ...(recoveryKey ? { recoveryKey } : {}) },
           { "Set-Cookie": cookie(fresh) },
         );
+      };
+      const limit = async (key, maximum, duration = 600000) => {
+        const now = Date.now();
+        const row = await db
+          .prepare(
+            "INSERT INTO login_attempts VALUES (?,1,?) ON CONFLICT(ip) DO UPDATE SET attempts=CASE WHEN expires<? THEN 1 ELSE attempts+1 END,expires=CASE WHEN expires<? THEN excluded.expires ELSE expires END RETURNING attempts",
+          )
+          .bind(key, now + duration, now, now)
+          .first();
+        if (row.attempts > maximum)
+          throw Object.assign(Error("请求过多，请稍后重试；本机进度仍保留"), { status: 429 });
+      };
+      if (route === "/api/session" && request.method === "GET") return json(200, await identity());
+      if ((route === "/api/session" || route === "/api/identity") && request.method === "POST") {
+        await limit("login:" + (await sha(request.headers.get("cf-connecting-ip") || "local")), 20);
+        const input = await body(request);
+        if (route === "/api/identity") {
+          if (!publicSite) return json(404, { error: "此站点未开放匿名身份" });
+          const key = "ffvi_" + hex(crypto.getRandomValues(new Uint8Array(32)));
+          const owner = await sha("profile-v1\0" + key);
+          await db.prepare("INSERT INTO profiles VALUES (?,?)").bind(owner, Date.now()).run();
+          return establish(owner, key);
+        }
+        if (typeof input.recoveryKey === "string") {
+          if (!/^ffvi_[a-f0-9]{64}$/.test(input.recoveryKey))
+            return json(401, { error: "恢复密钥格式不正确" });
+          const owner = await sha("profile-v1\0" + input.recoveryKey);
+          if (!(await db.prepare("SELECT id FROM profiles WHERE id=?").bind(owner).first()))
+            return json(401, { error: "恢复密钥不存在，请检查是否完整；不会新建或覆盖存档" });
+          return establish(owner);
+        }
+        if (!env.FFVI_PASSWORD || !(await verify(input.password, env.FFVI_PASSWORD)))
+          return json(401, { error: "密码不正确" });
+        return establish("legacy");
       }
       const publicFiles = new Map([
         ["/login", "/login"],
@@ -158,18 +199,31 @@ export default {
         for (const [key, value] of Object.entries(securityHeaders)) headers.set(key, value);
         return new Response(asset.body, { status: asset.status, headers });
       }
-      if (!authenticated)
+      if (!authenticated && (!publicSite || route.startsWith("/api/")))
         return request.headers.get("accept")?.includes("text/html") &&
           ["GET", "HEAD"].includes(request.method)
           ? new Response(null, { status: 302, headers: { ...securityHeaders, Location: "/login" } })
           : json(401, { error: "请先登录" });
       if (route === "/api/logout" && request.method === "POST") {
-        await db.prepare("DELETE FROM sessions WHERE token=?").bind(digest).run();
+        await db.batch([
+          db.prepare("DELETE FROM sessions WHERE token=?").bind(session.token),
+          db.prepare("DELETE FROM profile_sessions WHERE token=?").bind(session.token),
+        ]);
         return json(
           200,
           { ok: true },
           { "Set-Cookie": cookie("", 0), "Clear-Site-Data": '"cache"' },
         );
+      }
+      if (route.startsWith("/api/saves")) {
+        // Pin the browser's identity on every operation. Switching the shared
+        // cookie in another tab must never redirect an in-flight save to it.
+        if (
+          (publicSite || request.headers.has("X-FFVI-Account")) &&
+          request.headers.get("X-FFVI-Account") !== (await store.serverId())
+        )
+          return json(403, { error: "存档身份已切换，请刷新此页；本机版本仍保留" });
+        if (request.method === "PUT") await limit("save:" + session.owner, 120, 60000);
       }
       if (route === "/api/saves" && request.method === "GET")
         return json(200, { serverId: await store.serverId(), saves: await store.list() });
@@ -199,6 +253,8 @@ export default {
         route.split("/").some((p) => p.startsWith("."))
       )
         return json(404, { error: "文件不存在" });
+      if (route.startsWith("/resources/"))
+        return serveResource(request, env.RESOURCES, { headers: securityHeaders, publicSite, ctx });
       const asset = await rangeResponse(
         await env.ASSETS.fetch(request),
         request,
@@ -206,7 +262,7 @@ export default {
       );
       const headers = new Headers(asset.headers);
       for (const [key, value] of Object.entries(securityHeaders)) headers.set(key, value);
-      headers.set("Cache-Control", "private, no-cache");
+      headers.set("Cache-Control", publicSite ? "no-cache" : "private, no-cache");
       return new Response(request.method === "HEAD" ? null : asset.body, {
         status: asset.status,
         headers,

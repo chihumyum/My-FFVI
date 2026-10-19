@@ -98,4 +98,8 @@ export class WebData {
     await this.ensurePrograms(Object.keys(this.index.programFiles));
   }
 }
-export const webIndexURL = () => new URL("data/index.json", document.baseURI);
+export const webIndexURL = () =>
+  new URL(
+    document.querySelector('meta[name="ffvi-data-index"]')?.content || "data/index.json",
+    document.baseURI,
+  );

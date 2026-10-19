@@ -1,4 +1,5 @@
 import "./cloud-ui.css";
+import { rememberIdentity } from "./identity.js";
 
 function element(tag, text, parent) {
   const value = document.createElement(tag);
@@ -64,12 +65,102 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
     return value;
   };
   if (library.cloud.enabled) {
+    if (document.querySelector('meta[name="ffvi-identity"]')) {
+      const identity = element("section", null, dialog);
+      dialog.insertBefore(identity, tools);
+      identity.className = "cloud-identity";
+      element("h3", "独立存档身份", identity);
+      const label = element("p", null, identity);
+      const updateLabel = () => {
+        const value = library.cloud.identity;
+        label.textContent = value?.legacy
+          ? "当前：原私人存档。只有原站点密码可以进入这套存档。"
+          : `存档 ID：${value?.profileId || "连接中"}。请下载身份备份；换设备时导入同一恢复密钥。密钥等同密码，丢失后无法找回，请勿公开。`;
+      };
+      updateLabel();
+      library.subscribe(updateLabel);
+      button(
+        "备份恢复密钥",
+        () => {
+          const current = library.cloud.identity;
+          const key = localStorage.getItem(`ffvi-recovery:${current?.serverId}`);
+          if (!key) throw Error("此身份没有保存在本机的恢复密钥；原私人存档请继续使用站点密码");
+          download(
+            {
+              format: "ffvi-reweb-identity",
+              version: 1,
+              site: location.origin,
+              profileId: current.profileId,
+              recoveryKey: key,
+            },
+            "ffvi-identity-keep-private.json",
+          );
+          localStorage.setItem(`ffvi-recovery-backed:${current.serverId}`, "1");
+        },
+        identity,
+      );
+      const restore = element("input", null, identity);
+      restore.type = "password";
+      restore.placeholder = "粘贴完整恢复密钥 ffvi_…";
+      restore.autocomplete = "off";
+      restore.setAttribute("aria-label", "恢复密钥");
+      const switchTo = (value, key) => {
+        rememberIdentity(value, key, { activate: false });
+        location.reload();
+      };
+      button(
+        "恢复已有身份",
+        async () => {
+          const key = restore.value.trim();
+          const value = await library.cloud.recover(key);
+          switchTo(value, key);
+        },
+        identity,
+      );
+      const recoveryFile = element("input", null, identity);
+      recoveryFile.type = "file";
+      recoveryFile.accept = "application/json,.json";
+      recoveryFile.hidden = true;
+      button("导入身份备份", () => recoveryFile.click(), identity);
+      recoveryFile.onchange = () =>
+        run(async () => {
+          const file = recoveryFile.files[0];
+          if (!file || file.size > 4096) throw Error("请选择有效的身份备份文件");
+          const value = JSON.parse(await file.text());
+          if (
+            value.format !== "ffvi-reweb-identity" ||
+            value.version !== 1 ||
+            typeof value.recoveryKey !== "string"
+          )
+            throw Error("这不是身份备份文件");
+          const result = await library.cloud.recover(value.recoveryKey);
+          switchTo(result, value.recoveryKey);
+        });
+      button(
+        "新建独立身份",
+        async () => {
+          if (
+            !confirm("将切换到一套空存档；原身份的本机存档会分别保留。请先备份恢复密钥。继续吗？")
+          )
+            return;
+          const value = await library.cloud.createIdentity();
+          switchTo(value, value.recoveryKey);
+        },
+        identity,
+      );
+      element(
+        "p",
+        "切换身份会重新载入游戏。尚未存档的游玩进度请先保存；旧标签页会停止云同步，避免写错身份。",
+        identity,
+      );
+    }
     button("立即同步", () => library.sync());
     button("重新登录", () => {
       location.assign("/login");
     });
     button("退出登录", async () => {
       await library.cloud.logout();
+      localStorage.removeItem("ffvi-recovery-active");
       location.assign("/login");
     });
   }
@@ -105,7 +196,7 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
     archives = element("div", null, dialog);
   let historySelect;
   if (library.cloud.enabled) {
-    element("h3", "云端历史 · 每槽最近 50 版", versions);
+    element("h3", "云端历史 · 每槽最多 50 版，匿名身份总计最多 48 MiB", versions);
     historySelect = element("select", null, versions);
     historySelect.setAttribute("aria-label", "历史存档槽");
     const list = element("div", null, versions);
@@ -134,7 +225,13 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
   close.className = "cloud-close";
   const unsubscribe = library.subscribe((value) => {
     state.textContent = value.message;
-    toggle.textContent = value.state === "conflict" ? "存档冲突" : "云存档";
+    const current = library.cloud.identity;
+    const needsBackup =
+      current &&
+      !current.legacy &&
+      !localStorage.getItem(`ffvi-recovery-backed:${current.serverId}`);
+    toggle.textContent =
+      value.state === "conflict" ? "存档冲突" : needsBackup ? "云存档 · 请备份身份" : "云存档";
     toggle.dataset.state = value.state;
     if (dialog.open) refresh();
   });

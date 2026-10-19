@@ -50,6 +50,27 @@
   margin: 4px;
   max-width: 100%;
 }
+.cloud-identity {
+  position: static;
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+  padding: 0;
+  border-bottom: 1px solid #657da9;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+}
+.cloud-identity input[type="password"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  font: 14px monospace;
+  color: #fff;
+  background: #162440;
+  border: 1px solid #657da9;
+  border-radius: 8px;
+}
 .cloud-controls h2 {
   margin-top: 0;
   font-size: 24px;

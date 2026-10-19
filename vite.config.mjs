@@ -6,7 +6,7 @@ const root = import.meta.dirname;
 export default defineConfig({
   root: path.join(root, "apps/play"),
   base: "./",
-  publicDir: path.join(root, "build/web-data/web"),
+  publicDir: process.env.FFVI_DATA_INDEX ? false : path.join(root, "build/web-data/web"),
   server: { host: "127.0.0.1", port: 4173, strictPort: true, fs: { allow: [root] } },
   build: {
     outDir: path.join(root, "dist/web"),
@@ -22,6 +22,26 @@ export default defineConfig({
     },
   },
   plugins: [
+    {
+      name: "independent-resource-index",
+      transformIndexHtml(html) {
+        const index = process.env.FFVI_DATA_INDEX;
+        if (!index) return html;
+        const url = new URL(index);
+        if (!["http:", "https:"].includes(url.protocol))
+          throw Error("数据清单必须使用 HTTP(S) 地址");
+        return {
+          html,
+          tags: [
+            {
+              tag: "meta",
+              attrs: { name: "ffvi-data-index", content: url.href },
+              injectTo: "head-prepend",
+            },
+          ],
+        };
+      },
+    },
     {
       name: "local-evidence-only",
       configureServer(server) {

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Private FFVI Pixel Remaster web migration",
+  "description": "FFVI Pixel Remaster Web migration",
   "engines": {
     "node": ">=22.18"
   },
@@ -41,10 +41,13 @@
     "play:host-check": "node tools/play/check-host-browser.mjs",
     "play:loading-check": "node tools/play/check-loading-browser.mjs",
     "cloudflare:prepare": "node tools/play/prepare-cloudflare.mjs",
-    "cloudflare:dev": "wrangler d1 migrations apply ffvi-saves --local --env local && wrangler dev --env local --ip 127.0.0.1 --port 8788",
-    "cloudflare:deploy": "npm run cloudflare:prepare && wrangler d1 migrations apply ffvi-saves --remote && wrangler deploy",
+    "cloudflare:dev": "wrangler d1 migrations apply ffvi-saves --local --env local --persist-to .wrangler/public-local && wrangler dev --env local --ip 127.0.0.1 --port 8788 --persist-to .wrangler/public-local",
+    "cloudflare:deploy": "npm run cloudflare:prepare && npm run cloudflare:resources && npm run cloudflare:backup && wrangler d1 migrations apply ffvi-saves --remote && wrangler deploy --keep-vars",
     "cloudflare:backup": "node tools/play/backup-cloudflare.mjs",
-    "cloudflare:deploy:first": "npm run cloudflare:prepare && wrangler d1 migrations apply ffvi-saves --remote && wrangler deploy --secrets-file private-data/cloudflare-secrets.json"
+    "cloudflare:deploy:first": "npm run cloudflare:prepare && npm run cloudflare:resources && wrangler d1 migrations apply ffvi-saves --remote && wrangler deploy --secrets-file private-data/cloudflare-secrets.json",
+    "cloudflare:resources": "node tools/play/upload-resources.mjs",
+    "dev:client": "vite --config vite.config.mjs",
+    "bundle:client": "node tools/play/bundle-client.mjs"
   },
   "devDependencies": {
     "miniflare": "5.20261012.1-beta",

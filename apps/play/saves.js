@@ -1,7 +1,8 @@
 // Browser-owned save slots; the original quick/autosave keys remain compatible.
+import { quickSaveKey, saveDatabaseName } from "./identity.js";
 const mode = (boost) => (boost ? "story-test" : "normal");
 const slotId = /^(normal|story-test):(auto|[1-9]|1[0-2])$/;
-const quickKey = (boost) => (boost ? "ffvi-play-test" : "ffvi-play");
+const quickKey = quickSaveKey;
 const payload = (record) =>
   Object.fromEntries(
     ["id", "mode", "slot", "savedAt", "map", "party", "time", "snapshot"].map((key) => [
@@ -13,7 +14,7 @@ export class SaveLibrary {
   constructor({ cloud } = {}) {
     this.database = null;
     this.cloud = cloud;
-    this.account = localStorage.getItem("ffvi-cloud-account");
+    this.account = cloud?.serverId || localStorage.getItem("ffvi-cloud-account");
     this.status = {
       state: cloud?.enabled ? "connecting" : "local",
       message: cloud?.enabled ? "正在连接云存档…" : "仅本机存档，可导出备份",
@@ -35,7 +36,7 @@ export class SaveLibrary {
   async open() {
     if (!this.database)
       this.database = new Promise((resolve, reject) => {
-        const request = indexedDB.open("ffvi-pr-saves", 1);
+        const request = indexedDB.open(saveDatabaseName(), 1);
         request.onupgradeneeded = () =>
           request.result.createObjectStore("slots", { keyPath: "id" });
         request.onsuccess = () => resolve(request.result);
@@ -143,7 +144,7 @@ export class SaveLibrary {
     if (slot !== "auto")
       await this.write({ ...record, id: `${record.mode}:auto`, slot: "auto" }, true);
     // Existing retry/continue and autosave keep their established single-slot API.
-    localStorage.setItem(game.testBoost ? "ffvi-play-test" : "ffvi-play", JSON.stringify(snapshot));
+    localStorage.setItem(quickKey(game.testBoost), JSON.stringify(snapshot));
     return record;
   }
   async autosave(game, location) {

@@ -2,27 +2,44 @@
 
 将 FF6 Pixel Remaster 迁移到浏览器。PR 提供全部地图、剧情、中文文本、图片、音乐和参数；行为参考 `~/ff6-snes-disasm` 的 `8130132`，PR 显式参数优先。不确定处记录警告并继续。
 
-原版素材与生成数据仅供私人使用，`build/`、`dist/` 不进入 Git。自托管版本对游戏和全部资源设置登录保护，不开放匿名资源下载。
+源代码与游戏资源分开：Git 仓库不包含原版图片、音频、剧情文本、提取数据或存档。Cloudflare 部署将约 540 MB 的导出资源存放到独立 R2 桶，Worker 静态包只含页面与程序；`npm run bundle` 仍可生成自带资源的普通静态包。
 
-## 私人部署、手机游玩和云存档
+只克隆公开源码，也可以直接借用已部署站点的公开资源来生成约 1.2 MB 的静态客户端，无须下载 PR 安装目录或运行数据导出：
 
-Cloudflare 版已绑定 `https://ffvi.chihum.dev/`：Workers Static Assets 分发约 541 MB 游戏文件，Worker 先验证登录，再读取资源或 D1 存档；不需要 VPS、Docker 或 R2。当前账户未启用 Access，因此沿用私人站点密码，初始密码保存在本机 `private-data/cloudflare-first-login.txt`，不进 Git。手机和电脑使用同一网址、密码，从标题读档接续；首次搬迁旧本机存档时，先导出备份，再到新域名导入并同步。
+```sh
+npm ci
+npm run bundle:client -- --site https://ffvi.chihum.dev/
+```
 
-更新线上版本（从本机已导出资源生成干净目录并上传，保留现有线上密码和 D1 数据）：
+输出 `dist/client/`；这个独立客户端默认仅本机存档。需要云同步时部署下述 Worker。也可用 `--data-index <完整清单 URL>` 指向自己的资源。仅前端开发：`FFVI_DATA_INDEX=<完整清单 URL> npm run dev:client`。公开资源允许跨域读取，存档 API 仍仅接受站点同源请求。
+
+## 公开网址与独立云存档
+
+入口为 `https://ffvi.chihum.dev/`。首次访问自动生成独立匿名存档身份，不需要注册邮箱。打开左上「云存档 → 备份恢复密钥」，下载身份文件并自行保管；另一台手机或电脑在同一面板选择「导入身份备份」，或粘贴完整恢复密钥，再从标题读档。显示的短 ID 只用于辨认，完整恢复密钥才是访问凭证。不要分享该文件；丢失密钥且浏览器数据被清除后无法找回。身份备份只恢复访问权，存档备份另用「导出本机全部存档」。
+
+每个身份在 D1 中隔离，浏览器 IndexedDB 与快速继续记录也按身份分开。「新建独立身份」会切换到空存档，旧身份本机数据保留；恢复旧密钥即可切回。旧标签页发现身份切换后会暂停同步，避免上传到别人的槽。写档先保存本机，离线排队，联网后上传；并发写入保留冲突双方，不按时间戳强行覆盖。普通/强化存档分别保留 12 槽及自动档；每槽历史最多 50 版，匿名身份历史合计最多 48 MiB，超出时淘汰最早历史，当前存档不受影响。每条存档约 1.9 MB 上限仍保留，超限会明确报错。
+
+原来的私人存档保留原数据表、版本与站点身份。已有登录继续有效，也可以打开 `/login` 输入旧站点密码。不会把原私人存档分给新访客；匿名身份和旧存档之间只能通过明确导出/导入迁移。
+
+部署使用三部分：Worker 静态页面、私有 R2 绑定 `RESOURCES`（只经 `/resources/` 读取，无上传接口）、D1 私密存档 API。资源路径含内容哈希并缓存；首页重新验证缓存，发布时不变更密码或重写旧档。恢复密钥不进 URL、日志或 Git，服务端只存密钥摘要；会话使用 HttpOnly/Secure Cookie。保存接口还校验页面固定的身份，防止另一个标签页切换登录造成串档。
+
+更新 Cloudflare（导出已经完成时，一条命令重新打包、增量校验并上传 R2、备份 D1、应用新增表迁移和部署）：
 
 ```sh
 npm run cloudflare:deploy
 ```
 
-首次部署到另一个账户，需要在 `wrangler.jsonc` 替换账户、D1 绑定和自定义域名，执行 `npx wrangler login`、创建 D1 并应用 `cloudflare/migrations`，再用 `npm run cloudflare:deploy:first` 一并设置本机生成的初始密码；不要对已有站点随意重设初始密码。密码校验值以 Worker secret 保存，修改后旧登录自动失效。普通更新命令不写 secret；换电脑时请单独安全保管原密码，不能把新机器生成的开发密码误认为线上密码。
+首次部署到其他账户，修改 `wrangler.jsonc` 的账户、域名、D1 与 R2 桶配置，并执行 `npx wrangler login` 创建对应资源。`FFVI_PUBLIC_SITE=1` 开启公开页面/匿名身份；`0` 保持私人登录。旧站点密码校验值保留在 Worker secret `FFVI_PASSWORD` 中，源码不含密码。不要用新机器生成的开发密码覆盖已有线上密码。自定义 R2 桶名时同时设置 `FFVI_RESOURCE_BUCKET`。R2 上传会检查远端文件大小、MD5 与类型，可在中断后重跑；不删除旧哈希资源，避免已打开页面缺图。
 
-本地 Worker 开发先运行 `npm run cloudflare:prepare`，之后一条命令：
+本地开发（全部使用本机模拟数据，不访问生产存档）：
 
 ```sh
+npm run cloudflare:prepare
+npm run cloudflare:resources -- --local
 npm run cloudflare:dev
 ```
 
-打开 `http://127.0.0.1:8788/`，使用上述本机密码；`local` 环境不绑定公网域名，D1 是本机模拟库，和线上数据分开。生产环境关闭 `workers.dev` 与版本预览地址，所有静态路径都先经过认证；音频支持有界流式 Range 请求。云端仍使用原子版本比较、离线队列与每槽 50 版历史；刷新或同步不替换正在运行的游戏。D1 存档单条记录上限约 1.9 MB，超出会明确报错并保留本机版本，不能静默截断。
+打开 `http://127.0.0.1:8788/`。单独调试隔离：`PLAY_WEB_URL=http://127.0.0.1:8788/ node tools/play/check-public-browser.mjs`，用随机测试身份检查 Chromium/WebKit 的身份备份、跨设备读档、独立槽、离线写入和旧标签页防串档，不读取原私人存档。资源采用同源 Worker 代理，无须另配域名或跨域 Cookie；R2 桶本身不开放写入或目录列表。
 
 备份线上 D1（包含存档、历史和站点身份，输出到已忽略的 `backups/`）：
 
@@ -30,7 +47,9 @@ npm run cloudflare:dev
 npm run cloudflare:backup
 ```
 
-浏览器与接口验收在 `build/play/deployment/cloudflare/`。`node tools/play/check-cloudflare-http.mjs` 全局检查资源分类的匿名拒绝、登录、范围读取、来源校验与退出；`PLAY_WEB_URL=https://ffvi.chihum.dev/` 可指向公网验证。云存档验收仍使用 `play:host-check`；真实新游戏、音乐与存读档使用 `play:static-check`。云存档验收默认要求空库，防止覆盖玩家存档；只有专门的可丢弃测试库才能显式使用 `PLAY_HOST_DISPOSABLE_DB=1` 重跑，个人游玩库不要设置这个开关。
+公开部署验收与截图在 `build/play/deployment/public/`。`check-public-browser.mjs` 只使用自行新建的随机测试身份。旧 `check-cloudflare-http.mjs` 和 `play:host-check` 属于下述单用户私人部署，不能拿它们读取个人生产存档来验收公开站点。
+
+## 可选：单用户私人 Node 部署
 
 在已导出游戏数据的工程里，一条命令生成完整分发包：
 
