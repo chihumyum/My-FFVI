@@ -19,6 +19,16 @@ try {
   const text = await shell.text();
   assert.match(text, /name="ffvi-identity"/);
   assert.match(shell.headers.get("cache-control"), /no-cache|no-store/);
+  const script = text.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
+  assert.ok(script, "release entry script");
+  const scriptURL = new URL(script, base);
+  const scriptResponse = await request(scriptURL.href);
+  assert.equal(scriptResponse.status, 200);
+  assert.deepEqual(
+    Buffer.from(await scriptResponse.arrayBuffer()),
+    await readFile(path.join("dist/cloudflare/web", scriptURL.pathname)),
+    "deployed JS must match the built release",
+  );
   const indexPath = text.match(/name="ffvi-data-index" content="([^"]+)"/)[1];
   const indexResponse = await request(indexPath);
   assert.equal(indexResponse.status, 200);
@@ -47,7 +57,10 @@ try {
       kind,
     );
     assert.match(remote.headers.get("cache-control"), /public.*immutable/);
-    const head = await request(url, { method: "HEAD" });
+    assert.equal(remote.headers.get("access-control-allow-origin"), "*");
+    // Compare the uncompressed representation length; the edge may otherwise
+    // gzip a text/font response and omit its dynamic compressed Content-Length.
+    const head = await request(url, { method: "HEAD", headers: { "Accept-Encoding": "identity" } });
     assert.equal(head.status, 200);
     assert.equal(Number(head.headers.get("content-length")), local.length);
     const range = await request(url, { headers: { Range: "bytes=0-15" } });

@@ -69,13 +69,15 @@ for (const engine of process.env.PLAY_BROWSER
       );
       return page;
     };
-    const session = (page) => page.evaluate(async () => (await fetch("/api/session")).json());
+    const session = (page) =>
+      page.evaluate(async () => (await fetch("/api/session", { cache: "no-store" })).json());
     const request = (page, endpoint, method = "GET", input) =>
       page.evaluate(
         async ({ endpoint, method, input }) => {
           const identity = await (await fetch("/api/session")).json();
           const response = await fetch(endpoint, {
             method,
+            cache: "no-store",
             headers: { "Content-Type": "application/json", "X-FFVI-Account": identity.serverId },
             ...(input ? { body: JSON.stringify(input) } : {}),
           });
@@ -86,6 +88,23 @@ for (const engine of process.env.PLAY_BROWSER
     const panel = async (page) => {
       if (!(await page.locator("#cloud-panel").isVisible()))
         await page.locator("#cloud-toggle").click();
+    };
+    const uploaded = async (page, minimumRevision = 1) => {
+      const identity = await session(page);
+      await page.waitForFunction(
+        async ({ account, minimumRevision }) => {
+          const response = await fetch("/api/saves/normal:1", {
+            headers: { "X-FFVI-Account": account },
+            cache: "no-store",
+          });
+          if (response.status === 404) return false;
+          const value = await response.json();
+          if (!response.ok) throw Error(value.error || `HTTP ${response.status}`);
+          return value.revision >= minimumRevision;
+        },
+        { account: identity.serverId, minimumRevision },
+        { timeout: 60000, polling: 500 },
+      );
     };
     const a = await open(aContext),
       b = await open(bContext);
@@ -110,8 +129,10 @@ for (const engine of process.env.PLAY_BROWSER
         buffer: Buffer.from(JSON.stringify(seed)),
       });
     await a.getByRole("button", { name: "立即同步", exact: true }).click();
-    await a.waitForTimeout(1000);
-    assert.deepEqual((await request(a, "/api/saves/normal:1")).value.record.snapshot, snapshot);
+    await uploaded(a);
+    const firstSave = await request(a, "/api/saves/normal:1");
+    assert.equal(firstSave.status, 200, `uploaded slot read: ${firstSave.value.error}`);
+    assert.deepEqual(firstSave.value.record.snapshot, snapshot);
     assert.equal((await request(b, "/api/saves/normal:1")).status, 404);
     assert.deepEqual((await request(b, "/api/saves/normal:1/history")).value.versions, []);
     await a.screenshot({ path: path.join(output, `${engine}-identity-panel.png`) });
@@ -137,6 +158,15 @@ for (const engine of process.env.PLAY_BROWSER
     await b.getByRole("button", { name: "继续游戏", exact: true }).click();
     await b.getByRole("button", { name: "读取存档 1", exact: true }).click();
     await b.waitForFunction(() => window.ffvi?.mapId === 1 && !window.ffvi.loading);
+    await b.waitForFunction(
+      () => {
+        const m = window.ffviRenderMetrics();
+        return m.visibleTiles > 0 && m.visibleActors > 0 && m.texturesLoading === 0;
+      },
+      null,
+      { timeout: 60000 },
+    );
+    assert.equal(await b.evaluate(() => window.ffviRenderMetrics().texturesFailed), 0);
     const loaded = await b.evaluate(() => window.ffvi.snapshot());
     assert.equal(loaded.mapId, snapshot.mapId);
     assert.deepEqual(loaded.partySlots, snapshot.partySlots);
@@ -157,7 +187,7 @@ for (const engine of process.env.PLAY_BROWSER
     await bContext.setOffline(false);
     await panel(b);
     await b.getByRole("button", { name: "立即同步", exact: true }).click();
-    await b.waitForTimeout(1000);
+    await uploaded(b, 2);
     assert.ok((await request(b, "/api/saves/normal:1")).value.revision > 1);
     result.checks.push(
       "offline save stays in the profile's IndexedDB and uploads after reconnection",
