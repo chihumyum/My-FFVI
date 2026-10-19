@@ -2,6 +2,8 @@ import { quickSaveKey } from "./identity.js";
 import { WebData, webIndexURL } from "./data.js";
 import { loading } from "./loading.js";
 import { MapPreloader } from "./preload.js";
+import { openFeedbackDialog } from "./feedback-dialog.js";
+import "./touch-layout.css";
 import { loadPresentation, loadBattlePresentation, presentText } from "./presentation.js";
 import { SaveLibrary, renderSaveSlots } from "./saves.js";
 import { CloudSaves } from "./cloud-saves.js";
@@ -11,7 +13,7 @@ import { GameUI, createWidget } from "./ui.js";
 import { WebAudioPlayer } from "./audio.js";
 import { createExtras } from "./extras.js";
 import { OperaHost } from "./opera-host.js";
-import { createEventHistory, describeBugState, saveBugReport } from "./bug-report.js";
+import { createEventHistory, describeBugState } from "./bug-report.js";
 import {
   withPresentation,
   observingAudioInstruction,
@@ -374,11 +376,15 @@ async function reportBug() {
       mimeType: "image/png",
       dataURL: await renderer.captureFrame(),
     };
-    const result = await saveBugReport(report, { development: import.meta.env.DEV });
+    const result = await openFeedbackDialog(report, { development: import.meta.env.DEV });
     $("bug-status").textContent =
-      result.method === "directory"
-        ? `F9：已保存 ${result.directory}`
-        : `F9：已下载 ${result.file}`;
+      result.method === "cloud"
+        ? `F9：已发送 ${result.id}`
+        : result.method === "directory"
+          ? `F9：已保存 ${result.directory}`
+          : result.method === "download"
+            ? `F9：已下载 ${result.file}`
+            : "F9：已取消";
   } catch (error) {
     $("bug-status").textContent = `F9：保存失败：${error.message}`;
     console.error("[bug-report]", error);
@@ -395,6 +401,8 @@ function gameKeyDown(e) {
     if (!e.repeat) reportBug();
     return;
   }
+  if (reportingBug) return;
+  if (!e.virtual && e.target?.closest?.("dialog, .cloud-panel, #touch-controls")) return;
   if (loading.active) {
     keys.clear();
     if (e.target?.closest?.("#boot-status") || e.key === "Tab") return;
@@ -415,6 +423,14 @@ function gameKeyDown(e) {
     return;
   }
   if (opera.handleKey(e)) return;
+  if (game?.battle && !paused && !battleDialogue && !game.dialogue && battleMenu.handleKey(e)) {
+    e.preventDefault();
+    return;
+  }
+  if (["Enter", " "].includes(e.key) && !e.repeat && ui.revealDialogue()) {
+    e.preventDefault();
+    return;
+  }
   if (ui.handleKey(e)) return;
   if (game?.nameInput) {
     if (e.key === "Enter") $("name-confirm").click();
@@ -437,10 +453,7 @@ function gameKeyDown(e) {
     return;
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " ", "Enter"].includes(e.key))
     e.preventDefault();
-  if (game?.battle && !battleDialogue && !game.dialogue && battleMenu.handleKey(e)) {
-    e.preventDefault();
-    return;
-  }
+
   keys.add(e.key);
   if (e.key === "Tab" && game?.battle && !battleDialogue && !game.dialogue) {
     e.preventDefault();
@@ -481,6 +494,7 @@ mountTouchControls({
   onKeyUp: gameKeyUp,
   onRelease: () => keys.clear(),
   onLayout: () => renderer.resize(),
+  onZoom: (view) => renderer.setGameZoom(view),
   getReadout: () =>
     !ui.get("dialogue").hidden
       ? [ui.get("speaker").textContent, ui.get("message").textContent].filter(Boolean).join("\n")
@@ -535,6 +549,19 @@ function renderMenu() {
   bonus.textContent = "额外内容";
   bonus.onclick = () => extras.open();
   $("menu-nav").append(bonus);
+  for (const [label, url] of [
+    ["GitHub 项目", "https://github.com/chihumyum/My-FFVI"],
+    ["作者 GitHub", "https://github.com/chihumyum"],
+  ]) {
+    const link = createWidget("button");
+    link.textContent = label;
+    link.onclick = () => window.open(url, "_blank", "noopener,noreferrer");
+    $("menu-nav").append(link);
+  }
+  const feedback = createWidget("button");
+  feedback.textContent = "报告问题";
+  feedback.onclick = reportBug;
+  $("menu-nav").append(feedback);
 }
 let shopView = null;
 let namingView = null;
@@ -983,7 +1010,10 @@ function loop(now) {
           renderer.retryTextures();
           loading.begin("重新加载场景贴图…");
         });
-    } else if (loading.active && loading.panel.dataset.state !== "failed") loading.finish();
+    } else if (loading.panel.dataset.state !== "failed") {
+      if (started) loading.setInGame(true);
+      if (loading.active) loading.finish();
+    }
   }
   if (!loading.active && !paused) preloader?.update(game);
   requestAnimationFrame(loop);

@@ -142,7 +142,7 @@ export class OpeningMarch {
       const dy = actor.y - game.camera.y,
         scale = Math.max(0.6, Math.min(1.25, 0.85 + dy * 0.12)),
         x = 160 + (actor.x - game.camera.x) * 43 * scale,
-        y = 109 + dy * 14;
+        y = 114 + dy * 14;
       let sprite = this.sprites.get(actor.id);
       if (!sprite) {
         sprite = new Sprite();

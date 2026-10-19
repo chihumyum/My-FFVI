@@ -282,7 +282,7 @@ export class GameRenderer {
     const screenWidth = this._menuMode ? 1920 : this._width,
       screenHeight = this._menuMode ? 1080 : this._height,
       fit = Math.min(width / screenWidth, height / screenHeight),
-      scale = this._menuMode ? Math.max(0.1, fit) : Math.max(1, Math.floor(fit)),
+      scale = this._menuMode || touchHeight > 0 ? Math.max(0.1, fit) : Math.max(1, Math.floor(fit)),
       resolution = this._menuMode
         ? scale * Math.max(1, window.devicePixelRatio || 1)
         : scale * Math.max(1, Math.round(window.devicePixelRatio || 1));
@@ -292,6 +292,19 @@ export class GameRenderer {
       screenHeight !== this._screenHeight
     ) {
       this.app.renderer.resize(screenWidth, screenHeight, resolution);
+      // Pixi 8.22 skips the source resize event when physical pixel dimensions
+      // stay equal. Switching 384px gameplay to the 1920px menu does exactly
+      // that on a fitted phone viewport, leaving both texture frames clipped
+      // to the old logical size. Refresh those frames without reallocating.
+      const view = this.app.renderer.view;
+      view.texture.update();
+      view.screen.width = screenWidth;
+      view.screen.height = screenHeight;
+      const backBuffer = this.app.renderer.backBuffer?._backBufferTexture;
+      if (backBuffer) {
+        backBuffer.source.resize(screenWidth, screenHeight, resolution);
+        backBuffer.update();
+      }
       this._resolution = resolution;
       this._screenWidth = screenWidth;
       this._screenHeight = screenHeight;
@@ -308,10 +321,29 @@ export class GameRenderer {
     this._menuMode = Boolean(enabled);
     document.body.classList.toggle("modern-menu", this._menuMode);
     this.layers.ui.scale.set(this._menuMode ? 1 : this._width / 1920);
-    this.world.scale.set(this._menuMode ? 1920 / this._width : 1);
+    this._applyGameZoom();
     this.canvas.style.imageRendering = this._menuMode ? "auto" : "pixelated";
     // Resize on presentation, after the new UI/scene textures are ready. A
     // canvas resize clears its last frame, even if we have not drawn again.
+  }
+
+  // Transform only the game world; menus, HUD and touch controls retain their size.
+  setGameZoom({ scale = 1, x = 0, y = 0 } = {}) {
+    scale = Math.min(3, Math.max(1, Number(scale) || 1));
+    this._gameZoom = {
+      scale,
+      x: Math.min(0, Math.max(1 - scale, x)),
+      y: Math.min(0, Math.max(1 - scale, y)),
+    };
+    this._applyGameZoom();
+  }
+  _applyGameZoom() {
+    if (!this.world) return;
+    const zoom = this._gameZoom || { scale: 1, x: 0, y: 0 };
+    const width = this._menuMode ? 1920 : this._width;
+    const height = this._menuMode ? 1080 : this._height;
+    this.world.scale.set((this._menuMode ? 1920 / this._width : 1) * zoom.scale);
+    this.world.position.set(zoom.x * width, zoom.y * height);
   }
 
   setBattlePresentation(catalog) {
@@ -413,7 +445,7 @@ export class GameRenderer {
     this._height = height;
     this._resolution = null;
     this.layers.ui.scale.set(this._menuMode ? 1 : width / 1920);
-    this.world.scale.set(this._menuMode ? 1920 / width : 1);
+    this._applyGameZoom();
     this.world.filterArea = new Rectangle(0, 0, width, height);
     for (const s of [this._background, this._fade, this._flashSprite]) {
       s.width = width;
@@ -1516,6 +1548,13 @@ export class GameRenderer {
       logicalHeight: this._height,
       displayScale: this._displayScale || 1,
       resolution: this._resolution || 1,
+      viewport: {
+        width: this._screenWidth,
+        height: this._screenHeight,
+        menu: !!this._menuMode,
+        worldScale: this.world.scale.x,
+        uiScale: this.layers.ui.scale.x,
+      },
       visibleTiles: this._visibleTiles,
       visibleActors: this._visibleActors,
       actorFrames: this.frameActors || [],
@@ -1537,6 +1576,7 @@ export class GameRenderer {
       detachedTextureBindings: this._detachedTextureBindings || 0,
       atlasImages: this._atlasViews.size,
       warnings: [...this._warnings],
+      gameZoom: this._gameZoom || { scale: 1, x: 0, y: 0 },
       particles: this.particles.metrics(),
       field: this.fieldPresentation.metrics(),
       waterLayers: this._tileLayers

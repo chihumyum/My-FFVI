@@ -41,6 +41,11 @@ try {
     let bytes, reportPath;
     if (mode === "development") {
       await page.keyboard.press("F9");
+      await page.getByRole("dialog").waitFor();
+      await page
+        .getByLabel("出了什么问题？", { exact: true })
+        .fill("验收：记录当前地图、角色资源和剧情指令位置");
+      await page.getByRole("button", { name: "发送报告", exact: true }).click();
       await page.waitForFunction(() =>
         /已保存|保存失败/.test(document.getElementById("bug-status").textContent),
       );
@@ -53,6 +58,11 @@ try {
     } else {
       const downloadPromise = page.waitForEvent("download");
       await page.keyboard.press("F9");
+      await page.getByRole("dialog").waitFor();
+      await page
+        .getByLabel("出了什么问题？", { exact: true })
+        .fill("验收：静态运行保留完整的问题报告下载");
+      await page.getByRole("button", { name: "发送报告", exact: true }).click();
       const download = await downloadPromise;
       reportPath = path.join(output, download.suggestedFilename());
       await download.saveAs(reportPath);

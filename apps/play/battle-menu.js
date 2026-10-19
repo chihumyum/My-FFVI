@@ -333,6 +333,10 @@ export function createBattleMenu({
         cancelTarget();
         return true;
       }
+      if (!selection && menu && event.key === "Escape") {
+        close();
+        return true;
+      }
       if (selection) return false;
       if (menu?.input !== "blitz") return false;
       const key =

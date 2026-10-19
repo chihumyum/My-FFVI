@@ -18,7 +18,9 @@ test("public profiles isolate saves/history, recover across devices and reject s
       "cloudflare/store.mjs",
       "cloudflare/ranges.mjs",
       "cloudflare/resources.mjs",
+      "cloudflare/reports.mjs",
       "server/save-schema.mjs",
+      "server/report-schema.mjs",
     ].map(async (file) => {
       let contents = await readFile(new URL(file, root), "utf8");
       if (file.endsWith("worker.mjs"))

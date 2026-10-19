@@ -1,3 +1,5 @@
+import { mountGameZoom } from "./game-zoom.js";
+
 const preferenceKey = "ffvi-touch-controls";
 const directions = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
 
@@ -70,6 +72,8 @@ export function mountTouchControls({
   onKeyUp,
   onRelease,
   onLayout,
+  onZoom,
+  canvas = document.getElementById("screen"),
   getActions,
   getReadout,
 }) {
@@ -81,6 +85,7 @@ export function mountTouchControls({
       <button type="button" data-touch-toggle>触控</button>
       <button type="button" data-touch-options aria-expanded="false">选项</button>
       <button type="button" data-touch-tools aria-expanded="false">工具</button>
+      <button type="button" data-touch-zoom hidden aria-label="重置游戏画面缩放">100%</button>
     </div>
     <div class="touch-options" hidden>
       <div class="touch-options-heading"><strong>当前可用操作</strong><button type="button" data-touch-close>收起</button></div>
@@ -108,6 +113,7 @@ export function mountTouchControls({
   const toggle = root.querySelector("[data-touch-toggle]");
   const optionsToggle = root.querySelector("[data-touch-options]");
   const toolsToggle = root.querySelector("[data-touch-tools]");
+  const zoomReset = root.querySelector("[data-touch-zoom]");
   const options = root.querySelector(".touch-options");
   const actions = root.querySelector(".touch-options-list");
   const readout = root.querySelector(".touch-readout");
@@ -148,19 +154,28 @@ export function mountTouchControls({
     const viewport = window.visualViewport;
     const height = viewport?.height || window.innerHeight;
     document.body.style.setProperty("--touch-viewport-height", `${height}px`);
-    document.body.style.setProperty(
-      "--touch-controls-height",
-      `${pad.getBoundingClientRect().height}px`,
-    );
     const main = document.querySelector("main");
     if (enabled) {
-      const safeTop = parseFloat(getComputedStyle(root).getPropertyValue("--safe-top")) || 0;
+      const style = getComputedStyle(root);
+      const safeTop = parseFloat(style.getPropertyValue("--safe-top")) || 0;
+      const safeBottom = parseFloat(style.getPropertyValue("--safe-bottom")) || 0;
       main?.style.setProperty(
         "--game-available-height",
-        String(Math.max(1, height - pad.getBoundingClientRect().height - safeTop - 52)),
+        String(Math.max(1, height - safeTop - safeBottom)),
       );
     } else main?.style.removeProperty("--game-available-height");
     onLayout?.();
+    const screen = canvas?.getBoundingClientRect();
+    const buttons = pad.getBoundingClientRect();
+    const floating = !!(
+      enabled &&
+      screen &&
+      screen.bottom > buttons.top &&
+      screen.top < buttons.bottom &&
+      screen.right > buttons.left &&
+      screen.left < buttons.right
+    );
+    root.dataset.layout = floating ? "floating" : "separate";
   }
   function showOptions(show) {
     release();
@@ -182,6 +197,7 @@ export function mountTouchControls({
       if (!options.hidden) showOptions(false);
       document.body.classList.remove("touch-tools-open");
       toolsToggle.setAttribute("aria-expanded", "false");
+      zoom?.reset();
     }
     layout();
   }
@@ -200,6 +216,18 @@ export function mountTouchControls({
     const show = document.body.classList.toggle("touch-tools-open");
     toolsToggle.setAttribute("aria-expanded", String(show));
   };
+  const zoom = canvas
+    ? mountGameZoom({
+        element: canvas,
+        onGesture: release,
+        onChange: (view) => {
+          zoomReset.hidden = view.scale <= 1.001;
+          zoomReset.textContent = `${Math.round(view.scale * 100)}% ↺`;
+          onZoom?.(view);
+        },
+      })
+    : null;
+  zoomReset.onclick = () => zoom?.reset();
   for (const button of root.querySelectorAll("[data-game-key]")) {
     button.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 || !enabled || isTextEntry(document.activeElement)) return;
@@ -275,6 +303,7 @@ export function mountTouchControls({
   update();
   return {
     release,
+    resetZoom: () => zoom?.reset(),
     destroy() {
       release();
       clearInterval(actionTimer);
@@ -284,6 +313,7 @@ export function mountTouchControls({
       window.visualViewport?.removeEventListener("resize", layout);
       document.removeEventListener("visibilitychange", visibility);
       coarse.removeEventListener("change", update);
+      zoom?.destroy();
       root.remove();
     },
   };

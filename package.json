@@ -48,7 +48,8 @@
     "cloudflare:deploy:first": "npm run cloudflare:prepare && npm run cloudflare:resources && wrangler d1 migrations apply ffvi-saves --remote && wrangler deploy --secrets-file private-data/cloudflare-secrets.json",
     "cloudflare:resources": "node tools/play/upload-resources.mjs",
     "dev:client": "vite --config vite.config.mjs",
-    "bundle:client": "node tools/play/bundle-client.mjs"
+    "bundle:client": "node tools/play/bundle-client.mjs",
+    "reports:pull": "node tools/play/download-reports.mjs"
   },
   "devDependencies": {
     "miniflare": "5.20261012.1-beta",

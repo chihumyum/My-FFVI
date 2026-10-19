@@ -6,6 +6,12 @@ export class LoadingScreen {
     this.progress = document.getElementById("load-progress");
     this.detail = document.getElementById("load-detail");
     this.retry = document.getElementById("load-retry");
+    this.indicator = document.createElement("div");
+    this.indicator.id = "scene-loading";
+    this.indicator.hidden = true;
+    this.indicator.setAttribute("role", "status");
+    this.indicator.innerHTML = '<span aria-hidden="true">◌</span>';
+    document.body.append(this.indicator);
     this.jobs = new Map();
     this.active = false;
     this.onRetry = null;
@@ -38,7 +44,9 @@ export class LoadingScreen {
     this.title = title;
     this.panel.dataset.mode = boot ? "boot" : "scene";
     this.panel.dataset.state = "loading";
-    this.panel.hidden = false;
+    this.panel.hidden = this.inGame && !boot;
+    this.indicator.dataset.active = "true";
+    this.indicator.setAttribute("aria-label", title);
     this.retry.hidden = true;
     this.message.textContent = title;
     this.progress.removeAttribute("value");
@@ -67,6 +75,7 @@ export class LoadingScreen {
     if (this.detail.textContent !== detail) this.detail.textContent = detail;
   }
   fail(error, retry = null) {
+    this.indicator.dataset.active = "false";
     this.panel.hidden = false;
     this.panel.dataset.state = "failed";
     this.message.textContent = `加载失败：${error.message || error}`;
@@ -91,6 +100,12 @@ export class LoadingScreen {
     this.active = false;
     this.panel.hidden = true;
     this.onRetry = null;
+    this.indicator.dataset.active = "false";
+    this.indicator.setAttribute("aria-label", "资源已就绪");
+  }
+  setInGame(enabled) {
+    this.inGame = enabled;
+    this.indicator.hidden = !enabled;
   }
   snapshot() {
     return {

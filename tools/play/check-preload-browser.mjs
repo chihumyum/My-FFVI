@@ -140,10 +140,17 @@ try {
       await page.keyboard.down("ArrowUp");
       await page.waitForFunction(() => window.ffvi.loading && window.ffviLoading().active);
       await page.keyboard.up("ArrowUp");
+      assert.equal(
+        await page.locator("#boot-status").isVisible(),
+        false,
+        "In-game loading must not open a notice",
+      );
+      assert.equal(await page.locator("#scene-loading").getAttribute("data-active"), "true");
+      row.cornerIndicatorOnly = true;
       const box = await page.locator("#screen").boundingBox();
       const clip = {
         x: box.x,
-        y: box.y,
+        y: box.y + 45,
         width: box.width,
         height: Math.min(250, box.height * 0.4),
       };

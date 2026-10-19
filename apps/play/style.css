@@ -540,3 +540,41 @@ body.touch-enabled footer button {
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 }
+
+/* A steady marker remains in place; only its inner ring moves while fetching. */
+#scene-loading {
+  position: fixed;
+  top: calc(52px + env(safe-area-inset-top, 0px));
+  left: max(12px, env(safe-area-inset-left));
+  z-index: 45;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #10182780;
+  color: #d4dfeb99;
+  pointer-events: none;
+}
+#scene-loading[hidden] {
+  display: none;
+}
+#scene-loading span {
+  display: block;
+  font: 24px/1 sans-serif;
+}
+#scene-loading[data-active="true"] span {
+  animation: scene-loading-spin 1s linear infinite;
+  color: #e9f4ff;
+}
+@keyframes scene-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #scene-loading[data-active="true"] span {
+    animation: none;
+    color: #fff;
+  }
+}

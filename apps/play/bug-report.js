@@ -1,4 +1,6 @@
 // Capture only diagnostics. This module never dispatches game input or edits a save.
+import { privateReportValue } from "../../server/report-schema.mjs";
+import { activeIdentity } from "./identity.js";
 export function reportValue(value) {
   const ancestors = [];
   return JSON.parse(
@@ -121,22 +123,12 @@ export function describeBugState(game, renderer, events, mapNames = {}) {
       logicalHeight: renderer._height,
       resolution: renderer._resolution || 1,
     },
-    location: globalThis.location?.href ?? null,
+    location: globalThis.location ? location.origin + location.pathname : null,
   });
 }
 
-export async function saveBugReport(report, { development = false, fetcher = fetch } = {}) {
-  const text = JSON.stringify(report, null, 2);
-  if (development) {
-    const response = await fetcher(new URL("/__bug-reports", location.href), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: text,
-    });
-    const result = await response.json();
-    if (!response.ok) throw Error(result.error || `Bug report HTTP ${response.status}`);
-    return { method: "directory", ...result };
-  }
+export function downloadBugReport(report) {
+  const text = JSON.stringify(privateReportValue(report), null, 2);
   const file = `ffvi-bug-${report.createdAt.replace(/[:.]/g, "-")}.json`;
   const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
   const link = document.createElement("a");
@@ -147,4 +139,41 @@ export async function saveBugReport(report, { development = false, fetcher = fet
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
   return { method: "download", file };
+}
+
+export async function saveBugReport(
+  report,
+  {
+    development = false,
+    hosted = !!globalThis.document?.querySelector('meta[name="ffvi-host"]'),
+    account = activeIdentity()?.serverId,
+    fetcher = fetch,
+  } = {},
+) {
+  const text = JSON.stringify(privateReportValue(report));
+  if (development) {
+    const response = await fetcher(new URL("/__bug-reports", location.href), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: text,
+    });
+    const result = await response.json();
+    if (!response.ok) throw Error(result.error || `Bug report HTTP ${response.status}`);
+    return { method: "directory", ...result };
+  }
+  if (!hosted) return downloadBugReport(report);
+  const response = await fetcher(new URL("/api/reports", location.href), {
+    method: "POST",
+    credentials: "same-origin",
+    cache: "no-store",
+    signal: AbortSignal.timeout(30_000),
+    headers: {
+      "Content-Type": "application/json",
+      ...(account ? { "X-FFVI-Account": account } : {}),
+    },
+    body: text,
+  });
+  const result = await response.json();
+  if (!response.ok) throw Error(result.error || `报告发送失败（${response.status}）`);
+  return { method: "cloud", ...result };
 }

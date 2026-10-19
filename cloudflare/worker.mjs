@@ -3,6 +3,7 @@ import { slotPattern } from "../server/save-schema.mjs";
 import { openD1Store } from "./store.mjs";
 import { serveResource } from "./resources.mjs";
 import { rangeResponse } from "./ranges.mjs";
+import { handleReports } from "./reports.mjs";
 
 const encoder = new TextEncoder();
 const maxBody = 1950000;
@@ -215,6 +216,15 @@ export default {
           { "Set-Cookie": cookie("", 0), "Clear-Site-Data": '"cache"' },
         );
       }
+      if (route.startsWith("/api/reports") || route.startsWith("/api/admin/reports"))
+        return await handleReports(request, env, {
+          route,
+          session,
+          account: await store.serverId(),
+          db,
+          json,
+          headers: securityHeaders,
+        });
       if (route.startsWith("/api/saves")) {
         // Pin the browser's identity on every operation. Switching the shared
         // cookie in another tab must never redirect an in-flight save to it.

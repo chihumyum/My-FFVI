@@ -1,5 +1,5 @@
 import { Container, Graphics, Rectangle, Text, Sprite, NineSliceSprite } from "pixi.js";
-import { SingleHover } from "./ui-interaction.js";
+import { SingleHover, directionalControl } from "./ui-interaction.js";
 
 // Retained game controls. These nodes hold labels and input callbacks; Pixi draws
 // every visible window. DOM is used only for initial markup and accessibility.
@@ -185,6 +185,12 @@ export class GameUI {
     });
     return {
       hovered: visible.filter(([, view]) => view.hover).map(([node]) => this.label(node)),
+      keyboard: visible.filter(([, view]) => view.keyboard).map(([node]) => this.label(node)),
+      keyboardControls: this.keyboardControls().map(({ node, ...bounds }) => ({
+        label: this.label(node),
+        current: node === this.keyboardNode,
+        ...bounds,
+      })),
       selected: visible.filter(([node]) => node.dataset.selected).map(([node]) => this.label(node)),
       cards: visible
         .filter(([node]) => node.dataset.card)
@@ -312,14 +318,17 @@ export class GameUI {
       container.addChild(box, text);
       container.on("pointertap", () => {
         if (node.disabled) return;
+        this.setKeyboard(null);
         if (node.tag === "select") this.openSelect(node);
         else if (node.tag === "input") this.openTextInput(node);
         else node.click();
       });
       if (["button", "select", "input"].includes(node.tag)) {
         const enter = () => {
-          if (!node.hidden && !node.disabled && container.visible)
+          if (!node.hidden && !node.disabled && container.visible) {
+            this.setKeyboard(null);
             this.hover.enter(this.views.get(node));
+          }
         };
         const leave = () => this.hover.leave(this.views.get(node));
         container.on("pointerover", enter);
@@ -353,11 +362,18 @@ export class GameUI {
         : label;
     if (v.text.text !== visibleLabel) v.text.text = visibleLabel;
     v.text.style.wordWrapWidth = Math.max(60, width - 30);
-    v.text.style.fontSize = node.dataset.card ? 22 : ["h1", "h2"].includes(node.tag) ? 42 : 30;
-    v.text.style.lineHeight = node.dataset.card ? 28 : 42;
+    const compact = node.dataset.compact === "1";
+    v.text.style.fontSize = compact
+      ? 26
+      : node.dataset.card
+        ? 22
+        : ["h1", "h2"].includes(node.tag)
+          ? 42
+          : 30;
+    v.text.style.lineHeight = compact ? 30 : node.dataset.card ? 28 : 42;
     v.text.style.fill = node.disabled ? 0x8391ac : 0xf4f1e8;
-    let height = Math.max(42, Math.ceil(v.text.height / 6) * 6);
-    if (interactive) height += 18;
+    let height = Math.max(compact ? 30 : 42, Math.ceil(v.text.height / 6) * 6);
+    if (interactive) height += compact ? 12 : 18;
     if (node.tag === "progress") height = 30;
     if (node.tag === "img") height = Number(node.dataset.height) || 156;
     if (node.dataset.card || node.tag === "viewer") height = Number(node.dataset.height) || 150;
@@ -430,7 +446,7 @@ export class GameUI {
         color: 0x426495,
         alpha: node.dataset.titleButton
           ? 1
-          : v.hover || node.dataset.selected
+          : v.hover || v.keyboard || node.dataset.selected
             ? 0.65
             : node.tag === "input"
               ? 0.4
@@ -447,7 +463,7 @@ export class GameUI {
       v.pointer.position.set(-30, Math.floor((height - 42) / 2));
       v.pointer.width = 42;
       v.pointer.height = 42;
-      v.pointer.visible = !!v.hover && !node.disabled;
+      v.pointer.visible = !!(v.hover || v.keyboard) && !node.disabled;
     } else if (v.pointer) v.pointer.visible = false;
     if (node.tag === "img" || node.dataset.card || node.tag === "viewer") {
       const source = node.dataset.actorId
@@ -589,7 +605,7 @@ export class GameUI {
         if (inline) {
           left += w + 12;
           rowHeight = Math.max(rowHeight, height);
-        } else y += height + 12;
+        } else y += height + (node.dataset.compact === "1" ? 6 : 12);
       }
       if (node.children.length && node.tag !== "select") {
         newline();
@@ -910,7 +926,10 @@ export class GameUI {
           v.navigation = new Container();
           v.container.addChild(v.navigation);
         }
-        for (const n of navigation.children) n.dataset.block = "1";
+        for (const n of navigation.children) {
+          n.dataset.block = "1";
+          n.dataset.compact = "1";
+        }
         this.flow(navigation.children, v.navigation, 24, 24, 270, [24, height - 90]);
         body = body.filter((n) => n !== navigation && n.tag !== "h2");
         bodyX = 342;
@@ -1047,22 +1066,70 @@ export class GameUI {
     this.popup = false;
     revision++;
   }
-  handleKey(event) {
-    if (this.popup) {
-      if (event.key === "Escape") {
-        this.closeSelect();
-        event.preventDefault();
+  keyboardControls() {
+    const root = [...this.windows].reverse().find((window) => !window.hidden);
+    const owner = this.popup ? this.popupLayer : root && this.view(root).container;
+    if (!owner) return [];
+    const rows = [];
+    for (const [node, view] of this.views) {
+      if (!["button", "select", "input"].includes(node.tag) || node.disabled || node.hidden)
+        continue;
+      let inside = false,
+        visible = true;
+      for (let parent = view.container; parent; parent = parent.parent) {
+        if (!parent.visible) visible = false;
+        if (parent === owner) inside = true;
       }
+      if (!inside || !visible || !view.container.accessible) continue;
+      // The cursor extends left of its button. Including it makes a focused
+      // row's center shift and traps Right inside a vertical navigation rail.
+      const box = view.box.getBounds();
+      rows.push({ node, x: box.x, y: box.y, width: box.width, height: box.height });
+    }
+    return rows.sort((a, b) => (Math.abs(a.y - b.y) > 3 ? a.y - b.y : a.x - b.x));
+  }
+  setKeyboard(node) {
+    if (this.keyboardNode === node) return;
+    this.keyboardNode = node;
+    for (const [candidate, view] of this.views) view.keyboard = candidate === node;
+    revision++;
+  }
+  handleKey(event) {
+    if (this.editor || event.ctrlKey || event.metaKey || event.altKey) return false;
+    if (this.popup && event.key === "Escape") {
+      this.closeSelect();
+      event.preventDefault();
       return true;
     }
     const dialogue = this.get("dialogue");
-    if (dialogue?.hidden !== false || this.editor || event.ctrlKey || event.metaKey || event.altKey)
-      return false;
     const direction = { w: -1, s: 1, ArrowUp: -1, ArrowDown: 1 }[
       event.key.length === 1 ? event.key.toLowerCase() : event.key
     ];
-    if (direction) {
+    if (
+      direction &&
+      dialogue?.hidden === false &&
+      !this.get("choices")?.children.length &&
+      !this.popup
+    ) {
       this.page(dialogue, direction);
+      event.preventDefault();
+      return true;
+    }
+    const controls = this.keyboardControls();
+    const next = directionalControl(controls, this.keyboardNode, event.key);
+    if (next) {
+      this.clearHover();
+      this.setKeyboard(next);
+      event.preventDefault();
+      return true;
+    }
+    if (["Enter", " "].includes(event.key) && controls.length) {
+      if (event.repeat) return true;
+      const node = controls.find((row) => row.node === this.keyboardNode)?.node || controls[0].node;
+      this.setKeyboard(node);
+      if (node.tag === "select") this.openSelect(node);
+      else if (node.tag === "input") this.openTextInput(node);
+      else node.onclick?.();
       event.preventDefault();
       return true;
     }

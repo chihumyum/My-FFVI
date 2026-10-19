@@ -30,14 +30,20 @@
       "migrations_dir": "cloudflare/migrations",
     },
   ],
-  "r2_buckets": [{ "binding": "RESOURCES", "bucket_name": "ffvi-resources" }],
+  "r2_buckets": [
+    { "binding": "RESOURCES", "bucket_name": "ffvi-resources" },
+    { "binding": "REPORTS", "bucket_name": "ffvi-bug-reports" },
+  ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
   },
   "env": {
     "local": {
-      "r2_buckets": [{ "binding": "RESOURCES", "bucket_name": "ffvi-resources" }],
+      "r2_buckets": [
+        { "binding": "RESOURCES", "bucket_name": "ffvi-resources" },
+        { "binding": "REPORTS", "bucket_name": "ffvi-bug-reports" },
+      ],
       "name": "ffvi-private-local",
       "routes": [],
       "workers_dev": false,

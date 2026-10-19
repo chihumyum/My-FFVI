@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { privateReportValue } from "../../server/report-schema.mjs";
 
 export const MAX_BUG_REPORT_BYTES = 8 * 1024 * 1024;
 const project = path.resolve(import.meta.dirname, "../..");
@@ -134,7 +135,7 @@ export function createBugReportMiddleware({
         throw failure(415, "Bug report Content-Type must be application/json");
       let report;
       try {
-        report = JSON.parse(await readBody(req, maxBytes));
+        report = privateReportValue(JSON.parse(await readBody(req, maxBytes)));
       } catch (error) {
         if (error.status) throw error;
         throw failure(400, "Invalid JSON report body");

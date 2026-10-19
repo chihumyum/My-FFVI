@@ -1,0 +1,108 @@
+.feedback-dialog {
+  box-sizing: border-box;
+  width: min(640px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  padding: 24px;
+  overflow: auto;
+  color: #eef3ff;
+  background: #18233a;
+  border: 1px solid #8cadd566;
+  border-radius: 18px;
+  box-shadow: 0 24px 90px #0009;
+  font:
+    16px/1.5 system-ui,
+    sans-serif;
+}
+.feedback-dialog::backdrop {
+  background: #020716b8;
+}
+.feedback-dialog form {
+  display: grid;
+  gap: 12px;
+}
+.feedback-dialog header,
+.feedback-dialog footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.feedback-dialog header {
+  justify-content: space-between;
+}
+.feedback-dialog h2,
+.feedback-dialog p {
+  margin: 0;
+}
+.feedback-dialog h2 {
+  font-size: 22px;
+}
+.feedback-context,
+.feedback-privacy {
+  color: #bbcae3;
+  font-size: 13px;
+}
+.feedback-preview {
+  display: block;
+  width: 100%;
+  max-height: 28dvh;
+  object-fit: contain;
+  background: #090e1a;
+  border-radius: 8px;
+}
+.feedback-dialog textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  padding: 12px;
+  color: #f3f7ff;
+  background: #0c1527;
+  border: 1px solid #8199be88;
+  border-radius: 10px;
+  font: inherit;
+}
+.feedback-dialog textarea:focus-visible,
+.feedback-dialog button:focus-visible {
+  outline: 2px solid #9ed7ff;
+  outline-offset: 3px;
+}
+.feedback-dialog button {
+  min-height: 42px;
+  padding: 9px 14px;
+  color: #edf5ff;
+  background: #344b6e;
+  border: 1px solid #9cb5da66;
+  border-radius: 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.feedback-dialog button:hover {
+  background: #45628c;
+}
+.feedback-dialog button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.feedback-dialog .feedback-close {
+  min-width: 42px;
+  padding: 4px;
+  font-size: 26px;
+  background: transparent;
+}
+.feedback-dialog .feedback-send {
+  background: #316ab3;
+}
+.feedback-dialog .feedback-download {
+  margin-right: auto;
+}
+.feedback-result {
+  color: #ffd096;
+}
+@media (max-height: 500px) {
+  .feedback-dialog {
+    padding: 16px;
+  }
+  .feedback-preview {
+    max-height: 18dvh;
+  }
+}

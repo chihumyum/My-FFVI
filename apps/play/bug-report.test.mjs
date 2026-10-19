@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createEventHistory, describeBugState, reportValue } from "./bug-report.js";
+import { createEventHistory, describeBugState, reportValue, saveBugReport } from "./bug-report.js";
 import { PlayGame } from "../../src/play/game.js";
 
 test("bug history preserves the last twenty event-time values, including mutable animation actors", () => {
@@ -60,4 +60,37 @@ test("reporting a newly organized party never initializes characters or changes 
   assert.equal(report.party[0].uninitialized, true);
   assert.deepEqual(reportValue(game.snapshot()), before);
   assert.equal(game.roster[5], undefined);
+});
+
+test("hosted feedback pins account and removes recovery keys and credential fields before upload", async (t) => {
+  const beforeLocation = globalThis.location;
+  globalThis.location = new URL("https://game.example/?recovery=do-not-send");
+  t.after(() => {
+    globalThis.location = beforeLocation;
+  });
+  const key = "ffvi_" + "a".repeat(64);
+  let upload;
+  const result = await saveBugReport(
+    {
+      createdAt: new Date().toISOString(),
+      description: `Problem ${key}`,
+      cookie: "secret-cookie",
+      events: [{ authorization: "Bearer secret" }],
+    },
+    {
+      hosted: true,
+      account: "pinned-account",
+      fetcher: async (url, options) => {
+        upload = { url, ...options };
+        return Response.json({ id: "report-id" }, { status: 201 });
+      },
+    },
+  );
+  assert.equal(result.method, "cloud");
+  assert.equal(upload.url.pathname, "/api/reports");
+  assert.equal(upload.headers["X-FFVI-Account"], "pinned-account");
+  assert.equal(upload.credentials, "same-origin");
+  assert.equal(upload.cache, "no-store");
+  for (const forbidden of [key, "secret-cookie", "Bearer secret", "do-not-send"])
+    assert.ok(!upload.body.includes(forbidden));
 });

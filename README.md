@@ -33,6 +33,8 @@ npm run bundle:client -- --site https://ffvi.chihum.dev/
 npm run cloudflare:deploy
 ```
 
+问题报告使用另一只私有 R2 桶 `REPORTS`（默认 `ffvi-bug-reports`），D1 仅存索引。不要启用该桶的公共域名，也不要将它映射到 `/resources/`。首次建站需要 `npx wrangler r2 bucket create ffvi-bug-reports`；日常部署会自动应用报告索引迁移。
+
 首次部署到其他账户，修改 `wrangler.jsonc` 的账户、域名、D1 与 R2 桶配置，并执行 `npx wrangler login` 创建对应资源。`FFVI_PUBLIC_SITE=1` 开启公开页面/匿名身份；`0` 保持私人登录；私人打包还需 `PLAY_PUBLIC_SITE=0 npm run cloudflare:prepare`。旧站点密码校验值保留在 Worker secret `FFVI_PASSWORD` 中，源码不含密码。不要用新机器生成的开发密码覆盖已有线上密码。自定义 R2 桶名时同时设置 `FFVI_RESOURCE_BUCKET`。R2 上传会检查远端文件大小、MD5 与类型，可在中断后重跑；不删除旧哈希资源，避免已打开页面缺图。
 
 本地开发（全部使用本机模拟数据，不访问生产存档）：
@@ -52,6 +54,18 @@ npm run cloudflare:backup
 ```
 
 公开部署验收与截图在 `build/play/deployment/public/`，汇总为 `release.json`；真实线上 GPU 截图在 `published-render/`，隔离验收包含不同轮次的 Chromium/WebKit 报告，原始失败记录保留。`node tools/play/check-public-http.mjs` 检查代码/数据哈希、公开资源和私密存档边界；`node tools/play/check-public-render.mjs` 在隔离浏览器关闭云身份，仅复核实际已发布代码与资源的地图渲染。`check-public-browser.mjs` 只使用自行新建的随机测试身份。旧 `check-cloudflare-http.mjs` 和 `play:host-check` 属于下述单用户私人部署，不能拿它们读取个人生产存档来验收公开站点。
+
+游戏菜单中可打开项目和作者 GitHub，或点击「报告问题」（F9）。报告先捕获截图、地图/坐标、剧情指令、队伍和最近 20 条事件，再显示说明输入框；明确发送后上传私有存储，取消不上传。失败保留输入，也可下载 JSON；开发服务器直接写入 `bug-reports/`，纯静态网站下载文件。报告不会采集恢复密钥、Cookie 或浏览器存储。每个身份每小时最多 10 份，每份最多 8 MiB。
+
+维护者用原私人站点密码读取报告，不改变游戏浏览器的存档身份：
+
+```sh
+npm run reports:pull -- --site https://ffvi.chihum.dev --password-file private-data/cloudflare-first-login.txt
+```
+
+输出到 `bug-reports/cloud/<报告编号>/report.json` 和 `screenshot.png`，自动跳过已下载项。报告与截图不进 Git；上传接口不开放读取，列表和下载仅限管理员。
+
+触屏方向、确认、取消、换人沿用键盘入口，可操作菜单、技能子菜单和目标选择。横屏手柄半透明浮在画面上，不再预留底部高度；画面按设备可用尺寸适配。双指缩放/平移只作用于游戏画面（1–3 倍），HUD 和按钮尺寸不变，右上百分比可复位。进入游戏后只保留角落加载图标，资源加载时旋转，失败才显示重试窗口。移动端证据属于 Chromium/WebKit 触控模拟，手机真机仍需实玩。
 
 ## 可选：单用户私人 Node 部署
 
