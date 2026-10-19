@@ -1,5 +1,7 @@
 import { quickSaveKey } from "./identity.js";
 import { WebData, webIndexURL } from "./data.js";
+import { loading } from "./loading.js";
+import { MapPreloader } from "./preload.js";
 import { loadPresentation, loadBattlePresentation, presentText } from "./presentation.js";
 import { SaveLibrary, renderSaveSlots } from "./saves.js";
 import { CloudSaves } from "./cloud-saves.js";
@@ -64,6 +66,9 @@ let game,
   frame = 0,
   last = performance.now();
 let repository;
+let preloader,
+  starting = false;
+const createRepository = () => new WebData(webIndexURL(), { onProgress: loading.observe });
 let data,
   battleData,
   walking = false,
@@ -175,6 +180,9 @@ function event(e) {
   }
 }
 async function start(saved = null, testBoost = false) {
+  starting = true;
+  loading.begin(saved ? "读取存档与场景…" : "准备新游戏…");
+  keys.clear();
   eventHistory.clear();
   audioHistory.length = 0;
   if (extras.active) extras.close();
@@ -186,7 +194,7 @@ async function start(saved = null, testBoost = false) {
   $("new").disabled = true;
   try {
     await saveLibrary.beginSession(testBoost || !!saved?.testBoost);
-    repository = new WebData(webIndexURL());
+    repository = createRepository();
     ({ data, battleData } = await repository.open(saved));
     opera.setRepository(repository);
     renderer.setAssets(repository.index.assets.images, repository.baseURL);
@@ -194,6 +202,7 @@ async function start(saved = null, testBoost = false) {
     audio.setAssets(repository.index.assets.audio, repository.baseURL);
     audio.setCatalog(data.audio);
     ui.setCharacters(battleData.characters);
+    preloader = new MapPreloader(repository, renderer);
     game = new PresentationGame({
       onPresentation: presentation,
       yieldPresentation: (name) =>
@@ -206,7 +215,10 @@ async function start(saved = null, testBoost = false) {
       battleData,
       Battle,
       testBoost: testBoost || !!saved?.testBoost,
-      loadMap: (id) => repository.loadMap(id),
+      loadMap: (id) =>
+        loading.task(`加载${ui.presentation.mapNames?.[id] || "下一场景"}…`, () =>
+          repository.loadMap(id),
+        ),
       onEvent: event,
       interactiveNames: true,
     });
@@ -240,10 +252,12 @@ async function start(saved = null, testBoost = false) {
     $("menu").hidden = true;
     $("title").hidden = true;
   } catch (error) {
+    loading.fail(error);
     $("message").textContent = error.message;
     $("dialogue").hidden = false;
     console.error(error);
   } finally {
+    starting = false;
     $("new").disabled = false;
   }
 }
@@ -379,6 +393,11 @@ function gameKeyDown(e) {
   if (e.key === "F9") {
     e.preventDefault();
     if (!e.repeat) reportBug();
+    return;
+  }
+  if (loading.active) {
+    keys.clear();
+    if (!isTextEntry(e.target)) e.preventDefault();
     return;
   }
   if (isTextEntry(e.target) || isTextEntry(document.activeElement)) return;
@@ -806,13 +825,15 @@ function renderBattleFlow() {
 function loop(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  if (acceptanceLoading) {
+  if (acceptanceLoading || starting) {
     requestAnimationFrame(loop);
     return;
   }
   if (started && game && !acceptanceLoading) {
-    if (!paused && !audio.musicPending) battleFlow.update(dt, { auto, fast: walking && auto });
+    if (!loading.active && !paused && !audio.musicPending)
+      battleFlow.update(dt, { auto, fast: walking && auto });
     if (
+      !loading.active &&
       !paused &&
       !opera.busy &&
       !battleFlow.busy &&
@@ -826,7 +847,14 @@ function loop(now) {
         n++
       ) {
         game.tick(dt, { auto });
-        if (opera.busy || battleFlow.busy || audio.syncPending || audio.musicPending) {
+        if (
+          loading.active ||
+          game.loading ||
+          opera.busy ||
+          battleFlow.busy ||
+          audio.syncPending ||
+          audio.musicPending
+        ) {
           keys.clear();
           break;
         }
@@ -937,12 +965,30 @@ function loop(now) {
       ),
   );
   ui.render();
-  opera.update(dt);
+  if (!loading.active) opera.update(dt);
   renderer.heldBattle = battleFlow.view;
-  renderer.render(started ? game : null, data, battleData);
+  if (!game?.loading) {
+    const resources = renderer.render(started ? game : null, data, battleData, {
+      deferIncomplete: true,
+    });
+    if (resources?.pending || resources?.failed) {
+      if (!loading.active) {
+        loading.begin("准备场景贴图…");
+        keys.clear();
+      }
+      loading.update(resources);
+      if (resources.failed)
+        loading.fail(new Error(`${resources.failed} 张贴图未能加载`), () => {
+          renderer.retryTextures();
+          loading.begin("重新加载场景贴图…");
+        });
+    } else if (loading.active && loading.panel.dataset.state !== "failed") loading.finish();
+  }
+  if (!loading.active && !paused) preloader?.update(game);
   requestAnimationFrame(loop);
 }
-await loadPresentation(new WebData(webIndexURL()), renderer, ui);
+loading.begin("加载标题与界面…", { boot: true });
+await loadPresentation(createRepository(), renderer, ui);
 renderer.diagnostics.mapNames = ui.presentation.mapNames || {};
 opera.fontFamily = ui.presentation.fontFamily || opera.fontFamily;
 if (new URLSearchParams(location.search).get("acceptance") === "1") {
@@ -1135,4 +1181,15 @@ mountCloudUI(saveLibrary, {
     }
   },
 });
+// Do not dismiss the boot screen until the title's actual textures have arrived.
+if (!started) {
+  for (;;) {
+    ui.render();
+    const resources = renderer.render(null, data, battleData, { deferIncomplete: true });
+    loading.update(resources);
+    if (resources?.failed) throw new Error("标题贴图加载失败，请检查网络后重新加载");
+    if (!resources?.pending) break;
+    await renderer.waitForFrame();
+  }
+}
 requestAnimationFrame(loop);

@@ -148,6 +148,7 @@ export class GameRenderer {
     this._width = WIDTH;
     this._height = HEIGHT;
     this._effectTasks = new Set();
+    this._frameRequests = new Set();
     this._particleLayer = container("battle-particles");
     this.layers.effects.addChild(this._particleLayer);
     this.particles = new PRParticles({
@@ -269,7 +270,7 @@ export class GameRenderer {
 
   /** Keep CSS pixels and backing-store pixels at integer multiples of the source camera. */
   resize(availableWidth, availableHeight) {
-    if (!this._ready) return;
+    if (!this._ready || this._deferResize || this._holdingFrame) return;
     const parentWidth = this.canvas.parentElement?.clientWidth || window.innerWidth;
     const width = availableWidth ?? parentWidth;
     const touchHeight = Number(
@@ -309,7 +310,8 @@ export class GameRenderer {
     this.layers.ui.scale.set(this._menuMode ? 1 : this._width / 1920);
     this.world.scale.set(this._menuMode ? 1920 / this._width : 1);
     this.canvas.style.imageRendering = this._menuMode ? "auto" : "pixelated";
-    this.resize();
+    // Resize on presentation, after the new UI/scene textures are ready. A
+    // canvas resize clears its last frame, even if we have not drawn again.
   }
 
   setBattlePresentation(catalog) {
@@ -450,6 +452,7 @@ export class GameRenderer {
     this._crops.clear();
     this._atlasViews.clear();
     this._textures.clear();
+    this._frameRequests.clear();
     // Keep ownership of decoded pages across new games so the LRU can release
     // them; abandoning the records would leave them in Pixi's global Assets cache.
     for (const page of this._textureSources.values()) page.lastUsed = -1;
@@ -650,7 +653,7 @@ export class GameRenderer {
       const generation = this._assetGeneration;
       record = { texture: null, loading: true, failed: false, sourceURL };
       this._textures.set(url, record);
-      source.promise
+      record.promise = source.promise
         .then((base) => {
           if (generation !== this._assetGeneration) return;
           let texture = base;
@@ -705,7 +708,56 @@ export class GameRenderer {
       });
     const source = this._textureSources.get(record.sourceURL);
     if (source) source.lastUsed = this._frameCount;
+    if (!details.prefetch) this._frameRequests?.add(record);
     return record.texture;
+  }
+
+  async waitForFrame() {
+    await Promise.allSettled([
+      ...[...this._frameRequests].map((record) => record.promise),
+      ...this._effectTasks,
+    ]);
+  }
+
+  retryTextures() {
+    for (const [url, record] of this._textures) {
+      if (!record.failed) continue;
+      this._textures.delete(url);
+      this._frameRequests.delete(record);
+      const source = this._textureSources.get(record.sourceURL);
+      if (source && !source.texture) this._textureSources.delete(record.sourceURL);
+    }
+  }
+
+  async prefetchMap(map, data) {
+    // Warm a bounded number of atlas pages, sharing the renderer's normal
+    // texture cache and budget. Never instantiate a second game or draw it.
+    const urls = new Set(Object.values(map.textures || {}));
+    const visit = (value) => {
+      if (!value || typeof value !== "object") return;
+      if (value.url && this._assetImages[value.url]) urls.add(value.url);
+      for (const child of Object.values(value)) if (typeof child === "object") visit(child);
+    };
+    visit(this.fieldPresentation.catalog?.maps?.[map.id]);
+    for (const entity of map.entities || []) {
+      const character = data.characters[entity.asset?.toLowerCase()];
+      for (const sprite of Object.values(character?.sprites || {})) urls.add(sprite.file);
+    }
+    const pages = new Set();
+    const promises = [];
+    for (const url of urls) {
+      const entry = this._assetImages[url];
+      if (!entry) continue;
+      if (!pages.has(entry.file) && pages.size >= 4) continue;
+      pages.add(entry.file);
+      this._texture(url, { prefetch: true, entityId: "preload", mapId: map.id });
+      promises.push(this._textures.get(url)?.promise);
+    }
+    await Promise.allSettled(promises);
+    // A speculative network error must not poison the subsequent real entry.
+    this.retryTextures();
+    this._textureBudgetDirty = true;
+    return pages.size;
   }
 
   _evictPage(page) {
@@ -1315,8 +1367,9 @@ export class GameRenderer {
     hideUnused(this._battleTargets, count);
   }
 
-  render(game, data, battleData) {
+  render(game, data, battleData, { deferIncomplete = false } = {}) {
     if (!this._ready) return;
+    this._deferResize = deferIncomplete;
     this.diagnostics.begin(game);
     this.frameActors = [];
     const start = performance.now();
@@ -1394,7 +1447,22 @@ export class GameRenderer {
     this._particleTime = start;
     this.layers.effects.setChildIndex(this._fade, this.layers.effects.children.length - 1);
     this.layers.effects.setChildIndex(this._flashSprite, this.layers.effects.children.length - 1);
+    const requests = [...this._frameRequests];
+    const loading = {
+      total: requests.length,
+      ready: requests.filter((record) => !!record.texture).length,
+      pending: requests.filter((record) => record.loading).length + this._effectTasks.size,
+      failed: requests.filter((record) => record.failed).length,
+    };
+    this._deferResize = false;
+    if (deferIncomplete && (loading.pending || loading.failed)) {
+      this._holdingFrame = true;
+      return loading;
+    }
+    this._holdingFrame = false;
+    this.resize();
     this.app.render();
+    this._frameRequests.clear();
     const renderer = this.app.renderer;
     if (
       renderer.accessibility?.isActive &&
@@ -1428,6 +1496,7 @@ export class GameRenderer {
     this._frameCount++;
     this._renderTimes.push(performance.now() - start);
     if (this._renderTimes.length > 120) this._renderTimes.shift();
+    return loading;
   }
 
   metrics() {

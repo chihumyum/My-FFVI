@@ -44,13 +44,16 @@ export async function loadPresentation(repository, renderer, ui) {
   const presentation = structuredClone(await repository.json(index.presentation));
   const font = presentation.fonts?.find((f) => f.primary) || presentation.fonts?.[0];
   if (font) {
+    const url = new URL(index.assets.fonts?.[font.url] || font.url, repository.baseURL);
+    repository.onProgress?.({ url: url.href, state: "loading" });
     try {
-      const url = new URL(index.assets.fonts?.[font.url] || font.url, repository.baseURL);
       const face = new FontFace(font.family, `url("${url.href}")`);
       await face.load();
       document.fonts.add(face);
       presentation.fontFamily = font.family;
+      repository.onProgress?.({ url: url.href, state: "complete" });
     } catch (error) {
+      repository.onProgress?.({ url: url.href, state: "failed" });
       renderer.diagnostics?.record("font-load-failed", {
         entityId: "ui:font",
         resource: font.url,

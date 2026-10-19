@@ -40,6 +40,7 @@
     "package:host": "node tools/play/package-host.mjs",
     "play:host-check": "node tools/play/check-host-browser.mjs",
     "play:loading-check": "node tools/play/check-loading-browser.mjs",
+    "play:preload-check": "node tools/play/check-preload-browser.mjs",
     "cloudflare:prepare": "node tools/play/prepare-cloudflare.mjs",
     "cloudflare:dev": "wrangler d1 migrations apply ffvi-saves --local --env local --persist-to .wrangler/public-local && wrangler dev --env local --ip 127.0.0.1 --port 8788 --persist-to .wrangler/public-local",
     "cloudflare:deploy": "npm run cloudflare:prepare && npm run cloudflare:resources && npm run cloudflare:backup && wrangler d1 migrations apply ffvi-saves --remote && wrangler deploy --keep-vars",

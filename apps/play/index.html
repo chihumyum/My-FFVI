@@ -7,8 +7,13 @@
   ><link rel="stylesheet" href="./style.css" />
   <body class="game">
     <div id="boot-status" role="status" aria-live="polite">
-      <p id="boot-message">正在加载游戏资源…</p>
-      <a href="">重新加载</a>
+      <div class="load-card">
+        <p id="boot-message">正在加载游戏资源…</p>
+        <progress id="load-progress" aria-label="当前场景加载进度"></progress>
+        <p id="load-detail">准备资源…</p>
+        <button id="load-retry" hidden>重试</button>
+        <a id="load-reload" href="">重新加载</a>
+      </div>
     </div>
     <main>
       <canvas id="screen" width="320" height="180"></canvas>

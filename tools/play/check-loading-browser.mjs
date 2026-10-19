@@ -90,9 +90,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       const documentResponse = await page.goto(base);
       report.responsePolicy = documentResponse.headers()["content-security-policy"];
       if (mode === "module-failure") {
-        await page
-          .getByText("游戏加载失败，请重新加载。", { exact: true })
-          .waitFor({ timeout: 20000 });
+        await page.locator("#boot-status[data-state='failed']").waitFor({ timeout: 20000 });
         await page.getByRole("link", { name: "重新加载", exact: true }).waitFor();
         assert(report.failedModule, "The real game module request must have failed");
         await page.screenshot({ path: path.join(directory, "retry-screen.png") });

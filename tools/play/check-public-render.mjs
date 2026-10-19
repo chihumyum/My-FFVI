@@ -3,7 +3,9 @@ import { readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium, webkit } from "playwright";
 const base = process.env.PLAY_WEB_URL || "https://ffvi.chihum.dev/";
-const output = path.resolve("build/play/deployment/public/published-render");
+const output = path.resolve(
+  process.env.PLAY_PUBLIC_RENDER_REPORT || "build/play/deployment/public/published-render",
+);
 await mkdir(output, { recursive: true });
 const snapshot = JSON.parse(
   await readFile("build/play/acceptance/step-7/browsers-final-chromium/chromium/actual-save.json"),

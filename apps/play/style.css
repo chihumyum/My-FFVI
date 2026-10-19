@@ -28,6 +28,32 @@ body {
 #boot-status a {
   color: #b9d5ff;
 }
+#boot-status[data-mode="scene"] {
+  background: transparent;
+  align-content: end;
+  padding: 24px 12px max(24px, env(safe-area-inset-bottom));
+}
+.load-card {
+  width: min(360px, calc(100vw - 48px));
+  padding: 18px;
+  border: 1px solid #6a82ab;
+  border-radius: 8px;
+  background: #10192af5;
+  box-shadow: 0 8px 28px #0006;
+}
+.load-card p {
+  margin: 0 0 12px;
+}
+#load-progress {
+  width: 100%;
+  height: 12px;
+  accent-color: #a8c9ff;
+  margin-bottom: 12px;
+}
+#load-detail {
+  color: #b9c9e3;
+  font-size: 14px;
+}
 main {
   width: min(1100px, 100vw);
   position: relative;

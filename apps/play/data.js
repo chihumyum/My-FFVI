@@ -1,11 +1,15 @@
 // Fetch at map boundaries, before the synchronous VM can see a program.
 // Missing packed programs throw instead of silently turning into empty scripts.
 export class WebData {
-  constructor(indexURL, { fetcher = globalThis.fetch.bind(globalThis), onLoad = () => {} } = {}) {
+  constructor(
+    indexURL,
+    { fetcher = globalThis.fetch.bind(globalThis), onLoad = () => {}, onProgress = () => {} } = {},
+  ) {
     this.indexURL = new URL(indexURL);
     this.baseURL = new URL("../", this.indexURL);
     this.fetcher = fetcher;
     this.onLoad = onLoad;
+    this.onProgress = onProgress;
     this.cache = new Map();
     this.programChunks = new Set();
     this.boundaryChunks = new Set();
@@ -17,14 +21,18 @@ export class WebData {
       this.cache.set(
         url,
         (async () => {
+          this.onProgress({ url, state: "loading" });
           const response = await this.fetcher(url);
           if (!response.ok) throw Error(`Data ${response.status}: ${url}`);
           const bytes = await response.arrayBuffer();
           this.loadedBytes += bytes.byteLength;
           this.onLoad({ url, bytes: bytes.byteLength, totalBytes: this.loadedBytes });
-          return JSON.parse(new TextDecoder().decode(bytes));
+          const value = JSON.parse(new TextDecoder().decode(bytes));
+          this.onProgress({ url, state: "complete", bytes: bytes.byteLength });
+          return value;
         })().catch((error) => {
           this.cache.delete(url);
+          this.onProgress({ url, state: "failed" });
           throw error;
         }),
       );
@@ -77,6 +85,17 @@ export class WebData {
       this.ensurePrograms(this.index.mapPrograms[id], true),
     ]);
     return structuredClone(map);
+  }
+  async prefetchMap(id) {
+    // Cache the same files ordinary entry will request, without marking a VM
+    // map boundary or mutating its active map. Errors are retried on real entry.
+    const file = this.index.maps[id];
+    if (!file) return null;
+    const [map] = await Promise.all([
+      this.json(file),
+      this.ensurePrograms(this.index.mapPrograms[id] || []),
+    ]);
+    return map;
   }
   async prepareSave(saved) {
     const ids = new Set();
