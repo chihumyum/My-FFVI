@@ -1,4 +1,10 @@
 import { quickSaveKey } from "./identity.js";
+import {
+  playOptionLabels,
+  readPlayOptions,
+  savePlayOptions,
+  simulationRepeats,
+} from "./play-options.js";
 import { WebData, webIndexURL } from "./data.js";
 import { loading } from "./loading.js";
 import { MapPreloader } from "./preload.js";
@@ -62,7 +68,6 @@ window.ffviUIDiagnostics = () => ui.diagnostics();
 const $ = (id) => ui.get(id) || document.getElementById(id);
 let game,
   battleDialogue = null,
-  auto = false,
   paused = false,
   started = false,
   frame = 0,
@@ -71,9 +76,24 @@ let repository;
 let preloader,
   starting = false;
 const createRepository = () => new WebData(webIndexURL(), { onProgress: loading.observe });
+const playOptions = readPlayOptions();
+const regression = new URLSearchParams(location.search).get("regression") === "boosted";
+window.ffviPlayOptions = () => ({ ...playOptions });
+function updatePlayOptions() {
+  for (const [key, label] of Object.entries(playOptionLabels)) {
+    const button = document.querySelector(`[data-play-option="${key}"]`);
+    button.textContent = `${label}：${playOptions[key] ? "开" : "关"}`;
+    button.setAttribute("aria-pressed", String(playOptions[key]));
+  }
+  document.body.classList.toggle("show-location", playOptions.showLocation);
+  if (game) {
+    game.assists = playOptions;
+    if (game.battle) game.battle.context.assists = playOptions;
+  }
+  savePlayOptions(playOptions);
+}
 let data,
   battleData,
-  walking = false,
   walkClock = 0,
   autosavePending = false,
   titlePending = false;
@@ -131,14 +151,16 @@ function presentation(command) {
   if (audioHistory.length > 40) audioHistory.shift();
   battleFlow.audioCommand(command);
   const result = opera.command(
-    command.name === "SyncBGM" && (auto || walking) ? { ...command, skipTrackEnd: true } : command,
+    command.name === "SyncBGM" && playOptions.fastForward
+      ? { ...command, skipTrackEnd: true }
+      : command,
   );
   result?.catch?.((error) => audio.warn(error.message));
 }
 function event(e) {
   eventHistory.record(e);
   if (["airship-motion", "vehicle", "vehicle-landing"].includes(e.kind)) renderer.event(e);
-  if (e.kind === "opera" && !auto && !walking) opera.play(e.stage);
+  if (e.kind === "opera" && !playOptions.fastForward) opera.play(e.stage);
   if (e.kind === "battle-message")
     battleDialogue = {
       text: presentText(game, e.text)
@@ -178,13 +200,14 @@ function event(e) {
   if (e.kind === "game-over") {
     $("over").hidden = false;
     $("over-message").textContent = e.reason;
-    $("retrytest").hidden = !!game?.testBoost;
   }
 }
 async function start(saved = null, testBoost = false) {
   starting = true;
   loading.begin(saved ? "读取存档与场景…" : "准备新游戏…");
   keys.clear();
+  playOptions.story = false;
+  updatePlayOptions();
   eventHistory.clear();
   audioHistory.length = 0;
   if (extras.active) extras.close();
@@ -224,7 +247,8 @@ async function start(saved = null, testBoost = false) {
       onEvent: event,
       interactiveNames: true,
     });
-    game.autoChoice = (g) => (walking ? storyChoice(g) : 0);
+    game.assists = playOptions;
+    game.autoChoice = (g) => (playOptions.story ? storyChoice(g) : 0);
     window.ffvi = game;
     audio.playMusic(0);
     audio.stopEffects("environment");
@@ -317,41 +341,49 @@ $("save-close").onclick = () => {
   $("title").hidden = !!started;
   paused = !!started;
 };
-$("walk").onclick = async () => {
-  if (!started || !game) return;
-  if (!walking && repository) await repository.preloadRegression();
-  walking = !walking;
-  $("walk").textContent = `自动行走：${walking ? "开" : "关"}`;
-  if (walking && !auto) $("auto").click();
+for (const key of Object.keys(playOptionLabels)) {
+  const button = document.querySelector(`[data-play-option="${key}"]`);
+  button.onclick = async () => {
+    if (key === "story" && !playOptions.story) {
+      if (!started || !game) return;
+      const current = game;
+      button.disabled = true;
+      try {
+        await repository?.preloadRegression();
+      } catch (error) {
+        $("bug-status").textContent = `剧情路线准备失败：${error.message}。请重试。`;
+        return;
+      } finally {
+        button.disabled = false;
+      }
+      if (game !== current) return;
+    }
+    playOptions[key] = !playOptions[key];
+    keys.clear();
+    updatePlayOptions();
+  };
+}
+$("tools-close").onclick = () => {
+  document.body.classList.remove("touch-tools-open");
+  document.querySelector("[data-touch-tools]")?.setAttribute("aria-expanded", "false");
 };
+updatePlayOptions();
+$("regression-start").hidden = !regression;
+$("regression-start").onclick = () => start(null, true);
 $("switch").onclick = () => game?.switchParty();
 $("retry").onclick = () => {
   const bytes = localStorage.getItem(quickSaveKey(game?.testBoost));
   if (bytes) start(JSON.parse(bytes));
   else start(null, game?.testBoost);
 };
-$("retrytest").onclick = () => {
-  const bytes = localStorage.getItem(quickSaveKey(false));
-  start(bytes ? JSON.parse(bytes) : null, true);
-};
-$("test").onclick = () => start(null, true);
 $("new").onclick = () => start();
-$("loadtest").onclick = () => {
-  openSaveMenu(false, true);
-};
-$("load").onclick = () => {
-  openSaveMenu(false, false);
-};
+$("load").onclick = () => openSaveMenu(false, regression);
 $("menu-save").onclick = save;
 $("confirm").onclick = () => {
   if (!ui.revealDialogue()) {
     if (battleDialogue) battleDialogue = null;
     else game?.confirm();
   }
-};
-$("auto").onclick = () => {
-  auto = !auto;
-  $("auto").textContent = `自动推进：${auto ? "开" : "关"}`;
 };
 $("close").onclick = () => {
   paused = false;
@@ -371,6 +403,7 @@ async function reportBug() {
     renderer.render(started ? game : null, data, battleData);
     const report = describeBugState(game, renderer, eventHistory.read(), ui.presentation.mapNames);
     report.battlePresentation = battleFlow.diagnostics();
+    report.playOptions = { ...playOptions };
     report.audio = { ...audio.snapshot(), commands: [...audioHistory] };
     report.screenshot = {
       mimeType: "image/png",
@@ -402,7 +435,14 @@ function gameKeyDown(e) {
     return;
   }
   if (reportingBug) return;
-  if (!e.virtual && e.target?.closest?.("dialog, .cloud-panel, #touch-controls")) return;
+  if (e.key === "Escape" && document.body.classList.contains("touch-tools-open")) {
+    e.preventDefault();
+    $("tools-close").click();
+    return;
+  }
+  if (e.virtual && document.body.classList.contains("touch-tools-open")) return;
+  if (!e.virtual && e.target?.closest?.("dialog, .cloud-panel, #touch-controls, #play-tools"))
+    return;
   if (loading.active) {
     keys.clear();
     if (e.target?.closest?.("#boot-status") || e.key === "Tab") return;
@@ -708,7 +748,7 @@ renderer.canSelectBattleTarget = (side, index) =>
   !paused &&
   !battleDialogue &&
   !game?.dialogue &&
-  !auto &&
+  !playOptions.autoBattle &&
   battleMenu.canSelectTarget(side, index);
 renderer.onBattleTarget = (side, index) => battleMenu.selectTarget(side, index);
 $("escape").onclick = () => game?.battle?.requestEscape();
@@ -857,24 +897,40 @@ function loop(now) {
     requestAnimationFrame(loop);
     return;
   }
+  const toolsOpen = document.body.classList.contains("touch-tools-open");
   if (started && game && !acceptanceLoading) {
-    if (!loading.active && !paused && !audio.musicPending)
-      battleFlow.update(dt, { auto, fast: walking && auto });
+    if (!loading.active && !paused && !toolsOpen && !audio.musicPending)
+      battleFlow.update(dt, {
+        auto: playOptions.autoBattle || playOptions.skipDialogue,
+        fast: playOptions.fastForward,
+      });
     if (
       !loading.active &&
       !paused &&
+      !toolsOpen &&
       !opera.busy &&
       !battleFlow.busy &&
       !audio.syncPending &&
       !audio.musicPending &&
-      (!battleDialogue || auto)
+      (!battleDialogue || playOptions.skipDialogue)
     ) {
       for (
         let n = 0;
-        n < (auto && !battleFlow.realtimePresentation ? (game.testBoost ? 16 : 4) : 1);
+        n <
+        simulationRepeats(playOptions, {
+          boosted: game.testBoost,
+          realtime: battleFlow.realtimePresentation,
+        });
         n++
       ) {
-        game.tick(dt, { auto });
+        game.tick(dt, {
+          autoDialogue: playOptions.skipDialogue,
+          autoBattle: playOptions.autoBattle,
+          autoEvents: playOptions.story,
+          dialogueDelay: playOptions.fastForward
+            ? 0.15
+            : Math.max(1.2, (game.dialogue?.text?.length || 0) * 0.035),
+        });
         if (
           loading.active ||
           game.loading ||
@@ -886,20 +942,16 @@ function loop(now) {
           keys.clear();
           break;
         }
-        if (walking) {
+        if (playOptions.story) {
           walkClock += dt;
           if (walkClock >= 0.1) {
             walkClock -= 0.1;
             const input = advanceStory(game, {
-              through:
-                new URLSearchParams(location.search).get("through") ||
-                (game.testBoost ? "all" : "M3-sabin"),
+              through: new URLSearchParams(location.search).get("through") || "all",
             });
             if (input.status === "done") {
-              walking = false;
-              auto = false;
-              $("walk").textContent = "自动行走：关";
-              $("auto").textContent = "自动推进：关";
+              playOptions.story = false;
+              updatePlayOptions();
               $("location").textContent = input.chapter
                 ? input.chapter + " 已完成"
                 : "已离开纳尔谢 · 世界地图";
@@ -908,9 +960,9 @@ function loop(now) {
                 input.status,
               )
             ) {
-              walking = false;
-              $("walk").textContent = "自动行走：关";
-              $("location").textContent = "自动行走暂停，请手动操作";
+              playOptions.story = false;
+              updatePlayOptions();
+              $("location").textContent = "自动推进剧情暂停，请手动操作";
             }
           }
         }
@@ -924,10 +976,8 @@ function loop(now) {
       if (titlePending && !game.busy) {
         titlePending = false;
         started = false;
-        walking = false;
-        auto = false;
-        $("walk").textContent = "自动行走：关";
-        $("auto").textContent = "自动推进：关";
+        playOptions.story = false;
+        updatePlayOptions();
         $("title").hidden = false;
         $("location").textContent = game.history.some((row) => row.script === "sc_e_1032_18")
           ? "主线通关 · 已返回标题"
@@ -969,7 +1019,13 @@ function loop(now) {
     if (dialogue) {
       const speaker = presentText(game, dialogue.speaker),
         message = presentText(game, dialogue.text);
-      ui.setDialogue(dialogue, game.settings.textSpeed, auto, speaker, message);
+      ui.setDialogue(
+        dialogue,
+        game.settings.textSpeed,
+        playOptions.skipDialogue && playOptions.fastForward,
+        speaker,
+        message,
+      );
       $("speaker").textContent = speaker;
       $("message").textContent = message;
       const choiceKey = dialogue.choices?.join("|") || "";
@@ -993,7 +1049,7 @@ function loop(now) {
       ),
   );
   ui.render();
-  if (!loading.active) opera.update(dt);
+  if (!loading.active && !paused && !toolsOpen) opera.update(dt);
   renderer.heldBattle = battleFlow.view;
   if (!game?.loading) {
     const resources = renderer.render(started ? game : null, data, battleData, {
@@ -1037,7 +1093,8 @@ if (new URLSearchParams(location.search).get("acceptance") === "1") {
     async load(checkpoint) {
       acceptanceLoading = true;
       paused = true;
-      walking = auto = false;
+      playOptions.story = false;
+      updatePlayOptions();
       opera.reset();
       battleFlow.reset();
       renderer.heldBattle = null;

@@ -1,3 +1,4 @@
+import { clickRegressionControl } from "./browser-assists.mjs";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -12,7 +13,7 @@ const results = [];
 async function openingFrames(page, directory) {
   // Actor coordinates and falling snow cannot prove the armors animate.
   // Check the rendered sprite selections well after their first cycle.
-  await page.getByRole("button", { name: "自动行走：开", exact: true }).click();
+  await clickRegressionControl(page, "自动行走：开");
   await page.waitForFunction(() => {
     const game = window.ffvi;
     return !game.fade || game.time >= game.fade.start + game.fade.duration;
@@ -76,8 +77,8 @@ async function openingFrames(page, directory) {
     samples.every((sample) => sample.distantCityPixels >= 12),
     "The original distant Narshe lights must be present in the actual composed canvas",
   );
-  await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
-  await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
+  await clickRegressionControl(page, "自动行走：关");
+  await clickRegressionControl(page, "自动推进：开");
   return report;
 }
 async function sceneAudioChecks(page, directory) {
@@ -114,7 +115,7 @@ async function sceneAudioChecks(page, directory) {
   await page.locator("#cloud-panel").getByRole("button", { name: "返回游戏", exact: true }).click();
   const findings = [];
   for (const row of originals) {
-    await page.getByRole("button", { name: "继续剧情测试", exact: true }).click();
+    await clickRegressionControl(page, "继续剧情测试");
     await page.getByRole("button", { name: `读取存档 ${row.slot}`, exact: true }).click();
     await page.waitForFunction(
       ({ map, bgm }) =>
@@ -166,7 +167,7 @@ async function sceneAudioChecks(page, directory) {
       assert(saved.snapshot.audio.music.offset > 0);
       await page.reload();
       await page.locator("#cloud-toggle").waitFor();
-      await page.getByRole("button", { name: "继续剧情测试", exact: true }).click();
+      await clickRegressionControl(page, "继续剧情测试");
       await page.getByRole("button", { name: "读取存档 1", exact: true }).click();
       await page.waitForFunction(() => window.ffviBattleFlow().music === 19);
       assert(
@@ -241,15 +242,15 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     await page.locator("#cloud-toggle").waitFor();
     await page.getByRole("button", { name: "新游戏", exact: true }).click();
     await page.waitForFunction(() => window.ffvi && !window.ffvi.loading && window.ffvi.mapId);
-    await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
+    await clickRegressionControl(page, "自动行走：关");
     if (process.env.PLAY_CHECK_AUDIO_SYNC === "1") {
       await page.waitForFunction(
         () => window.ffvi?.mapId === 609 && window.ffvi.furthest?.script === "sc_e_0001_3",
         null,
         { timeout: 60000 },
       );
-      await page.getByRole("button", { name: "自动行走：开", exact: true }).click();
-      await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
+      await clickRegressionControl(page, "自动行走：开");
+      await clickRegressionControl(page, "自动推进：开");
       const deadline = Date.now() + 60000;
       while (!(await page.evaluate(() => window.ffviBattleFlow().musicSyncPending))) {
         assert(Date.now() < deadline, "manual opening must reach its original SyncBGM");
@@ -273,7 +274,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       report.checks.push(
         "Original opening SyncBGM holds before the next source instruction until BGM1 actually finishes",
       );
-      await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
+      await clickRegressionControl(page, "自动行走：关");
     }
     await page.waitForFunction(
       () =>
@@ -285,8 +286,8 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       null,
       { timeout: 60000 },
     );
-    await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
-    await page.getByRole("button", { name: "自动行走：开", exact: true }).click();
+    await clickRegressionControl(page, "自动推进：开");
+    await clickRegressionControl(page, "自动行走：开");
     await page.waitForFunction(() => window.ffviRenderMetrics().texturesLoading === 0);
     report.cliff = await page.evaluate(() => window.ffviRenderMetrics().actorFrames);
     for (const id of [-1001, -31, -32])
@@ -296,13 +297,13 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       );
     await page.screenshot({ path: path.join(directory, "00-cliff-three-actors.png") });
     report.checks.push("Cliff source party puppets display Terra and both soldiers");
-    await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
+    await clickRegressionControl(page, "自动行走：关");
     await page.waitForFunction(
       () => window.ffvi?.mapId === 572 && window.ffvi.actors.get("2")?.motion,
       null,
       { timeout: 120000 },
     );
-    await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
+    await clickRegressionControl(page, "自动推进：开");
     await page.waitForTimeout(4200);
     const march = await page.evaluate(() => ({
       map: window.ffvi.mapId,
@@ -339,10 +340,10 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       report.status = "passed";
       continue;
     }
-    await page.getByRole("button", { name: "自动推进：关", exact: true }).click();
+    await clickRegressionControl(page, "自动推进：关");
     await page.waitForFunction(() => !!window.ffvi?.battle, null, { timeout: 120000 });
-    await page.getByRole("button", { name: "自动行走：开", exact: true }).click();
-    await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
+    await clickRegressionControl(page, "自动行走：开");
+    await clickRegressionControl(page, "自动推进：开");
     await page.getByRole("button", { name: "魔导", exact: true }).waitFor({ timeout: 20000 });
     await page.waitForFunction(() => window.ffviBattleFlow().music === 6);
     report.entry = await page.evaluate(() => window.ffviBattleFlow());
@@ -388,11 +389,11 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     report.checks.push(
       "Battle BGM6 playing; actual Magitek spell selected and enemy clicked; ATB/time frozen while banner/effect plays",
     );
-    await page.getByRole("button", { name: "自动推进：关", exact: true }).click();
+    await clickRegressionControl(page, "自动推进：关");
     await page.waitForFunction(() => window.ffviBattleFlow().phase === "victory", null, {
       timeout: 60000,
     });
-    await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
+    await clickRegressionControl(page, "自动推进：开");
     await page
       .getByRole("button", { name: "继续（空格 / Enter）", exact: true })
       .waitFor({ timeout: 15000 });

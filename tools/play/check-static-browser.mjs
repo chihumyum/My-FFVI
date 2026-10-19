@@ -1,3 +1,4 @@
+import { clickRegressionControl } from "./browser-assists.mjs";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -75,15 +76,11 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     await page.goto(new URL("?through=M1", base).href);
     await page.getByRole("button", { name: "新游戏", exact: true }).waitFor();
     await page.screenshot({ path: path.join(folder, "title.png") });
-    await page
-      .getByRole("button", {
-        name: boosted ? "剧情测试（强化队伍）" : "新游戏",
-        exact: true,
-      })
-      .click();
+    if (boosted) await clickRegressionControl(page, "剧情测试（强化队伍）");
+    else await page.getByRole("button", { name: "新游戏", exact: true }).click();
     await page.waitForFunction(() => window.ffvi && !window.ffvi.loading);
     assert.equal(await page.evaluate(() => !!window.ffvi.testBoost), boosted);
-    await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
+    await clickRegressionControl(page, "自动行走：关");
     const deadline = Date.now() + 480_000;
     let finished = false;
     while (Date.now() < deadline) {
@@ -93,7 +90,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
             window.ffvi.over ||
             (window.ffvi.mapId === 1 &&
               !window.ffvi.busy &&
-              document.getElementById("walk").textContent.includes("关")),
+              document.getElementById("story-auto").textContent.includes("关")),
           null,
           { timeout: 15_000 },
         );
@@ -107,7 +104,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
         over: window.ffvi.over,
         busy: window.ffvi.busy,
         script: window.ffvi.lastInstruction,
-        walk: document.getElementById("walk").textContent,
+        walk: document.getElementById("story-auto").textContent,
         location: document.getElementById("location").textContent,
       }));
       result.progress.push(state);
@@ -179,9 +176,8 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     await writeFile(path.join(folder, "actual-save.json"), JSON.stringify(saved) + "\n");
     await page.screenshot({ path: path.join(folder, "saved.png") });
     await page.reload();
-    await page
-      .getByRole("button", { name: boosted ? "继续剧情测试" : "继续游戏", exact: true })
-      .click();
+    if (boosted) await clickRegressionControl(page, "继续剧情测试");
+    else await page.getByRole("button", { name: "继续游戏", exact: true }).click();
     await page
       .getByRole("button", { name: /^读取存档 \d+$/ })
       .first()

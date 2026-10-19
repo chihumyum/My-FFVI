@@ -2,6 +2,7 @@
 // here and warn at the ability/source that actually uses them.
 import { attackHits } from "./battle-accuracy.js";
 import { bindStatusLink, pruneStatusLinks } from "./status-links.js";
+import { invincible, incomingHpDamage } from "./assists.js";
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 export const FUNCTION_EFFECTS = {
   1: ["recovery", "implemented"],
@@ -231,6 +232,7 @@ export function applyRecovery(data, unit, functions, { power = 0, magicAmount = 
 export function setCondition(host, unit, id, add = true, { force = false } = {}) {
   const row = host.data.conditions?.[id] || {},
     type = row.condition_type ?? id;
+  if (add && invincible(host, unit) && [5, 11, 628].includes(type)) return false;
   unit.conditions ??= [];
   const rulesFor = (condition) =>
     (host.data.eraseConditionGroups || []).filter(
@@ -654,11 +656,12 @@ export function tickConditions(host, unit, seconds) {
         .map((row) => periodicStatusAmount(unit, row))
         .reduce((best, n) => (Math.abs(n) > Math.abs(best) ? n : best), 0);
       const previous = unit.hp;
-      unit.hp = clamp(unit.hp - amount, 0, unit.maxHp);
+      const applied = incomingHpDamage(host, unit, amount);
+      unit.hp = clamp(unit.hp - applied, 0, unit.maxHp);
       if (type === 627)
         for (const [owner, victim] of host.captures || [])
           if (victim === unit) owner.hp = clamp(owner.hp + previous - unit.hp, 0, owner.maxHp);
-      host.addLog(`${unit.name} ${amount < 0 ? "持续回复" : "持续伤害"} ${Math.abs(amount)}`);
+      host.addLog(`${unit.name} ${applied < 0 ? "持续回复" : "持续伤害"} ${Math.abs(applied)}`);
       interval = periodicStatusInterval(host.data, unit, type);
     }
   }
@@ -695,6 +698,7 @@ export function executeAbilityEffects(
     n = Math.trunc(n);
     const max = resource === "mp" ? target.maxMp : target.maxHp;
     if (resource === "hp") n = host.events?.beforeDamage(actor, target, ability, n) ?? n;
+    if (resource === "hp") n = incomingHpDamage(host, target, n);
     const before = target[resource] || 0;
     target[resource] = clamp(before - clamp(n, -9999, 9999), 0, max || 0);
     const actual = before - target[resource];

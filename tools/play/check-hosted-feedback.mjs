@@ -1,3 +1,4 @@
+import { clickRegressionControl } from "./browser-assists.mjs";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -111,7 +112,7 @@ for (const name of engines) {
     const recoveryKey = await page.evaluate(() => localStorage.getItem("ffvi-recovery-active"));
     assert.match(recoveryKey, /^ffvi_[a-f0-9]{64}$/);
     await page.getByRole("button", { name: "新游戏", exact: true }).click();
-    await page.getByRole("button", { name: "自动推进：关", exact: true }).click();
+    await clickRegressionControl(page, "自动推进：关");
     await page.waitForFunction(
       () => {
         const m = window.ffviRenderMetrics?.();

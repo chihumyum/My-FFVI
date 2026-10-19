@@ -114,17 +114,17 @@ h1 {
   float: right;
   padding: 4px 15px;
 }
-footer {
+#play-tools {
   padding: 10px;
   display: flex;
   align-items: center;
   gap: 10px;
   font-size: 13px;
 }
-footer span {
+#play-tools span {
   flex: 1;
 }
-footer button {
+#play-tools button {
   padding: 6px 10px;
   font-size: 12px;
 }
@@ -287,7 +287,7 @@ progress {
 .game main > aside {
   visibility: hidden;
 }
-footer {
+#play-tools {
   flex-wrap: wrap;
 }
 
@@ -490,10 +490,10 @@ body.touch-enabled canvas {
   touch-action: none;
   max-width: 100%;
 }
-body.touch-enabled footer {
+body.touch-enabled #play-tools {
   display: none;
 }
-body.touch-enabled.touch-tools-open footer {
+body.touch-enabled.touch-tools-open #play-tools {
   position: fixed;
   z-index: 25;
   display: flex;
@@ -507,7 +507,7 @@ body.touch-enabled.touch-tools-open footer {
   border-radius: 14px;
   background: #111d31fa;
 }
-body.touch-enabled footer button {
+body.touch-enabled #play-tools button {
   min-height: 44px;
   font-size: 14px;
 }
@@ -577,4 +577,60 @@ body.touch-enabled footer button {
     animation: none;
     color: #fff;
   }
+}
+
+/* Tools are explicitly opened from the touch toolbar, including on desktop. */
+#play-tools {
+  display: none;
+}
+body.touch-enabled.touch-tools-open #play-tools {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 680px;
+  margin-inline: auto;
+  max-height: min(70dvh, 580px);
+  gap: 8px;
+}
+.play-tools-heading {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+#play-tools button {
+  min-height: 44px;
+  margin: 0;
+  font:
+    14px/1.4 system-ui,
+    sans-serif;
+}
+#play-tools [aria-pressed="true"] {
+  background: #285064;
+  border-color: #92d7d1;
+}
+#play-tools [role="status"],
+#play-tools #mode {
+  grid-column: 1 / -1;
+}
+#location {
+  display: none;
+}
+body.show-location #location {
+  display: block;
+  position: fixed;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(75vw, 720px);
+  z-index: 12;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: #101827bd;
+  color: #e4edf8;
+  font:
+    12px/1.5 system-ui,
+    sans-serif;
+  overflow-wrap: anywhere;
+  pointer-events: none;
 }

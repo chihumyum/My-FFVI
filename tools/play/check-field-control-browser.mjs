@@ -1,3 +1,4 @@
+import { clickRegressionControl } from "./browser-assists.mjs";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -87,7 +88,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
           localStorage.setItem("ffvi-play-test", JSON.stringify(saved));
         }, saved);
         await page.goto(base);
-        await page.getByRole("button", { name: "继续剧情测试", exact: true }).click();
+        await clickRegressionControl(page, "继续剧情测试");
         await page.getByRole("button", { name: "自动存档 / 最近继续", exact: true }).click();
         await page.waitForFunction(
           (map) => window.ffvi?.mapId === map && !window.ffvi.loading,
@@ -95,12 +96,12 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
         );
         for (const name of ["自动行走：开", "自动推进：开"])
           if (await page.getByRole("button", { name, exact: true }).count())
-            await page.getByRole("button", { name, exact: true }).click();
+            await clickRegressionControl(page, name);
         if (fixture.arrival) {
           // The existing regression route supplies ordinary walks/interactions
           // from the genuine maid checkpoint. Never dispatch a story script.
-          await page.getByRole("button", { name: "自动推进：关", exact: true }).click();
-          await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
+          await clickRegressionControl(page, "自动推进：关");
+          await clickRegressionControl(page, "自动行走：关");
           await page.waitForFunction(
             () =>
               window.ffvi.history.some((row) => row.script === "sc_e_0029_1") &&
@@ -108,8 +109,8 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
             null,
             { timeout: 60000 },
           );
-          await page.getByRole("button", { name: "自动行走：开", exact: true }).click();
-          await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
+          await clickRegressionControl(page, "自动行走：开");
+          await clickRegressionControl(page, "自动推进：开");
           result.arrivalFrames = [];
           let last = "";
           const deadline = Date.now() + 90000;

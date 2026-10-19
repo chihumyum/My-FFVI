@@ -1,6 +1,7 @@
 import { configureGogo, effectiveCommandIds, blitzInputs } from "../../src/play/battle-commands.js";
 import { canEquip } from "../../src/play/resources.js";
 import { abilityMpCost } from "../../src/play/progression.js";
+import { partyFieldAsset } from "../../src/play/appearance.js";
 
 const pages = ["队伍", "道具", "魔法", "魔石", "技能", "装备", "饰品", "状态", "队列", "设置"];
 export function renderPartyMenu(
@@ -27,6 +28,22 @@ export function renderPartyMenu(
     return n;
   };
   const text = (parent, value) => parent.append(node("p", value));
+  const columns = (weights, children) => {
+    const row = node("columns");
+    row.dataset.weights = weights.join(",");
+    row.append(...children);
+    return row;
+  };
+  const stat = (label, value) => {
+    const row = node("stat", label);
+    row.value = String(value ?? 0);
+    return row;
+  };
+  const group = (...children) => {
+    const box = node("div");
+    box.append(...children);
+    return box;
+  };
   const name = (id) =>
     data.contentNames?.[id] || game.text(data.contents?.[id]?.mes_id_name || "") || `物品 ${id}`;
   const description = (id) => {
@@ -65,6 +82,7 @@ export function renderPartyMenu(
         page,
         () => {
           state.page = page;
+          delete state.notice;
           refresh();
         },
         state.page === page,
@@ -75,24 +93,43 @@ export function renderPartyMenu(
     elements.party,
     `${callbacks.location || "当前地点"}     Gil ${game.gil}     ${Math.floor(game.time / 3600)}:${String(Math.floor(game.time / 60) % 60).padStart(2, "0")}`,
   );
-  if (state.page !== "队伍" && state.page !== "道具" && state.page !== "设置")
+  if (!["队伍", "道具", "设置", "队列"].includes(state.page))
     for (const u of game.party)
       elements.party.append(
         button(
           u.name,
           () => {
             state.member = u.id;
+            delete state.notice;
             refresh();
           },
           u === unit,
         ),
       );
   elements.items.append(node("h2", state.page));
+  if (state.notice) {
+    const notice = node("p", state.notice);
+    notice.dataset.notice = "equipment";
+    elements.items.append(notice);
+  }
   const portrait = (u, parent) => {
     const image = node("img");
     image.dataset.actorId = String(u.id);
     image.setAttribute("aria-label", u.name);
     parent.append(image);
+  };
+  const figure = (u, selected = false) => {
+    const image = node("formation-lane");
+    const asset = partyFieldAsset(game.data, u).toLowerCase();
+    image.figure = {
+      asset,
+      character: game.data.characters?.[asset],
+      animation: "WalkL",
+      active: selected,
+      row: u.row === "back" ? "back" : "front",
+    };
+    image.setAttribute("aria-label", `${u.name} · ${u.row === "back" ? "后排" : "前排"}`);
+    return image;
   };
   const spells = (u) =>
     [...new Set((u.abilities || []).map((x) => (typeof x === "object" ? x.id : x)))]
@@ -240,7 +277,18 @@ export function renderPartyMenu(
     const slots = state.page === "饰品" ? [4, 5] : [0, 1, 2, 3],
       labels = ["右手", "左手", "身体", "头部", "饰品 1", "饰品 2"];
     if (state.page === "装备")
-      elements.items.append(button("最强装备", () => run(() => game.optimizeEquipment(unit.id))));
+      elements.items.append(
+        button("最强装备", () => {
+          const blocked = game.busy || unit.enabled === false;
+          const changed = game.optimizeEquipment(unit.id);
+          state.notice = blocked
+            ? "当前不能更换装备。"
+            : changed
+              ? "已换上当前持有的最强装备。"
+              : "已是当前最强装备。";
+          refresh();
+        }),
+      );
     for (const slot of slots) {
       const ids = [
         ...new Set([
@@ -251,14 +299,17 @@ export function renderPartyMenu(
             .map(([id]) => Number(id)),
         ]),
       ].filter((id) => !id || canEquip(data, unit, id, slot));
-      elements.items.append(
-        select(
-          `${unit.name} ${labels[slot]}`,
-          ids.map((id) => [id, id ? name(id) : "卸下"]),
-          unit.equipment?.[slot] || 0,
-          (value) => run(() => game.equip(unit.id, slot, Number(value))),
-        ),
+      const control = select(
+        labels[slot],
+        ids.map((id) => [id, id ? name(id) : "卸下"]),
+        unit.equipment?.[slot] || 0,
+        (value) => run(() => game.equip(unit.id, slot, Number(value))),
       );
+      control.dataset.contentId = String(unit.equipment?.[slot] || 0);
+      for (const option of control.children)
+        if (data.contents?.[option.value]) option.dataset.contentId = String(option.value);
+      control.dataset.block = "1";
+      elements.items.append(control);
       text(elements.items, description(unit.equipment?.[slot]));
     }
     text(
@@ -266,26 +317,33 @@ export function renderPartyMenu(
       `攻击 ${unit.attack}     防御 ${unit.defense}     魔防 ${unit.magicDefense}     回避 ${unit.evasion}     魔回 ${unit.magicEvasion}`,
     );
   } else if (state.page === "状态") {
-    portrait(unit, elements.items);
-    text(
-      elements.items,
-      `${unit.name}   等级 ${unit.level}   ${unit.row === "back" ? "后排" : "前排"}`,
+    const identity = group();
+    portrait(unit, identity);
+    identity.append(node("h2", unit.name));
+    text(identity, `等级 ${unit.level}　${unit.row === "back" ? "后排" : "前排"}`);
+    const left = group(
+      ...[
+        ["HP", `${unit.hp} / ${unit.maxHp}`],
+        ["MP", `${unit.mp} / ${unit.maxMp}`],
+        ["经验值", unit.exp || 0],
+        ["力量", unit.strength],
+        ["速度", unit.speed],
+        ["体力", unit.vitality ?? unit.baseStats?.vitality],
+        ["魔力", unit.magic],
+      ].map(([label, value]) => stat(label, value)),
     );
-    for (const [label, value] of [
-      ["HP", `${unit.hp}/${unit.maxHp}`],
-      ["MP", `${unit.mp}/${unit.maxMp}`],
-      ["经验", unit.exp || 0],
-      ["力量", unit.strength],
-      ["速度", unit.speed],
-      ["体力", unit.vitality],
-      ["魔力", unit.magic],
-      ["攻击", unit.attack],
-      ["防御", unit.defense],
-      ["魔防", unit.magicDefense],
-      ["回避", unit.evasion],
-      ["魔回", unit.magicEvasion],
-    ])
-      text(elements.items, `${label}    ${value ?? 0}`);
+    const right = group(
+      ...[
+        ["攻击", unit.attack],
+        ["防御", unit.defense],
+        ["魔防", unit.magicDefense],
+        ["回避", unit.evasion],
+        ["魔回", unit.magicEvasion],
+        ["命中", unit.accuracy],
+        ["暴击", unit.criticalRate],
+      ].map(([label, value]) => stat(label, value)),
+    );
+    elements.items.append(columns([0.26, 0.39, 0.35], [identity, left, right]));
     text(
       elements.items,
       `状态：${
@@ -300,23 +358,42 @@ export function renderPartyMenu(
     );
   } else if (state.page === "队列") {
     text(elements.items, "选择两名角色交换位置；前后排可分别切换。");
+    elements.items.append(
+      columns(
+        [0.34, 0.36, 0.3],
+        [
+          group(node("legend", "队伍顺序")),
+          group(node("formation-heading")),
+          group(node("legend", "队列调整")),
+        ],
+      ),
+    );
     for (const [pos, u] of game.party.entries()) {
+      const choice = button(`${pos + 1}. ${u.name}`, () => {
+        if (state.swap === undefined) state.swap = pos;
+        else {
+          const slots = game.partySlots[game.partyIndex];
+          [slots[state.swap], slots[pos]] = [slots[pos], slots[state.swap]];
+          delete state.swap;
+        }
+        refresh();
+      });
+      choice.dataset.selected = state.swap === pos ? "1" : "";
+      choice.dataset.block = "1";
+      const row = button(u.row === "back" ? "改为前排" : "改为后排", () => {
+        u.row = u.row === "back" ? "front" : "back";
+        refresh();
+      });
+      row.dataset.block = "1";
       elements.items.append(
-        button(`${state.swap === pos ? "▶ " : ""}${pos + 1}. ${u.name}`, () => {
-          if (state.swap === undefined) state.swap = pos;
-          else {
-            const slots = game.partySlots[game.partyIndex];
-            [slots[state.swap], slots[pos]] = [slots[pos], slots[state.swap]];
-            delete state.swap;
-          }
-          refresh();
-        }),
-      );
-      elements.items.append(
-        button(u.row === "back" ? "改为前排" : "改为后排", () => {
-          u.row = u.row === "back" ? "front" : "back";
-          refresh();
-        }),
+        columns(
+          [0.34, 0.36, 0.3],
+          [
+            group(choice, node("p", `Lv ${u.level}　${u.row === "back" ? "后排" : "前排"}`)),
+            group(figure(u, state.swap === pos)),
+            group(row),
+          ],
+        ),
       );
     }
   } else if (state.page === "技能") {

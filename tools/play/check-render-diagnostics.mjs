@@ -1,3 +1,4 @@
+import { clickRegressionControl } from "./browser-assists.mjs";
 import assert from "node:assert/strict";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -49,13 +50,13 @@ try {
     );
     throw error;
   }
-  await page.getByRole("button", { name: "自动推进：关", exact: true }).click();
+  await clickRegressionControl(page, "自动推进：关");
   await page.waitForFunction(
     () => window.ffviRenderDiagnostics?.().some((r) => r.category === "texture-load-failed"),
     null,
     { timeout: 120000 },
   );
-  await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
+  await clickRegressionControl(page, "自动推进：开");
   const issues = await page.evaluate(() => window.ffviRenderDiagnostics());
   const failures = issues.filter((r) => r.category === "texture-load-failed");
   assert.ok(failures.length);

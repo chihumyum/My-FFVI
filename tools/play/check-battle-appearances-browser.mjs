@@ -1,3 +1,4 @@
+import { clickRegressionControl } from "./browser-assists.mjs";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -42,7 +43,7 @@ try {
       saved,
     );
     await page.goto(process.env.PLAY_WEB_URL || "http://127.0.0.1:4179/");
-    await page.getByRole("button", { name: "继续剧情测试", exact: true }).click();
+    await clickRegressionControl(page, "继续剧情测试");
     await page.getByRole("button", { name: "自动存档 / 最近继续", exact: true }).click();
     await page.waitForFunction(() => window.ffvi && !window.ffvi.loading);
     // Controlled presentation fixture: construct a real PR formation using the

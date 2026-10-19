@@ -464,17 +464,26 @@ export class PlayGame {
     if (this.busy) return false;
     return this.interact();
   }
-  tick(dt = 1 / 60, { auto = false } = {}) {
+  tick(
+    dt = 1 / 60,
+    {
+      auto = false,
+      autoDialogue = auto,
+      autoBattle = auto,
+      autoEvents = auto,
+      dialogueDelay = 0.15,
+    } = {},
+  ) {
     if (this.loading || this.over) return;
-    this.autoInput = auto;
+    this.autoInput = autoEvents;
     if (this.nameInput) {
-      if (!auto) return;
+      if (!autoEvents) return;
       this.submitName(this.nameInput.original);
     }
     updateVehicleInput(this);
-    if (auto && this.partySelection)
+    if (autoEvents && this.partySelection)
       autoPartyInput(this, this.preparationTraining?.partyPreference || this.storyObjective?.party);
-    if (auto && this.shop) autoShopInput(this, this.storyObjective?.buy);
+    if (autoEvents && this.shop) autoShopInput(this, this.storyObjective?.buy);
     this.time += dt;
     updateSyscallSystems(this, dt);
     for (const a of [this.player, this.camera, ...this.actors.values()])
@@ -487,12 +496,12 @@ export class PlayGame {
         if (p === 1) a.motion = null;
       }
     if (this.battle) {
-      this.battle.tick(dt, auto);
+      this.battle.tick(dt, autoBattle);
       return;
     }
-    if (auto && this.dialogue) {
+    if (autoDialogue && this.dialogue && (!this.dialogue.choices?.length || autoEvents)) {
       this.dialogue.elapsed += dt;
-      if (this.dialogue.elapsed > 0.15) this.confirm(this.autoChoice?.(this) ?? 0);
+      if (this.dialogue.elapsed > dialogueDelay) this.confirm(this.autoChoice?.(this) ?? 0);
     } else if (this.dialogue?.auto) {
       this.dialogue.elapsed += dt;
       if (this.dialogue.elapsed > this.dialogue.duration) this.confirm();
@@ -1118,7 +1127,13 @@ export class PlayGame {
       encounterId: id,
       finalParty: this.finalBattleOrder || [],
       ...context,
-      context: { ...context, gil: this.gil, steps: this.stepCount, settings: this.settings },
+      context: {
+        ...context,
+        gil: this.gil,
+        steps: this.stepCount,
+        settings: this.settings,
+        assists: this.assists,
+      },
       random: this.random,
       inventory: this.inventory,
       banks: this.banks,

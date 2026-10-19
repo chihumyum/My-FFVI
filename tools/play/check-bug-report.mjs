@@ -1,3 +1,4 @@
+import { clickRegressionControl } from "./browser-assists.mjs";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -20,10 +21,10 @@ try {
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(url);
-    await page.getByRole("button", { name: "报告问题（F9）", exact: true }).waitFor();
+    await page.locator("#bug-report").waitFor({ state: "attached" });
     if (mode === "static") {
       await page.getByRole("button", { name: "新游戏", exact: true }).click();
-      await page.getByRole("button", { name: "自动推进：关", exact: true }).click();
+      await clickRegressionControl(page, "自动推进：关");
       // Let the authored opening reveal the party, using ordinary game input.
       // The player is deliberately hidden during the initial establishing shot.
       await page.waitForFunction(
@@ -31,12 +32,12 @@ try {
         null,
         { timeout: 120_000 },
       );
-      await page.getByRole("button", { name: "自动推进：开", exact: true }).click();
+      await clickRegressionControl(page, "自动推进：开");
     }
     await page
       .locator("#location")
       .filter({ hasText: mode === "development" ? "界面用例" : "·" })
-      .waitFor();
+      .waitFor({ state: "attached" });
     await page.waitForLoadState("networkidle");
     let bytes, reportPath;
     if (mode === "development") {
@@ -56,14 +57,15 @@ try {
       assert.ok(reportPath.startsWith(path.resolve("bug-reports") + path.sep));
       bytes = await readFile(reportPath);
     } else {
-      const downloadPromise = page.waitForEvent("download");
       await page.keyboard.press("F9");
       await page.getByRole("dialog").waitFor();
       await page
         .getByLabel("出了什么问题？", { exact: true })
         .fill("验收：静态运行保留完整的问题报告下载");
-      await page.getByRole("button", { name: "发送报告", exact: true }).click();
-      const download = await downloadPromise;
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        page.getByRole("button", { name: "发送报告", exact: true }).click(),
+      ]);
       reportPath = path.join(output, download.suggestedFilename());
       await download.saveAs(reportPath);
       bytes = await readFile(reportPath);

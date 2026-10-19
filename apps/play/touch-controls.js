@@ -213,6 +213,7 @@ export function mountTouchControls({
   optionsToggle.onclick = () => showOptions(options.hidden);
   root.querySelector("[data-touch-close]").onclick = () => showOptions(false);
   toolsToggle.onclick = () => {
+    release();
     const show = document.body.classList.toggle("touch-tools-open");
     toolsToggle.setAttribute("aria-expanded", String(show));
   };

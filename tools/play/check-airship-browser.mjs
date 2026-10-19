@@ -1,3 +1,4 @@
+import { clickRegressionControl } from "./browser-assists.mjs";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -72,12 +73,12 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
           JSON.parse(await readFile(fixture.file)),
         );
         await page.goto(base);
-        await page.getByRole("button", { name: "继续剧情测试", exact: true }).click();
+        await clickRegressionControl(page, "继续剧情测试");
         await page.getByRole("button", { name: "自动存档 / 最近继续", exact: true }).click();
         await page.waitForFunction(() => window.ffvi && !window.ffvi.loading);
         for (const name of ["自动行走：开", "自动推进：开"])
           if (await page.getByRole("button", { name, exact: true }).count())
-            await page.getByRole("button", { name, exact: true }).click();
+            await clickRegressionControl(page, name);
         const state = () =>
           page.evaluate(() => ({
             time: window.ffvi.time,
@@ -122,7 +123,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
           // This exact source checkpoint lands on legal ground. Restore it through
           // Continue again rather than teach a test pilot to find a landing tile.
           await page.reload();
-          await page.getByRole("button", { name: "继续剧情测试", exact: true }).click();
+          await clickRegressionControl(page, "继续剧情测试");
           await page.getByRole("button", { name: "自动存档 / 最近继续", exact: true }).click();
           await page.waitForFunction(
             () => window.ffvi && !window.ffvi.loading && !window.ffvi.busy,
@@ -203,8 +204,8 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
             "Must actually observe a transition, not just two endpoints",
           );
         } else {
-          await page.getByRole("button", { name: "自动推进：关", exact: true }).click();
-          await page.getByRole("button", { name: "自动行走：关", exact: true }).click();
+          await clickRegressionControl(page, "自动推进：关");
+          await clickRegressionControl(page, "自动行走：关");
           const deadline = Date.now() + 180000;
           let got = false,
             last = "",
@@ -218,7 +219,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
                 // The real VM/fade clock continues at ordinary play speed.
                 for (const name of ["自动行走：开", "自动推进：开"])
                   if (await page.getByRole("button", { name, exact: true }).count())
-                    await page.getByRole("button", { name, exact: true }).click();
+                    await clickRegressionControl(page, name);
                 result.ordinaryFlightClock = true;
               }
               got = true;

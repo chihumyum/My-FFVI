@@ -1,5 +1,6 @@
 import { Container, Graphics, Rectangle, Text, Sprite, NineSliceSprite } from "pixi.js";
 import { SingleHover, directionalControl } from "./ui-interaction.js";
+import { sampleFieldClip } from "./field-animation.js";
 
 // Retained game controls. These nodes hold labels and input callbacks; Pixi draws
 // every visible window. DOM is used only for initial markup and accessibility.
@@ -192,6 +193,36 @@ export class GameUI {
         ...bounds,
       })),
       selected: visible.filter(([node]) => node.dataset.selected).map(([node]) => this.label(node)),
+      icons: visible
+        .filter(([node]) => node.dataset.contentId)
+        .map(([node, view]) => ({
+          contentId: node.dataset.contentId,
+          resource: this.presentation.contentIcons?.[node.dataset.contentId] || null,
+          loaded: !!view.icon?.visible,
+          labelRight: view.text.x + view.text.width,
+          width: view.layoutWidth,
+        })),
+      figures: visible
+        .filter(([node]) => node.figure)
+        .map(([node, view]) => ({
+          asset: node.figure.asset,
+          animation: node.figure.animation,
+          active: node.figure.active,
+          row: node.figure.row,
+          frame: view.figureFrame || null,
+          loaded: !!view.image?.visible,
+        })),
+      notices: visible.filter(([node]) => node.dataset.notice).map(([node]) => node.textContent),
+      stats: visible
+        .filter(([node]) => node.tag === "stat")
+        .map(([node, view]) => ({
+          label: node.textContent,
+          value: node.value,
+          width: view.layoutWidth,
+          labelWidth: view.text.width,
+          valueWidth: view.statValue?.width,
+          valueX: view.statValue?.x,
+        })),
       cards: visible
         .filter(([node]) => node.dataset.card)
         .map(([node, view]) => ({
@@ -208,7 +239,7 @@ export class GameUI {
     };
   }
   image(url, details) {
-    if (!url) return null;
+    if (!url) return details?.required ? this.texture(url, details) : null;
     const texture = this.texture(url, details);
     this.visibleImages.set(url, texture);
     return texture;
@@ -361,7 +392,8 @@ export class GameUI {
         ? Array.from(label).slice(0, captionLimit).join("") + "…"
         : label;
     if (v.text.text !== visibleLabel) v.text.text = visibleLabel;
-    v.text.style.wordWrapWidth = Math.max(60, width - 30);
+    const iconKey = this.presentation.contentIcons?.[node.dataset.contentId];
+    v.text.style.wordWrapWidth = Math.max(60, width - (iconKey ? 90 : 30));
     const compact = node.dataset.compact === "1";
     v.text.style.fontSize = compact
       ? 26
@@ -376,8 +408,11 @@ export class GameUI {
     if (interactive) height += compact ? 12 : 18;
     if (node.tag === "progress") height = 30;
     if (node.tag === "img") height = Number(node.dataset.height) || 156;
+    if (node.tag === "formation-lane") height = 120;
+    if (node.tag === "formation-heading") height = 42;
     if (node.dataset.card || node.tag === "viewer") height = Number(node.dataset.height) || 150;
     const c = v.container;
+    v.layoutWidth = width;
     if (c.parent !== parent) parent.addChild(c);
     c.position.set(x, y);
     c.visible =
@@ -405,7 +440,47 @@ export class GameUI {
       interactive ? 12 : 0,
       node.dataset.card ? height - 56 : interactive ? 6 : 0,
     );
-    v.text.visible = !["progress", "img", "viewer"].includes(node.tag);
+    v.text.visible = !["progress", "img", "viewer", "formation-lane", "formation-heading"].includes(
+      node.tag,
+    );
+    if (node.tag === "formation-heading") {
+      if (!v.laneLabels)
+        v.laneLabels = ["前排", "后排"].map((label) => {
+          const text = new Text({
+            text: label,
+            style: {
+              fontFamily: this.presentation.fontFamily || "system-ui",
+              fontSize: 30,
+              fill: 0xf4f1e8,
+            },
+          });
+          text.anchor.x = 0.5;
+          c.addChild(text);
+          return text;
+        });
+      v.laneLabels[0].x = width * 0.27;
+      v.laneLabels[1].x = width * 0.73;
+    }
+    if (node.tag === "stat") {
+      if (!v.statValue) {
+        v.statValue = new Text({
+          text: "",
+          style: {
+            fontFamily: this.presentation.fontFamily || "system-ui",
+            fontSize: 30,
+            lineHeight: 42,
+            fill: 0xf4f1e8,
+            align: "right",
+          },
+        });
+        c.addChild(v.statValue);
+      }
+      v.statValue.text = node.value;
+      v.statValue.style.wordWrap = true;
+      v.statValue.style.wordWrapWidth = width * 0.7;
+      v.statValue.position.set(width - v.statValue.width, 0);
+      v.text.style.wordWrapWidth = width * 0.3 - 12;
+    }
     if (node.id === "message" && clip) {
       // A scrollable dialogue may contain more lines than the window. Clip
       // only at line boundaries, rather than exposing half of the next line.
@@ -425,8 +500,7 @@ export class GameUI {
       v.text.style.wordWrapWidth = width - 24;
       v.text.style.breakWords = true;
     }
-    const iconKey = this.presentation.contentIcons?.[node.dataset.contentId],
-      icon = c.visible && this.image(this.presentation.icons?.[iconKey]?.url);
+    const icon = c.visible && this.image(this.presentation.icons?.[iconKey]?.url);
     if (icon) {
       if (!v.icon) {
         v.icon = new Sprite();
@@ -497,6 +571,40 @@ export class GameUI {
         if (node.tag === "viewer") this.viewer(v, node, width, height, fit);
       }
     }
+    if (node.figure) {
+      const figure = node.figure;
+      const frame =
+        figure.character &&
+        sampleFieldClip(
+          figure.character,
+          figure.animation,
+          figure.active ? performance.now() / 1000 : 0,
+        );
+      v.figureFrame = frame?.name;
+      const texture = this.image(frame?.info.file, {
+        required: true,
+        entityId: `menu:${figure.asset}`,
+        resource: "party-order",
+        asset: figure.asset,
+      });
+      if (!v.image) {
+        v.image = new Sprite();
+        c.addChild(v.image);
+      }
+      v.image.visible = !!texture;
+      const center = width * (figure.row === "back" ? 0.73 : 0.27);
+      v.box.roundRect(center - 54, 4, 108, height - 8, 8).fill({ color: 0x6083b6, alpha: 0.17 });
+      if (texture) {
+        v.image.texture = texture;
+        const scale = Math.max(
+          1,
+          Math.floor(Math.min(96 / texture.width, (height - 12) / texture.height)),
+        );
+        v.image.anchor.set(0.5, 1);
+        v.image.scale.set(frame.flip ? -scale : scale, scale);
+        v.image.position.set(Math.round(center), height - 6);
+      }
+    }
     if (node.tag === "progress") {
       v.box.rect(0, 0, width, height).fill(0x1a263c);
       v.box
@@ -561,6 +669,21 @@ export class GameUI {
     };
     for (const node of nodes) {
       if (node.hidden || node.tag === "option") continue;
+      if (node.tag === "columns") {
+        newline();
+        const weights = node.dataset.weights.split(",").map(Number),
+          total = weights.reduce((a, b) => a + b, 0);
+        const available = width - 24 * (node.children.length - 1);
+        let nextX = x,
+          end = y;
+        for (const [index, column] of node.children.entries()) {
+          const columnWidth = Math.floor((available * weights[index]) / total);
+          end = Math.max(end, this.flow(column.children, parent, nextX, y, columnWidth, clip));
+          nextX += columnWidth + 24;
+        }
+        y = end + 12;
+        continue;
+      }
       if (node.tag === "grid") {
         newline();
         const columns = Math.max(1, Number(node.dataset.columns) || 6),
@@ -589,7 +712,16 @@ export class GameUI {
       if (
         node._text ||
         inline ||
-        ["progress", "button", "select", "input", "img", "viewer"].includes(node.tag)
+        [
+          "progress",
+          "button",
+          "select",
+          "input",
+          "img",
+          "viewer",
+          "formation-lane",
+          "formation-heading",
+        ].includes(node.tag)
       ) {
         const w = inline
           ? Number(node.dataset.width) ||
@@ -597,7 +729,15 @@ export class GameUI {
               ? 180
               : Math.min(
                   width,
-                  Math.max(132, Math.ceil((this.label(node).length * 30 + 36) / 6) * 6),
+                  Math.max(
+                    132,
+                    Math.ceil(
+                      (this.label(node).length * 30 +
+                        36 +
+                        (this.presentation.contentIcons?.[node.dataset.contentId] ? 60 : 0)) /
+                        6,
+                    ) * 6,
+                  ),
                 ))
           : width;
         if (left + w > width) newline();
@@ -806,6 +946,15 @@ export class GameUI {
       }
     }
     for (const [url, old] of this.visibleImages) if (this.texture(url) !== old) revision++;
+    for (const [node, view] of this.views)
+      if (node.figure?.character && node.figure.active && view.container.visible) {
+        const frame = sampleFieldClip(
+          node.figure.character,
+          node.figure.animation,
+          performance.now() / 1000,
+        );
+        if (frame?.name !== view.figureFrame) revision++;
+      }
     if (this.dialogue?.source) {
       const d = this.dialogue,
         count = Array.from(d.text).length,
@@ -825,7 +974,15 @@ export class GameUI {
       this.clearHover();
       this.lastLayoutRevision = layoutRevision;
     }
-    if (this.popup || this.lastRevision === revision) return;
+    if (this.popup) {
+      if (this.lastRevision !== revision && this.popupLayout) {
+        this.lastRevision = revision;
+        this.flow(this.popupLayout.rows, this.popupLayer, 210, 120, 1500);
+        this.flow(this.popupLayout.controls, this.popupLayer, 210, 900, 1500);
+      }
+      return;
+    }
+    if (this.lastRevision === revision) return;
     this.lastRevision = revision;
     this.visibleImages.clear();
     this.used = new Set();
@@ -986,6 +1143,7 @@ export class GameUI {
     const rows = node.children.slice(page * 12, (page + 1) * 12).map((option) => {
       const choice = createWidget("button");
       choice.textContent = option.textContent;
+      if (option.dataset.contentId) choice.dataset.contentId = option.dataset.contentId;
       choice.onclick = () => {
         node.value = option.value;
         node.onchange?.();
@@ -1009,6 +1167,7 @@ export class GameUI {
     this.used = new Set(this.views.keys());
     this.flow(rows, this.popupLayer, 210, 120, 1500);
     this.flow([previous, next, close], this.popupLayer, 210, 900, 1500);
+    this.popupLayout = { rows, controls: [previous, next, close] };
     this.popup = true;
   }
   openTextInput(node) {
@@ -1064,6 +1223,7 @@ export class GameUI {
       }
     this.popupLayer.removeChildren().forEach((c) => c.destroy({ children: true }));
     this.popup = false;
+    this.popupLayout = null;
     revision++;
   }
   keyboardControls() {
