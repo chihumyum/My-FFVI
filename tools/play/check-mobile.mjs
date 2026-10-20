@@ -292,7 +292,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
           timeout: 20000,
         },
       );
-      await choose("战斗");
+      await choose(/^(战斗|攻击)$/);
       const optionsText = await page.locator(".pixi-accessibility").innerText();
       result.targetOptions = optionsText;
       const enemyName = await page.evaluate(
