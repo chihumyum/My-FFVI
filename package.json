@@ -14,6 +14,8 @@
     "play:through": "node tools/play/playthrough.mjs",
     "play:akto": "node tools/play/build-akto.mjs --serve",
     "play:akto:city": "node tools/play/build-akto.mjs --city --serve",
+    "story:editor": "node tools/play/story-editor.mjs",
+    "story:check": "node tools/play/check-story-editor.mjs",
     "play:story-screenshots": "node tools/play/capture-story-browser.mjs",
     "play:optional-inventory": "node tools/play/optional-inventory.mjs",
     "play:optional": "node tools/play/optional-run.mjs",

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My FFVI · 剧情工作台</title>
+    <link rel="stylesheet" href="./story-editor.css" />
+  </head>
+  <body>
+    <datalist id="map-options"></datalist>
+    <header class="app-bar">
+      <div class="brand">MY FFVI <span>剧情工作台</span></div>
+      <input id="document-title" aria-label="项目名称" value="阿克托 · 一封信的去处" />
+      <span id="save-state">本机创作</span>
+      <button id="undo" title="Ctrl/Cmd+Z">撤销</button><button id="redo">重做</button>
+      <button id="save" class="primary">保存到文件</button><button id="export">导出</button>
+    </header>
+    <div class="app-layout">
+      <aside class="library">
+        <div class="section-head">
+          <h2>创作项目</h2>
+          <button id="new-project">＋ 新建</button>
+        </div>
+        <select id="documents" aria-label="已保存的创作项目">
+          <option value="">选择项目</option>
+        </select>
+        <div class="button-row">
+          <button id="demo">阿克托样例</button><button id="import">导入文件</button
+          ><input id="import-file" type="file" accept="application/json,.json" hidden />
+        </div>
+        <div id="scene-list"></div>
+        <button id="add-scene" class="wide">＋ 新建脚本</button>
+        <div class="section-head source-heading">
+          <h2>现有脚本库</h2>
+          <span id="corpus-count"></span>
+        </div>
+        <input
+          id="search"
+          type="search"
+          aria-label="搜索脚本和对白"
+          placeholder="标题、脚本名或对白…"
+        />
+        <div class="filter-row">
+          <select id="category" aria-label="脚本类别">
+            <option value="">全部类别</option>
+            <option>剧情</option>
+            <option>地图</option>
+            <option>公共</option>
+            <option>战斗事件</option>
+            <option>怪物 AI</option>
+            <option>阿克托</option></select
+          ><input id="map-filter" type="number" aria-label="按地图 ID 筛选" placeholder="地图 ID" />
+        </div>
+        <div id="source-list"></div>
+        <div class="pager">
+          <button id="previous">上一页</button><span id="result-count"></span
+          ><button id="next">下一页</button>
+        </div>
+        <button id="opera-open" class="wide">查看歌剧时间轴</button>
+        <p class="library-note">本机创作文件与原版数据分开保存。试玩存档属于工作台。</p>
+      </aside>
+      <main>
+        <div class="workspace-head">
+          <div>
+            <p class="eyebrow" id="document-kind">原创剧情</p>
+            <h1 id="scene-title">送信人：选择信件去处</h1>
+          </div>
+          <div class="button-row">
+            <button id="copy-scene">复制脚本</button><button id="rename-scene">修改脚本名称</button>
+          </div>
+        </div>
+        <nav class="view-tabs" aria-label="编辑视图">
+          <button data-view="graph" aria-pressed="true">流程图</button
+          ><button data-view="steps" aria-pressed="false">演出步骤</button
+          ><button data-view="tracks" aria-pressed="false">角色轨道</button
+          ><button data-view="preview" aria-pressed="false">地图与试玩</button>
+        </nav>
+        <div id="graph-panel" class="view-panel">
+          <div class="graph-toolbar">
+            <select id="segment" aria-label="原版脚本分段" hidden></select
+            ><span id="graph-summary"></span><button id="graph-prev" hidden>前 80 步</button
+            ><button id="graph-next" hidden>后 80 步</button>
+          </div>
+          <div id="graph" class="graph-scroll"></div>
+        </div>
+        <div id="steps-panel" class="view-panel" hidden><div id="steps"></div></div>
+        <div id="tracks-panel" class="view-panel" hidden><div id="tracks"></div></div>
+        <section id="preview-panel" class="view-panel" hidden>
+          <div class="preview-controls">
+            <label
+              >世界<select id="preview-world">
+                <option value="akto">阿克托扩充版</option>
+                <option value="original">原版世界</option>
+              </select></label
+            ><label>地图 ID<input id="preview-map" type="number" value="9102" /></label
+            ><label>入口<input id="preview-entrance" type="number" value="1" /></label
+            ><button id="play" class="primary">应用草稿并重新试玩</button>
+          </div>
+          <div class="preview-split">
+            <div>
+              <div id="stage">
+                <canvas id="game" aria-label="剧情隔离试玩"></canvas>
+                <div id="preview-loading">应用草稿后，通过方向键与确认键试玩</div>
+                <div id="dialogue" hidden>
+                  <strong id="speaker"></strong>
+                  <p id="message"></p>
+                  <div id="choices"></div>
+                  <button id="confirm">确认继续</button>
+                </div>
+              </div>
+              <div class="button-row">
+                <button id="pause">暂停</button><button id="step">单步</button
+                ><button id="preview-save">保存试玩进度</button
+                ><button id="preview-load">读取试玩进度</button><button id="audio">开启声音</button>
+              </div>
+              <div class="button-row">
+                <button id="run-source" hidden>从当前位置运行所选原版脚本</button
+                ><label class="file-button"
+                  >导入普通存档<input id="checkpoint-file" type="file" accept=".json"
+                /></label>
+              </div>
+              <p id="preview-status" role="status">
+                方向键 / WASD 移动，Enter / 空格确认。选择项直接点击。
+              </p>
+            </div>
+            <div class="map-panel">
+              <canvas
+                id="map-picker"
+                width="512"
+                height="512"
+                aria-label="地图取点与 NPC 绑定"
+              ></canvas>
+              <p>点击地图选中 NPC；选中移动节点时，点击设置目的地。</p>
+              <div id="world-values"></div>
+            </div>
+          </div>
+          <details open>
+            <summary>执行记录</summary>
+            <div id="trace"></div>
+          </details>
+        </section>
+        <div class="workspace-foot">
+          <select id="node-type" aria-label="新节点类型"></select
+          ><button id="add-node">＋ 插入节点</button><button id="copy-node">复制节点</button
+          ><button id="delete-node">删除节点</button><span id="selection-status"></span>
+        </div>
+      </main>
+      <aside class="inspector">
+        <nav class="inspector-tabs">
+          <button data-inspector="node" aria-pressed="true">节点</button
+          ><button data-inspector="world">触发与世界</button
+          ><button data-inspector="references">引用</button
+          ><button data-inspector="versions">版本</button>
+        </nav>
+        <div id="properties"></div>
+        <details>
+          <summary>编译后的运行指令</summary>
+          <pre id="compiled"></pre>
+        </details>
+      </aside>
+    </div>
+    <div id="notification" role="status" hidden></div>
+    <dialog id="opera-dialog">
+      <div class="section-head">
+        <h2>歌剧演出时间轴</h2>
+        <button id="opera-close">关闭</button>
+      </div>
+      <select id="opera-select" aria-label="歌剧时间轴"></select>
+      <div id="opera-tracks"></div>
+    </dialog>
+    <script type="module" src="./story-editor.js"></script>
+  </body>
+</html>
