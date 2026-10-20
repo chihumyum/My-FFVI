@@ -1,15 +1,22 @@
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
+export function constrainZoom({ scale = 1, x = 0, y = 0 } = {}) {
+  scale = clamp(Number.isFinite(scale) ? scale : 1, 0.1, 10);
+  const low = Math.min(0, 1 - scale),
+    high = Math.max(0, 1 - scale);
+  return { scale, x: clamp(x || 0, low, high), y: clamp(y || 0, low, high) };
+}
+
 // Offsets are fractions of the unscaled game viewport. Only the renderer's
 // world container consumes these values; neither the canvas nor its UI scales.
 export function zoomAt(view, scale, anchor, previousAnchor = anchor) {
-  scale = clamp(scale, 1, 3);
+  scale = constrainZoom({ scale }).scale;
   const ratio = scale / view.scale;
-  return {
+  return constrainZoom({
     scale,
-    x: clamp(anchor.x - (previousAnchor.x - view.x) * ratio, 1 - scale, 0),
-    y: clamp(anchor.y - (previousAnchor.y - view.y) * ratio, 1 - scale, 0),
-  };
+    x: anchor.x - (previousAnchor.x - view.x) * ratio,
+    y: anchor.y - (previousAnchor.y - view.y) * ratio,
+  });
 }
 
 export function mountGameZoom({
@@ -20,6 +27,7 @@ export function mountGameZoom({
 }) {
   let view = { scale: 1, x: 0, y: 0 };
   let gesture = null;
+  let trackpadGesture = null;
   const pointers = new Map();
   const targets = new Map();
   const suppressed = new Set();
@@ -122,6 +130,61 @@ export function mountGameZoom({
     targets.clear();
     suppressed.clear();
     gesture = null;
+    trackpadGesture = null;
+    emit();
+  };
+  const center = { x: 0.5, y: 0.5 };
+  const anchorAt = (event) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      x: (event.clientX - rect.left) / rect.width,
+      y: (event.clientY - rect.top) / rect.height,
+    };
+  };
+  const reset = () => {
+    release();
+    view = { scale: 1, x: 0, y: 0 };
+    emit();
+  };
+  const keydown = (event) => {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+    if (!["+", "=", "-", "_", "0"].includes(event.key)) return;
+    stop(event);
+    onGesture();
+    if (event.key === "0") return reset();
+    view = zoomAt(view, view.scale * (["-", "_"].includes(event.key) ? 1 / 1.2 : 1.2), center);
+    emit();
+  };
+  const wheel = (event) => {
+    if (!event.ctrlKey) return;
+    stop(event);
+    onGesture();
+    view = zoomAt(view, view.scale * Math.exp(clamp(-event.deltaY * 0.01, -5, 5)), anchorAt(event));
+    emit();
+  };
+  // Desktop Safari supplies GestureEvent for trackpad pinch. Touch screens
+  // already use the pointer pair above, so never process both paths for a pinch.
+  const gestureStart = (event) => {
+    if (navigator.maxTouchPoints > 0) return;
+    stop(event);
+    onGesture();
+    trackpadGesture = { view: { ...view }, anchor: anchorAt(event) };
+  };
+  const gestureChange = (event) => {
+    if (!trackpadGesture) return;
+    stop(event);
+    view = zoomAt(
+      trackpadGesture.view,
+      trackpadGesture.view.scale * event.scale,
+      anchorAt(event),
+      trackpadGesture.anchor,
+    );
+    emit(true);
+  };
+  const gestureEnd = (event) => {
+    if (!trackpadGesture) return;
+    stop(event);
+    trackpadGesture = null;
     emit();
   };
   const click = (event) => {
@@ -144,14 +207,15 @@ export function mountGameZoom({
   window.addEventListener("pointerup", up, { capture: true, passive: false });
   window.addEventListener("pointercancel", up, { capture: true, passive: false });
   window.addEventListener("click", click, true);
+  window.addEventListener("keydown", keydown, true);
+  window.addEventListener("wheel", wheel, { capture: true, passive: false });
+  window.addEventListener("gesturestart", gestureStart, { capture: true, passive: false });
+  window.addEventListener("gesturechange", gestureChange, { capture: true, passive: false });
+  window.addEventListener("gestureend", gestureEnd, { capture: true, passive: false });
   window.addEventListener("blur", release);
   document.addEventListener("visibilitychange", visibility);
   return {
-    reset() {
-      release();
-      view = { scale: 1, x: 0, y: 0 };
-      emit();
-    },
+    reset,
     destroy() {
       release();
       window.removeEventListener("pointerdown", down, true);
@@ -159,6 +223,11 @@ export function mountGameZoom({
       window.removeEventListener("pointerup", up, true);
       window.removeEventListener("pointercancel", up, true);
       window.removeEventListener("click", click, true);
+      window.removeEventListener("keydown", keydown, true);
+      window.removeEventListener("wheel", wheel, true);
+      window.removeEventListener("gesturestart", gestureStart, true);
+      window.removeEventListener("gesturechange", gestureChange, true);
+      window.removeEventListener("gestureend", gestureEnd, true);
       window.removeEventListener("blur", release);
       document.removeEventListener("visibilitychange", visibility);
     },

@@ -11,19 +11,19 @@ test("pinch scales around its world anchor and can pan without scaling the UI", 
   assert.ok(Math.abs(moved.y + 0.3) < 1e-9);
 });
 
-test("zoom never exposes an empty border and restoring scale one removes all pan", () => {
+test("zoom supports shrinking around the anchor and restoring scale one removes all pan", () => {
   const original = { scale: 1, x: 0, y: 0 };
-  assert.deepEqual(zoomAt(original, 8, { x: 0.5, y: 0.5 }), {
-    scale: 3,
-    x: -1,
-    y: -1,
+  assert.deepEqual(zoomAt(original, 0.5, { x: 0.5, y: 0.5 }), {
+    scale: 0.5,
+    x: 0.25,
+    y: 0.25,
   });
   assert.deepEqual(zoomAt(original, 2, { x: -10, y: 10 }), {
     scale: 2,
     x: 0,
     y: -1,
   });
-  assert.deepEqual(zoomAt({ scale: 3, x: -1, y: -1 }, 0, { x: 0.2, y: 0.8 }), {
+  assert.deepEqual(zoomAt({ scale: 3, x: -1, y: -1 }, 1, { x: 0.2, y: 0.8 }), {
     scale: 1,
     x: 0,
     y: 0,

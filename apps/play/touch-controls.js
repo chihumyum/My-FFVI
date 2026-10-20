@@ -9,39 +9,6 @@ export function isTextEntry(target) {
   );
 }
 
-// Retain the label next to a repeated action, e.g. the item legend above a
-// generic "Use" button. Its real Pixi control remains the activation target.
-export function touchActionLabels(ui) {
-  const contexts = new Map();
-  const visit = (node, context = "") => {
-    if (node.tag === "fieldset")
-      context = node.children.find((child) => child.tag === "legend")?.textContent || context;
-    contexts.set(node, context);
-    for (const child of node.children) visit(child, context);
-  };
-  for (const root of ui.windows) visit(root);
-  return new Map(
-    [...ui.views].map(([node, view]) => {
-      const label = (node.tag === "button" && node.attributes["aria-label"]) || ui.label(node);
-      const context = contexts.get(node);
-      return [view.container, context ? `${context} · ${label}` : label];
-    }),
-  );
-}
-
-export function distinguishTouchActions(actions) {
-  const counts = new Map(),
-    seen = new Map();
-  for (const { label } of actions) counts.set(label, (counts.get(label) || 0) + 1);
-  return actions.map((action) => {
-    const index = (seen.get(action.label) || 0) + 1;
-    seen.set(action.label, index);
-    return counts.get(action.label) > 1
-      ? { ...action, label: `${action.label}（${index}）` }
-      : action;
-  });
-}
-
 // One key may be held by two fingers. Releasing either finger must not release
 // the other, and an interrupted pointer must never leave a direction held.
 export class TouchKeyState {
@@ -74,8 +41,6 @@ export function mountTouchControls({
   onLayout,
   onZoom,
   canvas = document.getElementById("screen"),
-  getActions,
-  getReadout,
 }) {
   const root = document.createElement("div");
   root.id = "touch-controls";
@@ -84,16 +49,9 @@ export function mountTouchControls({
     <div class="touch-toolbar">
       <button type="button" data-game-fullscreen hidden aria-pressed="false">全屏</button>
       <button type="button" data-touch-toggle>触控</button>
-      <button type="button" data-touch-options aria-expanded="false">选项</button>
       <button type="button" data-touch-tools aria-expanded="false">工具</button>
       <button type="button" data-touch-zoom hidden aria-label="重置游戏画面缩放">100%</button>
       <output data-fullscreen-status role="status" hidden></output>
-    </div>
-    <div class="touch-options" hidden>
-      <div class="touch-options-heading"><strong>当前可用操作</strong><button type="button" data-touch-close>收起</button></div>
-      <div class="touch-readout" aria-live="polite"></div>
-      <p>与画面中的按钮相同，可在这里大字点选。更多项目请点“下页”。</p>
-      <div class="touch-options-list"></div>
     </div>
     <div class="touch-pad" hidden>
       <div class="touch-dpad" aria-label="方向键">
@@ -113,14 +71,10 @@ export function mountTouchControls({
   document.body.append(root);
   const pad = root.querySelector(".touch-pad");
   const toggle = root.querySelector("[data-touch-toggle]");
-  const optionsToggle = root.querySelector("[data-touch-options]");
   const toolsToggle = root.querySelector("[data-touch-tools]");
   const zoomReset = root.querySelector("[data-touch-zoom]");
   const fullscreenToggle = root.querySelector("[data-game-fullscreen]");
   const fullscreenStatus = root.querySelector("[data-fullscreen-status]");
-  const options = root.querySelector(".touch-options");
-  const actions = root.querySelector(".touch-options-list");
-  const readout = root.querySelector(".touch-readout");
   const coarse = matchMedia("(any-pointer: coarse)");
   let preference;
   try {
@@ -176,7 +130,7 @@ export function mountTouchControls({
     document.body.style.setProperty("--touch-viewport-height", `${height}px`);
     const main = document.querySelector("main");
     const adaptiveViewport =
-      coarse.matches || navigator.maxTouchPoints > 0 || enabled || !!document.fullscreenElement;
+      coarse.matches || navigator.maxTouchPoints > 0 || !!document.fullscreenElement;
     document.body.classList.toggle("touch-viewport", adaptiveViewport);
     if (adaptiveViewport) {
       const style = getComputedStyle(root);
@@ -190,27 +144,14 @@ export function mountTouchControls({
     onLayout?.();
     positionPad();
   }
-  function showOptions(show) {
-    release();
-    options.hidden = !show;
-    optionsToggle.setAttribute("aria-expanded", String(show));
-    if (show) refreshActions();
-  }
   function update() {
     enabled =
       preference === "on" ||
       (preference === "auto" && (coarse.matches || navigator.maxTouchPoints > 0));
     document.body.classList.toggle("touch-enabled", enabled);
     pad.hidden = !enabled;
-    optionsToggle.hidden = !enabled;
-    toolsToggle.hidden = !enabled;
     toggle.textContent = `触控：${enabled ? "开" : "关"}`;
     toggle.setAttribute("aria-pressed", String(enabled));
-    if (!enabled) {
-      if (!options.hidden) showOptions(false);
-      document.body.classList.remove("touch-tools-open");
-      toolsToggle.setAttribute("aria-expanded", "false");
-    }
     layout();
   }
   toggle.onclick = () => {
@@ -222,8 +163,6 @@ export function mountTouchControls({
     }
     update();
   };
-  optionsToggle.onclick = () => showOptions(options.hidden);
-  root.querySelector("[data-touch-close]").onclick = () => showOptions(false);
   toolsToggle.onclick = () => {
     release();
     const show = document.body.classList.toggle("touch-tools-open");
@@ -260,7 +199,7 @@ export function mountTouchControls({
           event.target === canvas || !!event.target?.closest?.(".pixi-accessibility"),
         onGesture: release,
         onChange: (view) => {
-          zoomReset.hidden = view.scale <= 1.001;
+          zoomReset.hidden = Math.abs(view.scale - 1) <= 0.001;
           zoomReset.textContent = `${Math.round(view.scale * 100)}% ↺`;
           onZoom?.(view);
         },
@@ -271,7 +210,6 @@ export function mountTouchControls({
     button.addEventListener("pointerdown", (e) => {
       if (e.button !== 0 || !enabled || isTextEntry(document.activeElement)) return;
       e.preventDefault();
-      if (!options.hidden) showOptions(false);
       button.setPointerCapture(e.pointerId);
       held.press(e.pointerId, button.dataset.gameKey);
       button.classList.add("pressed");
@@ -300,36 +238,6 @@ export function mountTouchControls({
     // confirm a second dialogue or send a second menu toggle.
     button.addEventListener("click", (e) => e.preventDefault());
   }
-  let actionSignature = "";
-  function refreshActions() {
-    if (options.hidden) return;
-    const available = getActions?.() || [];
-    const text = getReadout?.() || "";
-    if (readout.textContent !== text) readout.textContent = text;
-    readout.hidden = !text;
-    const signature = available.map((action) => `${action.id}:${action.label}`).join("\n");
-    if (signature === actionSignature) return;
-    actionSignature = signature;
-    actions.replaceChildren();
-    for (const action of available) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = action.label;
-      button.onclick = () => {
-        // Resolve against the latest UI again; a battle or dialogue may have
-        // advanced while this readable list was open.
-        (getActions?.() || [])
-          .find((current) => current.id === action.id && current.label === action.label)
-          ?.activate();
-        actionSignature = "";
-        requestAnimationFrame(refreshActions);
-      };
-      actions.append(button);
-    }
-    if (!available.length)
-      actions.textContent = "当前没有可点选的菜单。使用方向键移动，或按确认交互。";
-  }
-  const actionTimer = setInterval(refreshActions, 250);
   const visibility = () => {
     if (document.hidden) release();
   };
@@ -350,7 +258,6 @@ export function mountTouchControls({
     resetZoom: () => zoom?.reset(),
     destroy() {
       release();
-      clearInterval(actionTimer);
       window.removeEventListener("blur", release);
       window.removeEventListener("orientationchange", layout);
       window.removeEventListener("resize", layout);

@@ -78,6 +78,23 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
     );
     await page.goto(base);
     await page.locator("#cloud-toggle").waitFor({ timeout: 60000 });
+    await page.waitForFunction(() => window.ffviUIDiagnostics && !window.ffviLoading().active);
+    await page.getByRole("button", { name: "新游戏", exact: true }).hover();
+    await page.waitForFunction(() =>
+      window.ffviUIDiagnostics().cursors.some((c) => c.label === "新游戏"),
+    );
+    row.titleCursor = await page.evaluate(() =>
+      window.ffviUIDiagnostics().cursors.find((c) => c.label === "新游戏"),
+    );
+    for (const mask of row.titleCursor.masks) {
+      const bounds = row.titleCursor.bounds;
+      assert(bounds.x >= mask.x - 0.01 && bounds.y >= mask.y - 0.01);
+      assert(bounds.x + bounds.width <= mask.x + mask.width + 0.01);
+      assert(bounds.y + bounds.height <= mask.y + mask.height + 0.01);
+    }
+    await page
+      .locator("#screen")
+      .screenshot({ path: path.join(output, `${name}-title-cursor.png`) });
     await page.locator("#cloud-toggle").click();
     await page.locator('#cloud-panel input[type="file"]').setInputFiles({
       name: "actual-save.json",
@@ -112,6 +129,19 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
     assert.equal(row.metrics.texturesFailed, 0);
     assert.deepEqual(row.errors, []);
     assert.deepEqual(row.apiRequests, []);
+    if (!touch) {
+      const before = await page.locator("#screen").boundingBox();
+      const tools = page.locator("[data-touch-tools]");
+      const toolbar = await tools.boundingBox();
+      await page.keyboard.press("Meta+-");
+      await page.waitForFunction(() => window.ffviRenderMetrics().gameZoom.scale < 1);
+      assert.deepEqual(await page.locator("#screen").boundingBox(), before);
+      assert.deepEqual(await tools.boundingBox(), toolbar);
+      await page.screenshot({ path: path.join(output, `${name}-desktop-zoom-out.png`) });
+      await page.keyboard.press("Meta+0");
+      assert.equal(await page.evaluate(() => window.ffviRenderMetrics().gameZoom.scale), 1);
+      row.desktopZoom = true;
+    }
     if (touch) {
       row.userAgent = await page.evaluate(() => navigator.userAgent);
       row.touch = await page.evaluate(() => {
@@ -144,6 +174,15 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
       const before = await page.locator("#screen").boundingBox();
       await page.locator("[data-touch-toggle]").tap();
       assert.deepEqual(await page.locator("#screen").boundingBox(), before);
+      assert.equal(await page.locator("[data-touch-options]").count(), 0);
+      const tools = page.locator("[data-touch-tools]");
+      assert(await tools.isVisible());
+      await tools.tap();
+      assert(await page.locator("#play-tools").isVisible());
+      assert.deepEqual(await page.locator("#screen").boundingBox(), before);
+      await page.screenshot({ path: path.join(output, `${name}-tools-with-touch-off.png`) });
+      await tools.tap();
+      row.toolsWithoutGamepad = true;
       const y = before.y + before.height * 0.3,
         left = before.x + before.width * 0.4,
         right = before.x + before.width * 0.6;

@@ -46,9 +46,16 @@ body.touch-viewport canvas {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
+#touch-controls [data-touch-zoom] {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 72px;
+  font-variant-numeric: tabular-nums;
+}
 #touch-controls [data-fullscreen-status] {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 48px);
   right: 0;
   width: max-content;
   max-width: min(320px, 90vw);
@@ -132,12 +139,6 @@ body.touch-viewport canvas {
   box-shadow:
     inset 0 0 0 1px #f5fbffad,
     0 1px 6px #040d194d;
-}
-#touch-controls .touch-options {
-  bottom: max(12px, env(safe-area-inset-bottom, 0px));
-  z-index: 2;
-  max-width: 720px;
-  margin-inline: auto;
 }
 @media (orientation: landscape) and (max-height: 600px) {
   #touch-controls {

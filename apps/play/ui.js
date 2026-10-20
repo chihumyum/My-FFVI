@@ -6,6 +6,7 @@ import { sampleFieldClip } from "./field-animation.js";
 // every visible window. DOM is used only for initial markup and accessibility.
 let revision = 0;
 let layoutRevision = 0;
+const cursorOverhang = 30;
 const layoutChanged = () => {
   revision++;
   layoutRevision++;
@@ -192,6 +193,29 @@ export class GameUI {
         current: node === this.keyboardNode,
         ...bounds,
       })),
+      cursors: visible
+        .filter(([, view]) => view.pointer?.visible)
+        .map(([node, view]) => {
+          const rectangle = (bounds) => ({
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: bounds.height,
+          });
+          const masks = [];
+          for (let parent = view.pointer.parent; parent; parent = parent.parent) {
+            const mask = parent.mask;
+            if (!mask) continue;
+            const measurable = mask.measurable;
+            try {
+              mask.measurable = true;
+              masks.push(rectangle(mask.getBounds()));
+            } finally {
+              mask.measurable = measurable;
+            }
+          }
+          return { label: this.label(node), bounds: rectangle(view.pointer.getBounds()), masks };
+        }),
       selected: visible.filter(([node]) => node.dataset.selected).map(([node]) => this.label(node)),
       icons: visible
         .filter(([node]) => node.dataset.contentId)
@@ -534,7 +558,7 @@ export class GameUI {
         c.addChild(v.pointer);
       }
       v.pointer.texture = pointer;
-      v.pointer.position.set(-30, Math.floor((height - 42) / 2));
+      v.pointer.position.set(-cursorOverhang, Math.floor((height - 42) / 2));
       v.pointer.width = 42;
       v.pointer.height = 42;
       v.pointer.visible = !!(v.hover || v.keyboard) && !node.disabled;
@@ -1095,7 +1119,9 @@ export class GameUI {
       const pinY = height - (root.id === "dialogue" && pinned.length > 2 ? 132 : 66);
       v.mask
         .clear()
-        .rect(bodyX, bodyY, bodyWidth, pinY - bodyY - 12)
+        // The selection hand extends left of the first column. Preserve that
+        // gutter while still clipping content at the scroll viewport's top/bottom.
+        .rect(bodyX - cursorOverhang, bodyY, bodyWidth + cursorOverhang, pinY - bodyY - 12)
         .fill(0xffffff);
       const end = this.flow(body, v.content, bodyX, bodyY - scroll, bodyWidth, [bodyY, pinY - 12]);
       this.flow(pinned, v.container, 24, pinY, width - (root.id === "dialogue" ? 48 : 480));

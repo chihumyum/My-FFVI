@@ -83,7 +83,6 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
         .click();
       await choose("继续游戏");
       await choose(/(^| · )读取存档 1$/);
-      await page.locator("[data-touch-close]").tap();
     }
     await page.waitForFunction(() => window.ffvi?.mapId === 1 && !window.ffvi.loading);
     await page.waitForFunction(() => document.body.classList.contains("touch-enabled"));
@@ -98,13 +97,12 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     await page.waitForTimeout(hold);
     await page.mouse.up();
   };
-  const openOptions = async () => {
-    if ((await page.locator("[data-touch-options]").getAttribute("aria-expanded")) !== "true")
-      await page.locator("[data-touch-options]").tap();
-  };
   const choose = async (name) => {
-    await openOptions();
-    await page.locator(".touch-options-list").getByRole("button", { name, exact: true }).tap();
+    await page
+      .locator(".pixi-accessibility")
+      .getByRole("button", { name, exact: true })
+      .first()
+      .tap();
   };
   try {
     if (staticMode && process.env.PLAY_MOBILE_STORAGE_STATE && results.length === 0) {
@@ -237,45 +235,39 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     await press("返回或打开菜单");
     await choose("道具");
     await page.waitForTimeout(300);
-    const itemLabels = await page.locator(".touch-options-list button").allTextContents();
-    assert.ok(itemLabels.some((label) => /· 使用$/.test(label)));
-    assert.ok(!itemLabels.includes("使用"), "Generic item actions lost the item they belong to");
-    assert.equal(new Set(itemLabels).size, itemLabels.length);
+    const itemLabels = await page.locator(".pixi-accessibility button").allTextContents();
+    assert.ok(itemLabels.includes("使用"));
     await screenshot("menu-landscape");
     await choose("装备");
     await page.waitForTimeout(300);
-    const equipmentLabels = await page.locator(".touch-options-list button").allTextContents();
+    const equipmentLabels = await page.locator(".pixi-accessibility button").allTextContents();
     assert.ok(equipmentLabels.some((label) => label.includes("右手")));
     assert.ok(equipmentLabels.some((label) => label.includes("左手")));
-    assert.equal(new Set(equipmentLabels).size, equipmentLabels.length);
     await screenshot("equipment-landscape");
     await choose("设置");
     await page.waitForTimeout(300);
-    const settingsLabels = await page.locator(".touch-options-list button").allTextContents();
+    const settingsLabels = await page.locator(".pixi-accessibility button").allTextContents();
     assert.ok(settingsLabels.some((label) => label.includes("ATB 模式")));
     assert.ok(settingsLabels.some((label) => label.includes("战斗速度")));
     assert.ok(settingsLabels.some((label) => /ATB 模式：等待 ▾$/.test(label)));
     assert.ok(settingsLabels.some((label) => /战斗速度：4 ▾$/.test(label)));
-    assert.equal(new Set(settingsLabels).size, settingsLabels.length);
     await screenshot("settings-landscape");
     await choose("存档");
     await page.waitForTimeout(300);
-    const saveLabels = await page.locator(".touch-options-list button").allTextContents();
+    const saveLabels = await page.locator(".pixi-accessibility button").allTextContents();
     assert.ok(saveLabels.some((label) => label.includes("存档 2")));
-    assert.equal(new Set(saveLabels).size, saveLabels.length);
     const saveAction = saveLabels.find((label) => /(写入|覆盖)存档 2$/.test(label));
     assert.ok(saveAction, "Slot 2 must expose its actual write or overwrite control");
     await choose(saveAction);
     await page
-      .locator(".touch-options-list")
+      .locator(".pixi-accessibility")
       .getByRole("button", { name: /(^| · )覆盖存档 2$/, exact: true })
       .waitFor();
     await screenshot("save-landscape");
     await choose("返回");
-    await button("收起").tap();
     await press("返回或打开菜单");
     result.checks.push({
-      name: "virtual menu, readable original actions and distinct item/equipment/settings/save labels",
+      name: "virtual menu and original item/equipment/settings/save controls",
       itemLabels,
       equipmentLabels,
       settingsLabels,
@@ -285,14 +277,12 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     await page.setViewportSize({ width: 390, height: 844 });
     if (!staticMode) {
       await visit("dialogue");
-      await openOptions();
-      assert.ok((await page.locator(".touch-readout").innerText()).length > 5);
+      assert.ok((await page.evaluate(() => window.ffvi.dialogue.text)).length > 5);
       await screenshot("dialogue-portrait");
-      await button("收起").tap();
       await press("确认或交互");
       await press("确认或交互");
       assert.equal(await page.evaluate(() => !!window.ffvi.dialogue), false);
-      result.checks.push({ name: "readable dialogue and confirm input" });
+      result.checks.push({ name: "dialogue and confirm input" });
 
       await visit("battle");
       await page.waitForFunction(
@@ -302,18 +292,18 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
           timeout: 20000,
         },
       );
-      await choose("攻击");
-      const optionsText = await page.locator(".touch-options-list").innerText();
+      await choose("战斗");
+      const optionsText = await page.locator(".pixi-accessibility").innerText();
       result.targetOptions = optionsText;
       const enemyName = await page.evaluate(
         () => window.ffvi.battle.enemies.find((unit) => unit.hp > 0).name,
       );
       const target = page
-        .locator(".touch-options-list")
+        .locator(".pixi-accessibility")
         .getByRole("button", { name: enemyName, exact: true });
       for (let n = 0; n < 6 && !(await target.count()); n++) {
         await page
-          .locator(".touch-options-list")
+          .locator(".pixi-accessibility")
           .getByRole("button", { name: "↓ 下页", exact: true })
           .tap();
         await page.waitForTimeout(300);

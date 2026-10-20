@@ -28,12 +28,7 @@ import {
 import { createBattleMenu } from "./battle-menu.js";
 import { BattleFlow } from "./battle-flow.js";
 import { mapAudioCommands, legacySceneAudio } from "./scene-audio.js";
-import {
-  isTextEntry,
-  mountTouchControls,
-  touchActionLabels,
-  distinguishTouchActions,
-} from "./touch-controls.js";
+import { isTextEntry, mountTouchControls } from "./touch-controls.js";
 import { buyFromShop, closeShop, openShop } from "../../src/play/event-systems.js";
 import { submitPartyInput, cancelPartyInput } from "../../src/play/party-input.js";
 import { partyInputMembers } from "../../src/play/party-input.js";
@@ -527,49 +522,12 @@ addEventListener("blur", () => keys.clear());
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) keys.clear();
 });
-const accessibleIds = new WeakMap();
-let accessibleId = 0;
 mountTouchControls({
   onKeyDown: gameKeyDown,
   onKeyUp: gameKeyUp,
   onRelease: () => keys.clear(),
   onLayout: () => renderer.resize(),
   onZoom: (view) => renderer.setGameZoom(view),
-  getReadout: () =>
-    !ui.get("dialogue").hidden
-      ? [ui.get("speaker").textContent, ui.get("message").textContent].filter(Boolean).join("\n")
-      : "",
-  getActions: () => {
-    const labels = touchActionLabels(ui);
-    return distinguishTouchActions(
-      [...document.querySelectorAll(".pixi-accessibility button")]
-        .filter((button) => {
-          const rect = button.getBoundingClientRect();
-          return (
-            !button.disabled &&
-            rect.width > 0 &&
-            rect.height > 0 &&
-            rect.bottom > 0 &&
-            rect.right > 0 &&
-            rect.top < innerHeight &&
-            rect.left < innerWidth &&
-            getComputedStyle(button).visibility !== "hidden"
-          );
-        })
-        .map((button) => {
-          if (!accessibleIds.has(button)) accessibleIds.set(button, ++accessibleId);
-          return {
-            id: accessibleIds.get(button),
-            label:
-              labels.get(button.container) ||
-              button.getAttribute("aria-label") ||
-              button.title ||
-              button.textContent,
-            activate: () => button.click(),
-          };
-        }),
-    );
-  },
 });
 function renderMenu() {
   ui.scroll($("menu"), -Infinity);

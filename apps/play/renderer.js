@@ -20,6 +20,7 @@ import { PRFilter } from "./pr-filters.js";
 import { WaterMaterial } from "./water-material.js";
 import { fieldCameraFrame } from "./field-camera.js";
 import { sceneFadeAlpha } from "./field-screen-effects.js";
+import { constrainZoom } from "./game-zoom.js";
 import { RenderDiagnostics } from "./render-diagnostics.js";
 import { sceneTextureBindings, detachTextureSource } from "./texture-ownership.js";
 import {
@@ -335,12 +336,7 @@ export class GameRenderer {
 
   // Transform only the game world; menus, HUD and touch controls retain their size.
   setGameZoom({ scale = 1, x = 0, y = 0 } = {}) {
-    scale = Math.min(3, Math.max(1, Number(scale) || 1));
-    this._gameZoom = {
-      scale,
-      x: Math.min(0, Math.max(1 - scale, x)),
-      y: Math.min(0, Math.max(1 - scale, y)),
-    };
+    this._gameZoom = constrainZoom({ scale, x, y });
     this._applyGameZoom();
   }
   _applyGameZoom() {
