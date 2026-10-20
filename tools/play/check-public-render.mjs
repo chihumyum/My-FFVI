@@ -4,6 +4,7 @@ import path from "node:path";
 import { chromium, webkit, devices } from "playwright";
 const base = process.env.PLAY_WEB_URL || "https://ffvi.chihum.dev/";
 const touch = process.env.PLAY_PUBLIC_TOUCH === "1";
+const fullscreen = process.env.PLAY_PUBLIC_FULLSCREEN === "1";
 const output = path.resolve(
   process.env.PLAY_PUBLIC_RENDER_REPORT || "build/play/deployment/public/published-render",
 );
@@ -39,8 +40,9 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
     headless: true,
     args: name === "chromium" ? ["--use-angle=metal"] : [],
   });
-  const row = { engine: name, errors: [], apiRequests: [] };
+  const row = { engine: name, errors: [], apiRequests: [], failedRequests: [], consoleErrors: [] };
   report.results.push(row);
+  let page;
   try {
     const context = await browser.newContext(
       touch
@@ -50,9 +52,15 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
           }
         : { viewport: { width: 1280, height: 800 } },
     );
-    const page = await context.newPage();
+    page = await context.newPage();
     page.on("dialog", (d) => d.accept());
     page.on("pageerror", (e) => row.errors.push(e.message));
+    page.on("requestfailed", (request) =>
+      row.failedRequests.push({ url: request.url(), error: request.failure()?.errorText }),
+    );
+    page.on("console", (message) => {
+      if (message.type() === "error") row.consoleErrors.push(message.text());
+    });
     page.on("request", (request) => {
       if (new URL(request.url()).pathname.startsWith("/api/"))
         row.apiRequests.push(new URL(request.url()).pathname);
@@ -186,11 +194,98 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
       assert.deepEqual(await page.evaluate(() => window.ffviRenderMetrics().gameZoom), zoom);
       row.touch.preservesFrame = row.touch.backWorks = row.touch.zoomWithoutGamepad = true;
     }
+    if (fullscreen) {
+      const button = page.locator("[data-game-fullscreen]");
+      const supported = await page.evaluate(() => !!document.fullscreenEnabled);
+      row.fullscreen = { supported };
+      if (!supported) {
+        assert.notEqual(name, "chromium", "Chromium must expose the native Fullscreen API");
+        assert.equal(await button.isVisible(), false);
+      } else {
+        const before = await page.locator("#screen").boundingBox();
+        const zoom = await page.evaluate(() => window.ffviRenderMetrics().gameZoom);
+        await button.click();
+        await page.waitForFunction(() => document.fullscreenElement === document.documentElement);
+        await page.waitForFunction(
+          () => document.querySelector("[data-game-fullscreen]").textContent === "退出全屏",
+        );
+        assert.equal(await button.getAttribute("aria-pressed"), "true");
+        await page.waitForTimeout(200);
+        row.fullscreen.viewport = await page.evaluate(() => {
+          const rect = document.querySelector("#screen").getBoundingClientRect();
+          return {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            screen: rect.toJSON(),
+            includesControls: document.fullscreenElement.contains(
+              document.querySelector("#touch-controls"),
+            ),
+          };
+        });
+        const { screen, width, height, includesControls } = row.fullscreen.viewport;
+        assert(includesControls);
+        assert(screen.x >= -1 && screen.y >= -1);
+        assert(screen.right <= width + 1 && screen.bottom <= height + 1);
+        assert(Math.min(width - screen.width, height - screen.height) < 2);
+        assert.deepEqual(await page.evaluate(() => window.ffviRenderMetrics().gameZoom), zoom);
+        if (touch) {
+          await page.locator('[data-game-key="Escape"]').tap();
+          await page.getByRole("button", { name: "设置", exact: true }).waitFor();
+          await page.locator('[data-game-key="Escape"]').tap();
+          assert.equal(await page.evaluate(() => !!document.fullscreenElement), true);
+          const frame = await page.locator("#screen").boundingBox();
+          await page.locator("[data-touch-toggle]").tap();
+          assert.deepEqual(await page.locator("#screen").boundingBox(), frame);
+          assert.equal(await button.isVisible(), true);
+          await page.locator("[data-touch-toggle]").tap();
+        }
+        await page.screenshot({ path: path.join(output, `${name}-fullscreen.png`) });
+        await button.click();
+        await page.waitForFunction(() => !document.fullscreenElement);
+        await page.waitForTimeout(200);
+        assert.equal(await button.textContent(), "全屏");
+        assert.equal(await button.getAttribute("aria-pressed"), "false");
+        assert.deepEqual(await page.locator("#screen").boundingBox(), before);
+        assert.deepEqual(await page.evaluate(() => window.ffviRenderMetrics().gameZoom), zoom);
+        await button.click();
+        await page.waitForFunction(() => !!document.fullscreenElement);
+        await page.evaluate(() => document.exitFullscreen());
+        await page.waitForFunction(
+          () => document.querySelector("[data-game-fullscreen]").textContent === "全屏",
+        );
+        assert.equal(await page.locator("[data-fullscreen-status]").isVisible(), false);
+        row.fullscreen.toggleRoundTrip = row.fullscreen.externalExit = true;
+        if (touch) {
+          const originalViewport = page.viewportSize();
+          await page.setViewportSize({ width: 360, height: 800 });
+          const cloud = await page.locator("#cloud-toggle").boundingBox();
+          for (const control of await page.locator(".touch-toolbar button:visible").all()) {
+            const box = await control.boundingBox();
+            assert(box.x >= 0 && box.x + box.width <= 361);
+            assert(
+              box.x >= cloud.x + cloud.width || box.y >= cloud.y + cloud.height,
+              "Fullscreen/zoom toolbar must not cover cloud saves on a narrow phone",
+            );
+          }
+          await page.screenshot({ path: path.join(output, `${name}-portrait-toolbar.png`) });
+          await page.setViewportSize(originalViewport);
+          row.fullscreen.narrowToolbar = true;
+        }
+      }
+    }
     await page.screenshot({ path: path.join(output, `${name}-loaded-world.png`) });
     row.status = "passed";
   } catch (error) {
     row.status = "failed";
     row.error = error.stack;
+    row.failureState = await page
+      ?.evaluate(() => ({
+        boot: document.querySelector("#boot-status")?.textContent,
+        loading: window.ffviLoading?.(),
+        metrics: window.ffviRenderMetrics?.(),
+      }))
+      .catch(() => null);
+    await page?.screenshot({ path: path.join(output, `${name}-failure.png`) }).catch(() => {});
   } finally {
     await browser.close();
   }

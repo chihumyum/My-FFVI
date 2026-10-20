@@ -82,10 +82,12 @@ export function mountTouchControls({
   root.setAttribute("aria-label", "虚拟游戏手柄");
   root.innerHTML = `
     <div class="touch-toolbar">
+      <button type="button" data-game-fullscreen hidden aria-pressed="false">全屏</button>
       <button type="button" data-touch-toggle>触控</button>
       <button type="button" data-touch-options aria-expanded="false">选项</button>
       <button type="button" data-touch-tools aria-expanded="false">工具</button>
       <button type="button" data-touch-zoom hidden aria-label="重置游戏画面缩放">100%</button>
+      <output data-fullscreen-status role="status" hidden></output>
     </div>
     <div class="touch-options" hidden>
       <div class="touch-options-heading"><strong>当前可用操作</strong><button type="button" data-touch-close>收起</button></div>
@@ -114,6 +116,8 @@ export function mountTouchControls({
   const optionsToggle = root.querySelector("[data-touch-options]");
   const toolsToggle = root.querySelector("[data-touch-tools]");
   const zoomReset = root.querySelector("[data-touch-zoom]");
+  const fullscreenToggle = root.querySelector("[data-game-fullscreen]");
+  const fullscreenStatus = root.querySelector("[data-fullscreen-status]");
   const options = root.querySelector(".touch-options");
   const actions = root.querySelector(".touch-options-list");
   const readout = root.querySelector(".touch-readout");
@@ -171,9 +175,10 @@ export function mountTouchControls({
     const height = viewport?.height || window.innerHeight;
     document.body.style.setProperty("--touch-viewport-height", `${height}px`);
     const main = document.querySelector("main");
-    const mobileViewport = coarse.matches || navigator.maxTouchPoints > 0;
-    document.body.classList.toggle("touch-viewport", mobileViewport || enabled);
-    if (mobileViewport || enabled) {
+    const adaptiveViewport =
+      coarse.matches || navigator.maxTouchPoints > 0 || enabled || !!document.fullscreenElement;
+    document.body.classList.toggle("touch-viewport", adaptiveViewport);
+    if (adaptiveViewport) {
       const style = getComputedStyle(root);
       const safeTop = parseFloat(style.getPropertyValue("--safe-top")) || 0;
       const safeBottom = parseFloat(style.getPropertyValue("--safe-bottom")) || 0;
@@ -223,6 +228,30 @@ export function mountTouchControls({
     release();
     const show = document.body.classList.toggle("touch-tools-open");
     toolsToggle.setAttribute("aria-expanded", String(show));
+  };
+  function fullscreenChanged() {
+    const active = !!document.fullscreenElement;
+    fullscreenToggle.hidden = !document.fullscreenEnabled;
+    fullscreenToggle.textContent = active ? "退出全屏" : "全屏";
+    fullscreenToggle.setAttribute("aria-pressed", String(active));
+    layout();
+  }
+  fullscreenToggle.onclick = async () => {
+    release();
+    fullscreenStatus.hidden = true;
+    fullscreenToggle.disabled = true;
+    try {
+      // Fullscreen the whole page so the gamepad, menus and save dialogs stay
+      // visible together. Keep the request in the button's user activation.
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch {
+      fullscreenStatus.textContent = "无法进入或退出全屏，请重试或检查浏览器权限。";
+      fullscreenStatus.hidden = false;
+    } finally {
+      fullscreenToggle.disabled = false;
+      fullscreenChanged();
+    }
   };
   const zoom = canvas
     ? mountGameZoom({
@@ -312,8 +341,10 @@ export function mountTouchControls({
     typeof ResizeObserver === "undefined" ? null : new ResizeObserver(positionPad);
   if (canvas) screenObserver?.observe(canvas);
   document.addEventListener("visibilitychange", visibility);
+  document.addEventListener("fullscreenchange", fullscreenChanged);
   coarse.addEventListener("change", update);
   update();
+  fullscreenChanged();
   return {
     release,
     resetZoom: () => zoom?.reset(),
@@ -326,6 +357,7 @@ export function mountTouchControls({
       window.visualViewport?.removeEventListener("resize", layout);
       screenObserver?.disconnect();
       document.removeEventListener("visibilitychange", visibility);
+      document.removeEventListener("fullscreenchange", fullscreenChanged);
       coarse.removeEventListener("change", update);
       zoom?.destroy();
       root.remove();
