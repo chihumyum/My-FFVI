@@ -40,6 +40,7 @@ export function mountTouchControls({
   onRelease,
   onLayout,
   onZoom,
+  getZoomViewport,
   canvas = document.getElementById("screen"),
 }) {
   const root = document.createElement("div");
@@ -195,6 +196,7 @@ export function mountTouchControls({
   const zoom = canvas
     ? mountGameZoom({
         element: canvas,
+        getViewport: getZoomViewport,
         isSurface: (event) =>
           event.target === canvas || !!event.target?.closest?.(".pixi-accessibility"),
         onGesture: release,

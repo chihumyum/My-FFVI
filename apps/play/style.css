@@ -304,10 +304,7 @@ progress {
   background: transparent;
 }
 
-/* Menus use the renderer's independent high-resolution UI viewport. */
-body.modern-menu main {
-  width: 100vw;
-}
+/* High-resolution menus share the camera's displayed rectangle. */
 body.modern-menu canvas {
   image-rendering: auto;
 }

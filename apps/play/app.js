@@ -528,6 +528,7 @@ mountTouchControls({
   onRelease: () => keys.clear(),
   onLayout: () => renderer.resize(),
   onZoom: (view) => renderer.setGameZoom(view),
+  getZoomViewport: () => renderer.gameZoomViewport(),
 });
 function renderMenu() {
   ui.scroll($("menu"), -Infinity);

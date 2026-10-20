@@ -135,7 +135,7 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
       const toolbar = await tools.boundingBox();
       await page.keyboard.press("Meta+-");
       await page.waitForFunction(() => window.ffviRenderMetrics().gameZoom.scale < 1);
-      assert.deepEqual(await page.locator("#screen").boundingBox(), before);
+      assert((await page.locator("#screen").boundingBox()).width < before.width);
       assert.deepEqual(await tools.boundingBox(), toolbar);
       await page.screenshot({ path: path.join(output, `${name}-desktop-zoom-out.png`) });
       await page.keyboard.press("Meta+0");
@@ -230,13 +230,19 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
       const zoom = await page.evaluate(() => window.ffviRenderMetrics().gameZoom);
       assert(zoom.scale > 1.5);
       assert.equal(await page.evaluate(() => window.visualViewport.scale), 1);
-      assert.deepEqual(await page.locator("#screen").boundingBox(), before);
+      const zoomed = await page.locator("#screen").boundingBox();
+      assert(Math.abs(zoomed.width - before.width * zoom.scale) < 1);
+      assert(Math.abs(zoomed.height - before.height * zoom.scale) < 1);
       await page.screenshot({ path: path.join(output, `${name}-zoom-with-hidden-controls.png`) });
       await page.locator("[data-touch-toggle]").tap();
       assert.deepEqual(await page.evaluate(() => window.ffviRenderMetrics().gameZoom), zoom);
       row.touch.preservesFrame = row.touch.backWorks = row.touch.zoomWithoutGamepad = true;
     }
     if (fullscreen) {
+      // Check fullscreen fitting at the reset display size. Zoomed canvases
+      // may intentionally extend beyond the window and clip at screen edges.
+      if (await page.locator("[data-touch-zoom]").isVisible())
+        await page.locator("[data-touch-zoom]").click();
       const button = page.locator("[data-game-fullscreen]");
       const supported = await page.evaluate(() => !!document.fullscreenEnabled);
       row.fullscreen = { supported };

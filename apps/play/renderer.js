@@ -288,8 +288,9 @@ export class GameRenderer {
       (touchHeight > 0 ? touchHeight : Math.max(HEIGHT, window.innerHeight - 40));
     const screenWidth = this._menuMode ? 1920 : this._width,
       screenHeight = this._menuMode ? 1080 : this._height,
-      fit = Math.min(width / screenWidth, height / screenHeight),
-      scale = this._menuMode || touchHeight > 0 ? Math.max(0.1, fit) : Math.max(1, Math.floor(fit)),
+      fit = Math.min(width / this._width, height / this._height),
+      cameraScale = touchHeight > 0 ? Math.max(0.1, fit) : Math.max(1, Math.floor(fit)),
+      scale = (cameraScale * this._width) / screenWidth,
       resolution = this._menuMode
         ? scale * Math.max(1, window.devicePixelRatio || 1)
         : scale * Math.max(1, Math.round(window.devicePixelRatio || 1));
@@ -319,10 +320,11 @@ export class GameRenderer {
     this._displayScale = scale;
     this.canvas.style.width = `${screenWidth * scale}px`;
     this.canvas.style.height = `${screenHeight * scale}px`;
+    this._applyGameZoom();
   }
 
-  // Menus use PR's full UI reference canvas and the physical viewport. The
-  // game camera and its integer-pixel layout remain unchanged when closing it.
+  // Keep PR's high-resolution menu canvas inside the same displayed camera
+  // rectangle, so opening a menu never enlarges the game window.
   setMenuMode(enabled) {
     if (this._menuMode === Boolean(enabled)) return;
     this._menuMode = Boolean(enabled);
@@ -334,7 +336,8 @@ export class GameRenderer {
     // canvas resize clears its last frame, even if we have not drawn again.
   }
 
-  // Transform only the game world; menus, HUD and touch controls retain their size.
+  // Scale the whole displayed game, including dialogue and menus. A world-only
+  // transform leaves a fixed crop around the scene and detaches its UI.
   setGameZoom({ scale = 1, x = 0, y = 0 } = {}) {
     this._gameZoom = constrainZoom({ scale, x, y });
     this._applyGameZoom();
@@ -344,8 +347,25 @@ export class GameRenderer {
     const zoom = this._gameZoom || { scale: 1, x: 0, y: 0 };
     const width = this._menuMode ? 1920 : this._width;
     const height = this._menuMode ? 1080 : this._height;
-    this.world.scale.set((this._menuMode ? 1920 / this._width : 1) * zoom.scale);
-    this.world.position.set(zoom.x * width, zoom.y * height);
+    this.world.scale.set(this._menuMode ? 1920 / this._width : 1);
+    this.world.position.set(0, 0);
+    const displayWidth = width * (this._displayScale || 1),
+      displayHeight = height * (this._displayScale || 1);
+    this.canvas.style.transformOrigin = "0 0";
+    this.canvas.style.transform =
+      zoom.scale === 1
+        ? "none"
+        : `translate(${zoom.x * displayWidth}px, ${zoom.y * displayHeight}px) scale(${zoom.scale})`;
+  }
+
+  // Gesture anchors must use the original layout rectangle. Reading the
+  // transformed canvas directly makes repeated pinches drift towards an edge.
+  gameZoomViewport() {
+    const rect = this.canvas.getBoundingClientRect(),
+      zoom = this._gameZoom || { scale: 1, x: 0, y: 0 },
+      width = rect.width / zoom.scale,
+      height = rect.height / zoom.scale;
+    return { left: rect.left - zoom.x * width, top: rect.top - zoom.y * height, width, height };
   }
 
   setBattlePresentation(catalog) {

@@ -139,7 +139,8 @@ try {
       const dpr = await page.evaluate(() => window.devicePixelRatio);
       await page.keyboard.press("Meta+-");
       assert((await page.evaluate(() => window.ffviRenderMetrics().gameZoom.scale)) < 1);
-      assert.deepEqual(await geometry(), before);
+      assert((await geometry()).canvas.width < before.canvas.width);
+      assert.deepEqual((await geometry()).tools, before.tools);
       await page.keyboard.press("Meta+=");
       await page.keyboard.press("Meta+=");
       assert((await page.evaluate(() => window.ffviRenderMetrics().gameZoom.scale)) > 1);
@@ -186,7 +187,8 @@ try {
         row.trackpadInput = "Synthetic WebKit GestureEvent shape; physical trackpad not tested";
       }
       await page.waitForFunction(() => window.ffviRenderMetrics().gameZoom.scale > 1.2);
-      assert.deepEqual(await geometry(), before);
+      assert((await geometry()).canvas.width > before.canvas.width);
+      assert.deepEqual((await geometry()).tools, before.tools);
       assert.equal(await page.evaluate(() => window.devicePixelRatio), dpr);
       assert.equal(await page.evaluate(() => window.visualViewport.scale), 1);
       row.shortcutsAndIndependentSizing = true;

@@ -102,8 +102,8 @@ try {
       cssHeight: c.clientHeight,
     }));
     assert.ok(
-      canvas.width >= size.width * 1.8,
-      "Menu backing pixels must follow the real viewport and DPR",
+      canvas.width >= canvas.cssWidth * 1.8,
+      "Menu backing pixels must follow the shared camera rectangle and DPR",
     );
     result.viewports.push({ ...size, canvas, cards: bounds.length });
     await page.screenshot({ path: path.join(output, `gallery-${size.width}.png`) });

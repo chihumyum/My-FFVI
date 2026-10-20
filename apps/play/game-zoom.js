@@ -7,8 +7,8 @@ export function constrainZoom({ scale = 1, x = 0, y = 0 } = {}) {
   return { scale, x: clamp(x || 0, low, high), y: clamp(y || 0, low, high) };
 }
 
-// Offsets are fractions of the unscaled game viewport. Only the renderer's
-// world container consumes these values; neither the canvas nor its UI scales.
+// Offsets are fractions of the unscaled game viewport. The complete canvas,
+// including its game UI, follows this transform; page controls stay outside it.
 export function zoomAt(view, scale, anchor, previousAnchor = anchor) {
   scale = constrainZoom({ scale }).scale;
   const ratio = scale / view.scale;
@@ -24,6 +24,7 @@ export function mountGameZoom({
   onChange = () => {},
   onGesture = () => {},
   isSurface = (event) => event.target === element,
+  getViewport = () => element.getBoundingClientRect(),
 }) {
   let view = { scale: 1, x: 0, y: 0 };
   let gesture = null;
@@ -37,7 +38,7 @@ export function mountGameZoom({
   const point = (event) => ({ x: event.clientX, y: event.clientY });
   const pair = () => {
     const [a, b] = [...pointers.values()];
-    const rect = element.getBoundingClientRect();
+    const rect = getViewport();
     return {
       distance: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)),
       anchor: {
@@ -135,7 +136,7 @@ export function mountGameZoom({
   };
   const center = { x: 0.5, y: 0.5 };
   const anchorAt = (event) => {
-    const rect = element.getBoundingClientRect();
+    const rect = getViewport();
     return {
       x: (event.clientX - rect.left) / rect.width,
       y: (event.clientY - rect.top) / rect.height,

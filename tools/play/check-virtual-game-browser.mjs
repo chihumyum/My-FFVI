@@ -267,13 +267,11 @@ try {
           1,
           "Pinch must resize the game world, not the Android browser page",
         );
-        assert.ok(zoom.scale > 1.5, "Pinch did not update the real world renderer");
+        assert.ok(zoom.scale > 1.5, "Pinch did not update the game display");
         assert.deepEqual(await page.locator('[data-game-key="Enter"]').boundingBox(), buttonBefore);
-        assert.deepEqual(
-          await page.locator("#screen").boundingBox(),
-          box,
-          "Pinch resized the canvas instead of the world",
-        );
+        const zoomedBox = await page.locator("#screen").boundingBox();
+        assert(Math.abs(zoomedBox.width - box.width * zoom.scale) < 1);
+        assert(Math.abs(zoomedBox.height - box.height * zoom.scale) < 1);
         assert.deepEqual(
           (await available()).map(({ current, ...control }) => control),
           controlsBefore.map(({ current, ...control }) => control),
@@ -283,12 +281,12 @@ try {
           "active",
           "Pinch accidentally selected a menu action",
         );
-        row[name] = { zoom, keepsUI: true, canvas: box };
+        row[name] = { zoom, keepsGamepad: true, canvas: zoomedBox };
         await page.screenshot({ path: path.join(output, `${engine}-${name}.png`) });
         if (name === "worldZoom") {
           await page.locator("[data-touch-toggle]").tap();
           assert.deepEqual(await page.evaluate(() => window.ffviRenderMetrics().gameZoom), zoom);
-          assert.deepEqual(await page.locator("#screen").boundingBox(), box);
+          assert.deepEqual(await page.locator("#screen").boundingBox(), zoomedBox);
           await page.locator("[data-touch-toggle]").tap();
           assert.deepEqual(await page.evaluate(() => window.ffviRenderMetrics().gameZoom), zoom);
           row.preservesZoomAcrossTouchToggle = true;

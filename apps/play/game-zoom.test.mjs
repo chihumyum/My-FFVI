@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { zoomAt } from "./game-zoom.js";
 
-test("pinch scales around its world anchor and can pan without scaling the UI", () => {
+test("pinch scales the game display around its anchor and supports panning", () => {
   const first = zoomAt({ scale: 1, x: 0, y: 0 }, 2, { x: 0.5, y: 0.4 });
   assert.deepEqual(first, { scale: 2, x: -0.5, y: -0.4 });
   const moved = zoomAt(first, 2, { x: 0.6, y: 0.5 }, { x: 0.5, y: 0.4 });
