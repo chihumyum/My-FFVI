@@ -55,7 +55,7 @@ npm run cloudflare:backup
 
 公开部署验收与截图在 `build/play/deployment/public/`，汇总为 `release.json`；真实线上 GPU 截图在 `published-render/`，隔离验收包含不同轮次的 Chromium/WebKit 报告，原始失败记录保留。`node tools/play/check-public-http.mjs` 检查代码/数据哈希、公开资源和私密存档边界；`node tools/play/check-public-render.mjs` 在隔离浏览器关闭云身份，仅复核实际已发布代码与资源的地图渲染。`check-public-browser.mjs` 只使用自行新建的随机测试身份。旧 `check-cloudflare-http.mjs` 和 `play:host-check` 属于下述单用户私人部署，不能拿它们读取个人生产存档来验收公开站点。
 
-游戏菜单中可打开项目和作者 GitHub，或点击「报告问题」（F9）。报告先捕获截图、地图/坐标、剧情指令、队伍和最近 20 条事件，再显示说明输入框；明确发送后上传私有存储，取消不上传。失败保留输入，也可下载 JSON；开发服务器直接写入 `bug-reports/`，纯静态网站下载文件。报告不会采集恢复密钥、Cookie 或浏览器存储。每个身份每小时最多 10 份，每份最多 8 MiB。
+游戏菜单中可打开游戏仓库 GitHub，或点击「报告问题」（F9）。报告先捕获截图、地图/坐标、剧情指令、队伍和最近 20 条事件，再显示说明输入框；明确发送后上传私有存储，取消不上传。失败保留输入，也可下载 JSON；开发服务器直接写入 `bug-reports/`，纯静态网站下载文件。报告不会采集恢复密钥、Cookie 或浏览器存储。每个身份每小时最多 10 份，每份最多 8 MiB。
 
 维护者用原私人站点密码读取报告，不改变游戏浏览器的存档身份：
 

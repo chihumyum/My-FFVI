@@ -136,6 +136,9 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
       assert.match(await back.textContent(), /返回/);
       await back.tap();
       await page.getByRole("button", { name: "设置", exact: true }).waitFor();
+      assert.equal(await page.getByRole("button", { name: "作者 GitHub", exact: true }).count(), 0);
+      assert.equal(await page.getByRole("button", { name: "GitHub 项目", exact: true }).count(), 1);
+      row.repositoryLinkOnly = true;
       await back.tap();
       await page.waitForFunction(() => !document.body.classList.contains("modern-menu"));
       const before = await page.locator("#screen").boundingBox();

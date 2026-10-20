@@ -319,6 +319,11 @@ try {
         "Menu report entry is clipped or inaccessible",
       );
       row.reportEntryVisible = true;
+      assert.equal(
+        (await available()).some((control) => control.label === "作者 GitHub"),
+        false,
+        "The menu must link only to the game repository",
+      );
       await context.route("https://github.com/**", (route) =>
         route.fulfill({
           status: 200,
@@ -326,18 +331,13 @@ try {
           body: "<title>Captured GitHub destination</title>",
         }),
       );
-      for (const [label, url] of [
-        [/^GitHub 项目$/, "https://github.com/chihumyum/My-FFVI"],
-        [/^作者 GitHub$/, "https://github.com/chihumyum"],
-      ]) {
-        await focus(label);
-        const popup = page.waitForEvent("popup");
-        await tap("Enter");
-        const opened = await popup;
-        await opened.waitForURL(url);
-        row.github.push(opened.url());
-        await opened.close();
-      }
+      await focus(/^GitHub 项目$/);
+      const popup = page.waitForEvent("popup");
+      await tap("Enter");
+      const opened = await popup;
+      await opened.waitForURL("https://github.com/chihumyum/My-FFVI");
+      row.github.push(opened.url());
+      await opened.close();
       await tap("Escape");
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(base);

@@ -589,15 +589,11 @@ function renderMenu() {
   bonus.textContent = "额外内容";
   bonus.onclick = () => extras.open();
   $("menu-nav").append(bonus);
-  for (const [label, url] of [
-    ["GitHub 项目", "https://github.com/chihumyum/My-FFVI"],
-    ["作者 GitHub", "https://github.com/chihumyum"],
-  ]) {
-    const link = createWidget("button");
-    link.textContent = label;
-    link.onclick = () => window.open(url, "_blank", "noopener,noreferrer");
-    $("menu-nav").append(link);
-  }
+  const repository = createWidget("button");
+  repository.textContent = "GitHub 项目";
+  repository.onclick = () =>
+    window.open("https://github.com/chihumyum/My-FFVI", "_blank", "noopener,noreferrer");
+  $("menu-nav").append(repository);
   const feedback = createWidget("button");
   feedback.textContent = "报告问题";
   feedback.onclick = reportBug;
