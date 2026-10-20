@@ -81,11 +81,11 @@ try {
       assert.equal(row.landscape.mode, "floating");
       for (const selector of [".touch-dpad", ".touch-actions"]) {
         const cluster = await page.locator(selector).boundingBox();
-        assert(cluster.x >= row.landscape.screen.left - 1);
-        assert(cluster.x + cluster.width <= row.landscape.screen.right + 1);
-        assert(cluster.y >= row.landscape.screen.top - 1);
-        assert(cluster.y + cluster.height <= row.landscape.screen.bottom + 1);
+        assert(cluster.x >= 0 && cluster.x + cluster.width <= 845);
+        assert(cluster.y >= 0 && cluster.y + cluster.height <= 391);
       }
+      assert.equal(row.landscape.pad.x, 0);
+      assert.equal(row.landscape.pad.width, 844);
       const button = page.locator('[data-game-key="Enter"]');
       assert.ok(Number(await button.evaluate((node) => getComputedStyle(node).opacity)) < 1);
       await button.tap();

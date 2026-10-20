@@ -117,12 +117,11 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
       });
       const frame = row.touch.screen;
       assert(Math.abs(frame.height - 390) < 1);
+      assert(Math.abs(row.touch.directions.left - 18) < 1);
+      assert(Math.abs(row.touch.actions.right - 826) < 1);
       for (const cluster of [row.touch.directions, row.touch.actions])
         assert(
-          cluster.left >= frame.left - 1 &&
-            cluster.right <= frame.right + 1 &&
-            cluster.top >= frame.top - 1 &&
-            cluster.bottom <= frame.bottom + 1,
+          cluster.left >= 0 && cluster.right <= 845 && cluster.top >= 0 && cluster.bottom <= 391,
         );
       await page.screenshot({ path: path.join(output, `${name}-floating-controls.png`) });
       const back = page.locator('[data-game-key="Escape"]');

@@ -144,12 +144,14 @@ try {
           assert(Number(geometry.opacity) < 1);
           for (const cluster of [geometry.directions, geometry.actions])
             assert(
-              cluster.left >= frame.left - 1 &&
-                cluster.right <= frame.right + 1 &&
-                cluster.top >= frame.top - 1 &&
-                cluster.bottom <= frame.bottom + 1,
-              `Buttons must float inside the actual game frame: ${JSON.stringify({ size, geometry })}`,
+              cluster.left >= 0 &&
+                cluster.right <= size.width + 1 &&
+                cluster.top >= 0 &&
+                cluster.bottom <= size.height + 1,
+              `Buttons must stay within the phone viewport: ${JSON.stringify({ size, geometry })}`,
             );
+          assert(Math.abs(geometry.directions.left - 18) < 1);
+          assert(Math.abs(geometry.actions.right - (size.width - 18)) < 1);
         }
         row.layout.push({ size, ...geometry });
         await page.screenshot({

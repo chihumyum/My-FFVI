@@ -229,10 +229,8 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     );
     for (const selector of [".touch-dpad", ".touch-actions"]) {
       const cluster = await page.locator(selector).boundingBox();
-      assert(cluster.x >= canvas.x - 1 && cluster.x + cluster.width <= canvas.x + canvas.width + 1);
-      assert(
-        cluster.y >= canvas.y - 1 && cluster.y + cluster.height <= canvas.y + canvas.height + 1,
-      );
+      assert(cluster.x >= 0 && cluster.x + cluster.width <= 845);
+      assert(cluster.y >= 0 && cluster.y + cluster.height <= 391);
     }
     await screenshot("field-landscape");
 

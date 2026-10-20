@@ -151,13 +151,8 @@ export function mountTouchControls({
   }
   function positionPad() {
     const screen = canvas?.getBoundingClientRect();
-    const bounds = root.getBoundingClientRect();
-    // Wide phones letterbox the 16:9 camera. Anchor both clusters inside that
-    // camera, rather than leaving them in the phone's outer black bars.
-    const overlay = enabled && bounds.width > bounds.height && screen?.width > 0;
-    pad.style.left = overlay ? `${Math.max(0, screen.left - bounds.left)}px` : "";
-    pad.style.right = overlay ? `${Math.max(0, bounds.right - screen.right)}px` : "";
-    pad.style.bottom = overlay ? `${Math.max(0, bounds.bottom - screen.bottom)}px` : "";
+    // Controls stay at the screen corners. Their overlap with the game only
+    // changes transparency; it never changes the game viewport or placement.
     const overlaps = (element) => {
       const rect = element.getBoundingClientRect();
       return (
