@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>帝国双子城阿克托 · 美术试作</title>
+    <link rel="stylesheet" href="./akto.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">MY FFVI / ART TRIAL 01</p>
+          <h1>帝国双子城<span>阿克托</span></h1>
+          <p class="intro">渡过护城河，走近双塔下的帝国城门。</p>
+        </div>
+        <img id="city-icon" alt="阿克托的大地图城市图标" />
+      </header>
+      <section class="play-layout">
+        <div class="play-panel">
+          <div class="panel-top">
+            <span id="place">共用城门 · 南桥</span><span class="live-dot">可玩场景</span>
+          </div>
+          <div id="stage">
+            <canvas id="game" aria-label="阿克托城门试玩"></canvas>
+            <div id="loading">准备阿克托的地图与人物…</div>
+            <button id="dialogue" hidden>
+              <strong id="speaker"></strong><span id="message"></span><small>确认继续 ▾</small>
+            </button>
+          </div>
+          <div class="toolbar">
+            <span>方向键 / WASD 移动 · 空格 / Enter 对话</span><button id="restart">重新入城</button
+            ><button id="region">区域地图</button>
+          </div>
+          <div class="touch">
+            <button data-move="left" aria-label="向左">←</button>
+            <div>
+              <button data-move="up" aria-label="向上">↑</button
+              ><button data-move="down" aria-label="向下">↓</button>
+            </div>
+            <button data-move="right" aria-label="向右">→</button><button id="confirm">确认</button>
+          </div>
+          <p id="status" role="status">沿着桥向北走，抵达城门。</p>
+        </div>
+        <aside>
+          <div class="panel-top"><span>地图全景</span><span>南桥与城防</span></div>
+          <canvas id="overview" aria-label="由独立模块拼成的阿克托地图全景"></canvas>
+          <p>金色标记为当前位置。靠近城门时，守卫会拦下来访者。</p>
+        </aside>
+      </section>
+      <section class="asset-section">
+        <div class="section-title">
+          <h2>阿克托的独立部件</h2>
+          <p>逐件生成，切成 16 像素地图格后拼装。玩家与三位旅人沿用现有素材。</p>
+        </div>
+        <div id="assets"></div>
+      </section>
+      <section class="guard-section">
+        <div>
+          <h2>双子城防团</h2>
+          <p>暗色甲胄，青色披肩、酒红腰带与双色羽饰。</p>
+          <p>四个朝向，三个动作。与原有角色在同一场景中比较比例。</p>
+        </div>
+        <img id="guard-sheet" alt="阿克托守卫的四方向行走动作表" />
+      </section>
+      <footer>原创城门外试作 · 本机独立运行 · 主线与云存档不参与本场景</footer>
+    </main>
+    <script type="module" src="./akto.js"></script>
+  </body>
+</html>

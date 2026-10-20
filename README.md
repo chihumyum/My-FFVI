@@ -1,6 +1,10 @@
 # My-FFVI
 
-《最终幻想 VI》像素复刻版（Pixel Remaster）的非官方 Web 移植。素材与参数来自 PR，行为参考 [SNES 反汇编](https://github.com/everything8215/ff6)，PR 明确的数据优先。
+一个以《最终幻想 VI》的世界为基础，持续创作的非官方 2D 像素 RPG。
+
+长期目标是构建可自由探索的非线性世界：大幅扩建城市与地区，加入相互关联的人物、支线和世界变化，让玩家拥有更多探索路径与剧情选择。保持 2D 像素美术与原有战斗特色，并逐步扩展玩法。
+
+当前以像素复刻版（Pixel Remaster）的 Web 移植为基础，主要可玩内容仍是原版流程。开放世界与大规模新增内容是后续建设方向。
 
 **[在线游玩](https://ffvi.chihum.dev/)** · [当前状态与已知问题](STATUS.md)
 
@@ -86,6 +90,8 @@ npm run cloudflare:backup       # D1 备份到 backups/
 
 ## 开发
 
+原版内容的素材与参数来自 PR，行为参考 [SNES 反汇编](https://github.com/everything8215/ff6)，PR 明确的数据优先；新增内容按项目设计扩展。原版流程保留为回归基线，新增区域与任务按各自的探索路径、完成条件和世界变化验收。
+
 | 目录                 | 职责                         |
 | -------------------- | ---------------------------- |
 | `tools/export/`      | 从 PR 原始文件导出运行数据   |
@@ -103,4 +109,14 @@ PLAY_TEST_BOOST=1 npm run play:through
 npm run play:visual-check
 ```
 
-浏览器验收首次需运行 `npx playwright install chromium webkit`。本地报告与截图在 `build/play/`，不进 Git；开发约定见 [AGENTS.md](AGENTS.md)。自动跑法只做回归，不增加购物、练级等策略。HD-2D 暂不处理。
+浏览器验收首次需运行 `npx playwright install chromium webkit`。本地报告与截图在 `build/play/`，不进 Git；开发约定见 [AGENTS.md](AGENTS.md)。自动跑法只做回归，不增加购物、练级等策略。
+
+## 阿克托美术试作
+
+本机已有 `build/web-data/` 导出、`.venv` 的 Pillow，以及 `build/play/deployment/akto-art-test/raw/` 中逐件生成的 PNG 时，运行 `npm run play:akto`，打开 `http://127.0.0.1:4175/akto.html`。方向键/WASD 移动，空格/Enter 对话；走到城门前会由现有剧情 VM 执行守卫拦路。独立区域地图可走近新城标入城，页面也提供全景与部件预览。
+
+该命令只处理试作部件并输出独立静态包 `dist/akto/`，不重新导出原版地图，不接入主线、账号、云存档或浏览器存档。原始生成图、运行 PNG、提示词、检查结果和截图均在 `build/play/deployment/akto-art-test/`，不进 Git；仅克隆源码不会包含这些素材。运行 `node tools/play/check-akto-browser.mjs` 可在独立 Chromium/WebKit 上检查普通移动、旅人对话、守卫演出、城门/护城河阻挡、城标入城及存档隔离。
+
+城市扩充版另运行 `npm run play:akto:city`，打开 `http://127.0.0.1:4176/akto.html`。查验对白后继续向北进入内城；四区共用一张 128×128 格地图，八处带招牌的门可进入，水庭两侧可登楼，旧城东侧楼梯通往远眺高廊。`?entry=city` 可直接从城内南口开始预览。城市目前是可探索骨架与室内样板，尚无完整任务链。
+
+扩充版需要 `build/play/deployment/akto-city/raw/` 中本轮生成的小部件图，输出为独立静态包 `dist/akto-city/`。`node tools/play/check-akto-city-browser.mjs` 使用固定探索路线检查四区、地标、水庭层次与高廊；八个室内另从各自门外入口检查往返。每次生图的提示词、参考图、时间、输出尺寸、替换情况在 `build/play/deployment/akto-city/generation-usage.json`；内置工具未提供图片 token 或金额，两项明确保留为未知。资源包与全部回归证据同目录保存，不进 Git。
