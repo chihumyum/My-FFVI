@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { chromium, webkit } from "playwright";
+import { chromium, webkit, devices } from "playwright";
 const base = process.env.PLAY_WEB_URL || "https://ffvi.chihum.dev/";
+const touch = process.env.PLAY_PUBLIC_TOUCH === "1";
 const output = path.resolve(
   process.env.PLAY_PUBLIC_RENDER_REPORT || "build/play/deployment/public/published-render",
 );
@@ -41,7 +42,14 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
   const row = { engine: name, errors: [], apiRequests: [] };
   report.results.push(row);
   try {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const context = await browser.newContext(
+      touch
+        ? {
+            ...devices[name === "chromium" ? "Pixel 7" : "iPhone 13"],
+            viewport: { width: 844, height: 390 },
+          }
+        : { viewport: { width: 1280, height: 800 } },
+    );
     const page = await context.newPage();
     page.on("dialog", (d) => d.accept());
     page.on("pageerror", (e) => row.errors.push(e.message));
@@ -96,6 +104,89 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
     assert.equal(row.metrics.texturesFailed, 0);
     assert.deepEqual(row.errors, []);
     assert.deepEqual(row.apiRequests, []);
+    if (touch) {
+      row.userAgent = await page.evaluate(() => navigator.userAgent);
+      row.touch = await page.evaluate(() => {
+        const rect = (selector) =>
+          document.querySelector(selector).getBoundingClientRect().toJSON();
+        return {
+          screen: rect("#screen"),
+          directions: rect(".touch-dpad"),
+          actions: rect(".touch-actions"),
+        };
+      });
+      const frame = row.touch.screen;
+      assert(Math.abs(frame.height - 390) < 1);
+      for (const cluster of [row.touch.directions, row.touch.actions])
+        assert(
+          cluster.left >= frame.left - 1 &&
+            cluster.right <= frame.right + 1 &&
+            cluster.top >= frame.top - 1 &&
+            cluster.bottom <= frame.bottom + 1,
+        );
+      await page.screenshot({ path: path.join(output, `${name}-floating-controls.png`) });
+      const back = page.locator('[data-game-key="Escape"]');
+      assert.match(await back.textContent(), /返回/);
+      await back.tap();
+      await page.getByRole("button", { name: "设置", exact: true }).waitFor();
+      await back.tap();
+      await page.waitForFunction(() => !document.body.classList.contains("modern-menu"));
+      const before = await page.locator("#screen").boundingBox();
+      await page.locator("[data-touch-toggle]").tap();
+      assert.deepEqual(await page.locator("#screen").boundingBox(), before);
+      const y = before.y + before.height * 0.3,
+        left = before.x + before.width * 0.4,
+        right = before.x + before.width * 0.6;
+      if (name === "chromium") {
+        const cdp = await context.newCDPSession(page);
+        for (const [type, touchPoints] of [
+          ["touchStart", [{ id: 1, x: left, y }]],
+          [
+            "touchStart",
+            [
+              { id: 1, x: left, y },
+              { id: 2, x: right, y },
+            ],
+          ],
+          [
+            "touchMove",
+            [
+              { id: 1, x: left - 60, y },
+              { id: 2, x: right + 60, y },
+            ],
+          ],
+          ["touchEnd", []],
+        ])
+          await cdp.send("Input.dispatchTouchEvent", { type, touchPoints });
+        await cdp.detach();
+      } else {
+        const screen = page.locator("#screen");
+        for (const [type, id, x] of [
+          ["pointerdown", 1, left],
+          ["pointerdown", 2, right],
+          ["pointermove", 1, left - 60],
+          ["pointermove", 2, right + 60],
+          ["pointerup", 1, left - 60],
+          ["pointerup", 2, right + 60],
+        ])
+          await screen.dispatchEvent(type, {
+            pointerType: "touch",
+            pointerId: id,
+            clientX: x,
+            clientY: y,
+            bubbles: true,
+            cancelable: true,
+          });
+      }
+      const zoom = await page.evaluate(() => window.ffviRenderMetrics().gameZoom);
+      assert(zoom.scale > 1.5);
+      assert.equal(await page.evaluate(() => window.visualViewport.scale), 1);
+      assert.deepEqual(await page.locator("#screen").boundingBox(), before);
+      await page.screenshot({ path: path.join(output, `${name}-zoom-with-hidden-controls.png`) });
+      await page.locator("[data-touch-toggle]").tap();
+      assert.deepEqual(await page.evaluate(() => window.ffviRenderMetrics().gameZoom), zoom);
+      row.touch.preservesFrame = row.touch.backWorks = row.touch.zoomWithoutGamepad = true;
+    }
     await page.screenshot({ path: path.join(output, `${name}-loaded-world.png`) });
     row.status = "passed";
   } catch (error) {

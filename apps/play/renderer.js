@@ -217,10 +217,16 @@ export class GameRenderer {
         deactivateOnMouseMove: false,
       },
     });
-    // Pixi 8.22.0 init removes its postrender listener after enabling the system.
-    // Re-enable through the public API once initialization has finished.
+    // Initialize the accessibility overlay after renderer setup.
     this.app.renderer.accessibility?.setAccessibilityEnabled(false);
     this.app.renderer.accessibility?.setAccessibilityEnabled(true);
+    // Pixi 8.22 has no public option for its Android-only 500ms throttle. These
+    // overlays are also live touch controls: stale buttons can select a target
+    // after its submenu has closed. Keep them synchronized on every frame.
+    if (this.app.renderer.accessibility)
+      this.app.renderer.accessibility._androidUpdateFrequency = 0;
+    // Update once after the back buffer has actually reached the screen.
+    this.app.renderer.runners.postrender.remove(this.app.renderer.accessibility);
     this.particles.setRenderer(this.app.renderer);
     this.backgroundParticles.setRenderer(this.app.renderer);
     const overlay = this.app.renderer.accessibility?.div;
@@ -1496,17 +1502,17 @@ export class GameRenderer {
     this.app.render();
     this._frameRequests.clear();
     const renderer = this.app.renderer;
-    if (
-      renderer.accessibility?.isActive &&
-      renderer.backBuffer?.useBackBuffer &&
-      !renderer.renderingToScreen &&
-      renderer.renderTarget.renderTarget?.isRoot
-    ) {
+    if (renderer.accessibility?.isActive) {
       // Pixi8.22 presents the back buffer to the canvas in renderEnd, but its
       // root-pass flag still describes the intermediate texture. Accessibility
       // then skips postrender. Rebind the already presented screen through the
       // public render-target API without clearing/drawing, and update its DOM.
-      renderer.renderTarget.renderStart({ target: renderer.view.renderTarget, clear: false });
+      if (
+        renderer.backBuffer?.useBackBuffer &&
+        !renderer.renderingToScreen &&
+        renderer.renderTarget.renderTarget?.isRoot
+      )
+        renderer.renderTarget.renderStart({ target: renderer.view.renderTarget, clear: false });
       renderer.accessibility.postrender();
       this._accessibilityScreenSyncs = (this._accessibilityScreenSyncs || 0) + 1;
     }

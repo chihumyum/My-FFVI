@@ -224,11 +224,19 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
       canvas.x >= 0 &&
         canvas.y >= 0 &&
         canvas.x + canvas.width <= 844 &&
-        canvas.y + canvas.height <= pad.y + 1,
+        canvas.y + canvas.height <= 391 &&
+        pad.y < canvas.y + canvas.height,
     );
+    for (const selector of [".touch-dpad", ".touch-actions"]) {
+      const cluster = await page.locator(selector).boundingBox();
+      assert(cluster.x >= canvas.x - 1 && cluster.x + cluster.width <= canvas.x + canvas.width + 1);
+      assert(
+        cluster.y >= canvas.y - 1 && cluster.y + cluster.height <= canvas.y + canvas.height + 1,
+      );
+    }
     await screenshot("field-landscape");
 
-    await press("取消或打开菜单");
+    await press("返回或打开菜单");
     await choose("道具");
     await page.waitForTimeout(300);
     const itemLabels = await page.locator(".touch-options-list button").allTextContents();
@@ -267,7 +275,7 @@ for (const engine of (process.env.PLAY_BROWSER || "chromium,webkit").split(","))
     await screenshot("save-landscape");
     await choose("返回");
     await button("收起").tap();
-    await press("取消或打开菜单");
+    await press("返回或打开菜单");
     result.checks.push({
       name: "virtual menu, readable original actions and distinct item/equipment/settings/save labels",
       itemLabels,

@@ -104,7 +104,7 @@ export function mountTouchControls({
       <div class="touch-actions">
         <button type="button" data-game-key="Tab" class="touch-small" aria-label="切换战斗角色">换人</button>
         <button type="button" data-game-key="q" class="touch-small" aria-label="切换队伍">换队</button>
-        <button type="button" data-game-key="Escape" class="touch-cancel" aria-label="取消或打开菜单">菜单 / B</button>
+        <button type="button" data-game-key="Escape" class="touch-cancel" aria-label="返回或打开菜单" title="返回、取消；地图上打开菜单">返回 B</button>
         <button type="button" data-game-key="Enter" class="touch-confirm" aria-label="确认或交互">确认</button>
       </div>
     </div>`;
@@ -149,13 +149,36 @@ export function mountTouchControls({
       button.classList.remove("pressed");
     onRelease?.();
   }
+  function positionPad() {
+    const screen = canvas?.getBoundingClientRect();
+    const bounds = root.getBoundingClientRect();
+    // Wide phones letterbox the 16:9 camera. Anchor both clusters inside that
+    // camera, rather than leaving them in the phone's outer black bars.
+    const overlay = enabled && bounds.width > bounds.height && screen?.width > 0;
+    pad.style.left = overlay ? `${Math.max(0, screen.left - bounds.left)}px` : "";
+    pad.style.right = overlay ? `${Math.max(0, bounds.right - screen.right)}px` : "";
+    pad.style.bottom = overlay ? `${Math.max(0, bounds.bottom - screen.bottom)}px` : "";
+    const overlaps = (element) => {
+      const rect = element.getBoundingClientRect();
+      return (
+        screen &&
+        screen.bottom > rect.top &&
+        screen.top < rect.bottom &&
+        screen.right > rect.left &&
+        screen.left < rect.right
+      );
+    };
+    root.dataset.layout = enabled && [...pad.children].some(overlaps) ? "floating" : "separate";
+  }
   function layout() {
     release();
     const viewport = window.visualViewport;
     const height = viewport?.height || window.innerHeight;
     document.body.style.setProperty("--touch-viewport-height", `${height}px`);
     const main = document.querySelector("main");
-    if (enabled) {
+    const mobileViewport = coarse.matches || navigator.maxTouchPoints > 0;
+    document.body.classList.toggle("touch-viewport", mobileViewport || enabled);
+    if (mobileViewport || enabled) {
       const style = getComputedStyle(root);
       const safeTop = parseFloat(style.getPropertyValue("--safe-top")) || 0;
       const safeBottom = parseFloat(style.getPropertyValue("--safe-bottom")) || 0;
@@ -165,17 +188,7 @@ export function mountTouchControls({
       );
     } else main?.style.removeProperty("--game-available-height");
     onLayout?.();
-    const screen = canvas?.getBoundingClientRect();
-    const buttons = pad.getBoundingClientRect();
-    const floating = !!(
-      enabled &&
-      screen &&
-      screen.bottom > buttons.top &&
-      screen.top < buttons.bottom &&
-      screen.right > buttons.left &&
-      screen.left < buttons.right
-    );
-    root.dataset.layout = floating ? "floating" : "separate";
+    positionPad();
   }
   function showOptions(show) {
     release();
@@ -197,7 +210,6 @@ export function mountTouchControls({
       if (!options.hidden) showOptions(false);
       document.body.classList.remove("touch-tools-open");
       toolsToggle.setAttribute("aria-expanded", "false");
-      zoom?.reset();
     }
     layout();
   }
@@ -220,6 +232,8 @@ export function mountTouchControls({
   const zoom = canvas
     ? mountGameZoom({
         element: canvas,
+        isSurface: (event) =>
+          event.target === canvas || !!event.target?.closest?.(".pixi-accessibility"),
         onGesture: release,
         onChange: (view) => {
           zoomReset.hidden = view.scale <= 1.001;
@@ -299,6 +313,9 @@ export function mountTouchControls({
   window.addEventListener("orientationchange", layout);
   window.addEventListener("resize", layout);
   window.visualViewport?.addEventListener("resize", layout);
+  const screenObserver =
+    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(positionPad);
+  if (canvas) screenObserver?.observe(canvas);
   document.addEventListener("visibilitychange", visibility);
   coarse.addEventListener("change", update);
   update();
@@ -312,6 +329,7 @@ export function mountTouchControls({
       window.removeEventListener("orientationchange", layout);
       window.removeEventListener("resize", layout);
       window.visualViewport?.removeEventListener("resize", layout);
+      screenObserver?.disconnect();
       document.removeEventListener("visibilitychange", visibility);
       coarse.removeEventListener("change", update);
       zoom?.destroy();

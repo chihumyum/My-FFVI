@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createServer } from "vite";
-import { chromium, webkit } from "playwright";
+import { chromium, webkit, devices } from "playwright";
 import { directionalControl } from "../../apps/play/ui-interaction.js";
 
 const root = path.resolve(import.meta.dirname, "../..");
@@ -34,6 +34,7 @@ try {
     let page;
     try {
       const context = await browser.newContext({
+        ...devices[engine === "chromium" ? "Pixel 7" : "iPhone 13"],
         viewport: { width: 844, height: 390 },
         hasTouch: true,
         isMobile: true,
@@ -104,6 +105,57 @@ try {
         { timeout: 60000 },
       );
       await page.getByRole("button", { name: "魔法", exact: true }).waitFor();
+      row.userAgent = await page.evaluate(() => navigator.userAgent);
+      row.layout = [];
+      for (const size of [
+        { width: 844, height: 390 },
+        { width: 932, height: 430 },
+        { width: 844, height: 330 },
+        { width: 844, height: 430 },
+        { width: 1024, height: 768 },
+        { width: 390, height: 844 },
+        { width: 844, height: 390 },
+      ]) {
+        await page.setViewportSize(size);
+        await page.waitForTimeout(250);
+        const geometry = await page.evaluate(() => {
+          const rect = (selector) =>
+            document.querySelector(selector).getBoundingClientRect().toJSON();
+          return {
+            screen: rect("#screen"),
+            directions: rect(".touch-dpad"),
+            actions: rect(".touch-actions"),
+            bodyPadding: getComputedStyle(document.body).padding,
+            mode: document.querySelector("#touch-controls").dataset.layout,
+            back: document.querySelector('[data-game-key="Escape"]').textContent,
+            opacity: getComputedStyle(document.querySelector('[data-game-key="Escape"]')).opacity,
+          };
+        });
+        const frame = geometry.screen;
+        assert.equal(geometry.bodyPadding, "0px", "Controls must not reserve viewport space");
+        const expectedWidth = Math.min(size.width, (size.height * 16) / 9);
+        assert(
+          Math.abs(frame.width - expectedWidth) < 2,
+          "Game must use the full aspect-correct viewport",
+        );
+        assert.match(geometry.back, /返回/);
+        if (size.width > size.height) {
+          assert.equal(geometry.mode, "floating");
+          assert(Number(geometry.opacity) < 1);
+          for (const cluster of [geometry.directions, geometry.actions])
+            assert(
+              cluster.left >= frame.left - 1 &&
+                cluster.right <= frame.right + 1 &&
+                cluster.top >= frame.top - 1 &&
+                cluster.bottom <= frame.bottom + 1,
+              `Buttons must float inside the actual game frame: ${JSON.stringify({ size, geometry })}`,
+            );
+        }
+        row.layout.push({ size, ...geometry });
+        await page.screenshot({
+          path: path.join(output, `${engine}-layout-${size.width}x${size.height}.png`),
+        });
+      }
       row.start = await page.evaluate(() => ({
         mapId: window.ffvi.mapId,
         party: window.ffvi.battle.players.map((u) => u.name),
@@ -208,6 +260,11 @@ try {
           await pointer("pointerup", 2, right + 60);
         }
         const zoom = await page.evaluate(() => window.ffviRenderMetrics().gameZoom);
+        assert.equal(
+          await page.evaluate(() => window.visualViewport?.scale || 1),
+          1,
+          "Pinch must resize the game world, not the Android browser page",
+        );
         assert.ok(zoom.scale > 1.5, "Pinch did not update the real world renderer");
         assert.deepEqual(await page.locator('[data-game-key="Enter"]').boundingBox(), buttonBefore);
         assert.deepEqual(
@@ -226,6 +283,14 @@ try {
         );
         row[name] = { zoom, keepsUI: true, canvas: box };
         await page.screenshot({ path: path.join(output, `${engine}-${name}.png`) });
+        if (name === "worldZoom") {
+          await page.locator("[data-touch-toggle]").tap();
+          assert.deepEqual(await page.evaluate(() => window.ffviRenderMetrics().gameZoom), zoom);
+          assert.deepEqual(await page.locator("#screen").boundingBox(), box);
+          await page.locator("[data-touch-toggle]").tap();
+          assert.deepEqual(await page.evaluate(() => window.ffviRenderMetrics().gameZoom), zoom);
+          row.preservesZoomAcrossTouchToggle = true;
+        }
         await page.locator("[data-touch-zoom]").tap();
       };
       await pinch("menuZoom");
@@ -234,6 +299,17 @@ try {
       await page.waitForFunction(() => !window.ffviLoading().active);
       await page.screenshot({ path: path.join(output, `${engine}-world-before-zoom.png`) });
       await pinch("worldZoom");
+      const touchOnFrame = await page.locator("#screen").boundingBox();
+      await page.locator("[data-touch-toggle]").tap();
+      assert.equal(await page.locator("[data-touch-toggle]").getAttribute("aria-pressed"), "false");
+      await page.waitForTimeout(150);
+      assert.deepEqual(
+        await page.locator("#screen").boundingBox(),
+        touchOnFrame,
+        "Hiding the gamepad must not shrink or move the game frame",
+      );
+      await pinch("touchOffZoom");
+      await page.locator("[data-touch-toggle]").tap();
       await tap("Escape");
       row.github = [];
       assert.ok(

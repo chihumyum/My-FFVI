@@ -12,10 +12,16 @@ export function zoomAt(view, scale, anchor, previousAnchor = anchor) {
   };
 }
 
-export function mountGameZoom({ element, onChange = () => {}, onGesture = () => {} }) {
+export function mountGameZoom({
+  element,
+  onChange = () => {},
+  onGesture = () => {},
+  isSurface = (event) => event.target === element,
+}) {
   let view = { scale: 1, x: 0, y: 0 };
   let gesture = null;
   const pointers = new Map();
+  const targets = new Map();
   const suppressed = new Set();
   const cancelled = new WeakSet();
   const recent = new Map();
@@ -53,12 +59,13 @@ export function mountGameZoom({ element, onChange = () => {}, onGesture = () => 
           bubbles: true,
         });
         cancelled.add(event);
-        element.dispatchEvent(event);
+        (targets.get(pointerId) || element).dispatchEvent(event);
       }
     onGesture();
     emit(true);
   };
   const down = (event) => {
+    if (!isSurface(event)) return;
     if (event.pointerType !== "touch") {
       legacyClickUntil = 0;
       return;
@@ -68,6 +75,7 @@ export function mountGameZoom({ element, onChange = () => {}, onGesture = () => 
       legacyClickUntil = 0;
     }
     pointers.set(event.pointerId, point(event));
+    targets.set(event.pointerId, event.target);
     if (pointers.size >= 2) {
       begin();
       stop(event);
@@ -95,6 +103,7 @@ export function mountGameZoom({ element, onChange = () => {}, onGesture = () => 
     if (cancelled.has(event)) return;
     if (!pointers.has(event.pointerId)) return;
     pointers.delete(event.pointerId);
+    targets.delete(event.pointerId);
     if (suppressed.has(event.pointerId)) {
       recent.set(event.pointerId, performance.now() + 700);
       legacyClickUntil = performance.now() + 700;
@@ -110,11 +119,13 @@ export function mountGameZoom({ element, onChange = () => {}, onGesture = () => 
   };
   const release = () => {
     pointers.clear();
+    targets.clear();
     suppressed.clear();
     gesture = null;
     emit();
   };
   const click = (event) => {
+    if (!isSurface(event)) return;
     const now = performance.now();
     for (const [id, until] of recent) if (until < now) recent.delete(id);
     if (
@@ -127,12 +138,12 @@ export function mountGameZoom({ element, onChange = () => {}, onGesture = () => 
   const visibility = () => {
     if (document.hidden) release();
   };
-  element.addEventListener("pointerdown", down, true);
+  window.addEventListener("pointerdown", down, true);
   // Capture before Pixi's canvas/document listeners can turn a pinch into a tap.
   window.addEventListener("pointermove", move, { capture: true, passive: false });
   window.addEventListener("pointerup", up, { capture: true, passive: false });
   window.addEventListener("pointercancel", up, { capture: true, passive: false });
-  element.addEventListener("click", click, true);
+  window.addEventListener("click", click, true);
   window.addEventListener("blur", release);
   document.addEventListener("visibilitychange", visibility);
   return {
@@ -143,11 +154,11 @@ export function mountGameZoom({ element, onChange = () => {}, onGesture = () => 
     },
     destroy() {
       release();
-      element.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerdown", down, true);
       window.removeEventListener("pointermove", move, true);
       window.removeEventListener("pointerup", up, true);
       window.removeEventListener("pointercancel", up, true);
-      element.removeEventListener("click", click, true);
+      window.removeEventListener("click", click, true);
       window.removeEventListener("blur", release);
       document.removeEventListener("visibilitychange", visibility);
     },

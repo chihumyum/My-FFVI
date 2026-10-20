@@ -79,6 +79,13 @@ try {
       row.landscape = await metrics();
       assert.ok(row.landscape.screen.height >= 389, "Landscape game must fill available height");
       assert.equal(row.landscape.mode, "floating");
+      for (const selector of [".touch-dpad", ".touch-actions"]) {
+        const cluster = await page.locator(selector).boundingBox();
+        assert(cluster.x >= row.landscape.screen.left - 1);
+        assert(cluster.x + cluster.width <= row.landscape.screen.right + 1);
+        assert(cluster.y >= row.landscape.screen.top - 1);
+        assert(cluster.y + cluster.height <= row.landscape.screen.bottom + 1);
+      }
       const button = page.locator('[data-game-key="Enter"]');
       assert.ok(Number(await button.evaluate((node) => getComputedStyle(node).opacity)) < 1);
       await button.tap();
