@@ -312,16 +312,15 @@ try {
       await page.locator("[data-touch-toggle]").tap();
       await tap("Escape");
       row.github = [];
-      assert.ok(
-        (await available()).some((control) => control.label === "报告问题"),
-        "Menu report entry is clipped or inaccessible",
-      );
+      for (const label of ["报告问题", "GitHub 项目", "额外内容", "作者 GitHub"])
+        assert.equal(
+          (await available()).some((control) => control.label === label),
+          false,
+        );
+      await tap("Escape");
+      await page.locator("[data-touch-tools]").tap();
+      assert(await page.locator("#bug-report").isVisible());
       row.reportEntryVisible = true;
-      assert.equal(
-        (await available()).some((control) => control.label === "作者 GitHub"),
-        false,
-        "The menu must link only to the game repository",
-      );
       await context.route("https://github.com/**", (route) =>
         route.fulfill({
           status: 200,
@@ -329,14 +328,13 @@ try {
           body: "<title>Captured GitHub destination</title>",
         }),
       );
-      await focus(/^GitHub 项目$/);
       const popup = page.waitForEvent("popup");
-      await tap("Enter");
+      await page.locator("#repository-open").tap();
       const opened = await popup;
       await opened.waitForURL("https://github.com/chihumyum/My-FFVI");
       row.github.push(opened.url());
       await opened.close();
-      await tap("Escape");
+      await page.locator("#tools-close").tap();
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(base);
       await page.waitForFunction(

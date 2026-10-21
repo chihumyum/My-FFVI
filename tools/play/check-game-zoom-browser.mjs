@@ -4,7 +4,9 @@ import path from "node:path";
 import { createServer } from "vite";
 import { chromium, webkit } from "playwright";
 
-const output = path.resolve("build/play/deployment/pinch-zoom/browser");
+const output = path.resolve(
+  process.env.PLAY_ZOOM_REPORT || "build/play/deployment/pinch-zoom/browser",
+);
 await mkdir(output, { recursive: true });
 const server = await createServer({
   configFile: path.resolve("vite.config.mjs"),
@@ -211,8 +213,8 @@ try {
           await page.locator("[data-touch-zoom]").click();
           sameRectangle((await geometry()).canvas, before.canvas, "reset");
 
-          // Real ordinary menu inputs; opening extras and saves must keep the
-          // camera rectangle at both the normal and enlarged display size.
+          // Saves belong to the game menu; extras belong to the title menu.
+          // Both must keep the camera rectangle at normal and enlarged sizes.
           for (const factor of [1, 1.2]) {
             await page.goto(`${base}?checkpoint=narshe-rock&panel=${encodeURIComponent("队伍")}`);
             await ready();
@@ -227,8 +229,22 @@ try {
                 y: before.canvas.y + before.canvas.height / 2,
               });
             const field = await screen.boundingBox();
+            await button("存档").click();
+            await button("写入存档 1").waitFor();
+            sameRectangle(await screen.boundingBox(), field, "save menu");
+            await page.screenshot({ path: path.join(output, `${name}-save-${factor}.png`) });
+            await page.keyboard.press("Escape");
+            await page.keyboard.press("Escape");
+            sameRectangle(await screen.boundingBox(), field, "return to game");
+            await page.goto(base);
+            await ready();
+            if (factor !== 1)
+              await pinch(factor, {
+                x: before.canvas.x + before.canvas.width / 2,
+                y: before.canvas.y + before.canvas.height / 2,
+              });
+            sameRectangle(await screen.boundingBox(), field, "title menu");
             await button("额外内容").waitFor();
-            sameRectangle(await screen.boundingBox(), field, "party menu");
             await button("额外内容").click();
             await button("画廊").waitFor();
             sameRectangle(await screen.boundingBox(), field, "extras");
@@ -245,13 +261,8 @@ try {
             await page.keyboard.press("Enter");
             await page.screenshot({ path: path.join(output, `${name}-gallery-${factor}.png`) });
             await page.keyboard.press("Escape");
-            await button("存档").click();
-            await button("写入存档 1").waitFor();
-            sameRectangle(await screen.boundingBox(), field, "save menu");
-            await page.screenshot({ path: path.join(output, `${name}-save-${factor}.png`) });
-            await page.keyboard.press("Escape");
-            await page.keyboard.press("Escape");
-            sameRectangle(await screen.boundingBox(), field, "return to game");
+            await button("新游戏").waitFor();
+            sameRectangle(await screen.boundingBox(), field, "return to title");
           }
           await page.locator("[data-touch-zoom]").click();
           sameRectangle(await screen.boundingBox(), before.canvas, "final reset");

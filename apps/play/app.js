@@ -423,6 +423,8 @@ async function reportBug() {
   }
 }
 $("bug-report").onclick = reportBug;
+$("repository-open").onclick = () =>
+  window.open("https://github.com/chihumyum/My-FFVI", "_blank", "noopener,noreferrer");
 function gameKeyDown(e) {
   if (e.key === "F9") {
     e.preventDefault();
@@ -544,19 +546,6 @@ function renderMenu() {
       location: ui.presentation.mapNames?.[game.mapId],
     },
   );
-  const bonus = createWidget("button");
-  bonus.textContent = "额外内容";
-  bonus.onclick = () => extras.open();
-  $("menu-nav").append(bonus);
-  const repository = createWidget("button");
-  repository.textContent = "GitHub 项目";
-  repository.onclick = () =>
-    window.open("https://github.com/chihumyum/My-FFVI", "_blank", "noopener,noreferrer");
-  $("menu-nav").append(repository);
-  const feedback = createWidget("button");
-  feedback.textContent = "报告问题";
-  feedback.onclick = reportBug;
-  $("menu-nav").append(feedback);
 }
 let shopView = null;
 let namingView = null;

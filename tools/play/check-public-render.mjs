@@ -95,6 +95,47 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
     await page
       .locator("#screen")
       .screenshot({ path: path.join(output, `${name}-title-cursor.png`) });
+    await page.getByRole("button", { name: "额外内容", exact: true }).click();
+    await page.getByRole("button", { name: "图鉴", exact: true }).waitFor();
+    await page.screenshot({ path: path.join(output, `${name}-title-extras.png`) });
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "新游戏", exact: true }).waitFor();
+    row.titleExtras = true;
+    await context.route("https://github.com/**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/html",
+        body: "<title>Game repository</title>",
+      }),
+    );
+    const checkPageTools = async (stage) => {
+      const before = await page.locator("#screen").boundingBox();
+      await page.locator("[data-touch-tools]").click();
+      assert(await page.locator("#play-tools #bug-report").isVisible());
+      assert(await page.locator("#play-tools #repository-open").isVisible());
+      assert.equal(await page.getByRole("button", { name: "作者 GitHub", exact: true }).count(), 0);
+      assert.deepEqual(await page.locator("#screen").boundingBox(), before);
+      await page.screenshot({ path: path.join(output, `${name}-${stage}-tools.png`) });
+      const popup = page.waitForEvent("popup");
+      await page.locator("#repository-open").click();
+      const opened = await popup;
+      await opened.waitForURL("https://github.com/chihumyum/My-FFVI");
+      await opened.close();
+      await page.locator("#bug-report").click();
+      await page.locator(".feedback-dialog[open]").waitFor();
+      assert(
+        await page
+          .locator(".feedback-preview")
+          .evaluate((img) => img.src.startsWith("data:image/png")),
+      );
+      await page.locator(".feedback-close").click();
+      await page.locator("#tools-close").click();
+      await page.keyboard.press("F9");
+      await page.locator(".feedback-dialog[open]").waitFor();
+      await page.locator(".feedback-close").click();
+      assert.deepEqual(await page.locator("#screen").boundingBox(), before);
+    };
+    await checkPageTools("title");
     await page.locator("#cloud-toggle").click();
     await page.locator('#cloud-panel input[type="file"]').setInputFiles({
       name: "actual-save.json",
@@ -127,6 +168,8 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
       };
     });
     assert.equal(row.metrics.texturesFailed, 0);
+    await checkPageTools("game");
+    row.pageTools = { repository: true, report: true, f9: true, titleAndGame: true };
     assert.deepEqual(row.errors, []);
     assert.deepEqual(row.apiRequests, []);
     if (!touch) {
@@ -167,7 +210,11 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
       await back.tap();
       await page.getByRole("button", { name: "设置", exact: true }).waitFor();
       assert.equal(await page.getByRole("button", { name: "作者 GitHub", exact: true }).count(), 0);
-      assert.equal(await page.getByRole("button", { name: "GitHub 项目", exact: true }).count(), 1);
+      const menuLabels = await page.evaluate(() =>
+        window.ffviUIDiagnostics().keyboardControls.map((control) => control.label),
+      );
+      for (const label of ["额外内容", "报告问题", "GitHub 项目"])
+        assert.equal(menuLabels.includes(label), false, `Page-only entry in game menu: ${label}`);
       row.repositoryLinkOnly = true;
       await back.tap();
       await page.waitForFunction(() => !document.body.classList.contains("modern-menu"));
@@ -179,6 +226,8 @@ for (const [name, engine] of Object.entries({ chromium, webkit })) {
       assert(await tools.isVisible());
       await tools.tap();
       assert(await page.locator("#play-tools").isVisible());
+      assert(await page.locator("#bug-report").isVisible());
+      assert(await page.locator("#repository-open").isVisible());
       assert.deepEqual(await page.locator("#screen").boundingBox(), before);
       await page.screenshot({ path: path.join(output, `${name}-tools-with-touch-off.png`) });
       await tools.tap();
