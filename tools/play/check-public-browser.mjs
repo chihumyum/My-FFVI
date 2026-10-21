@@ -91,20 +91,27 @@ for (const engine of process.env.PLAY_BROWSER
     };
     const uploaded = async (page, minimumRevision = 1) => {
       const identity = await session(page);
-      await page.waitForFunction(
-        async ({ account, minimumRevision }) => {
-          const response = await fetch("/api/saves/normal:1", {
-            headers: { "X-FFVI-Account": account },
-            cache: "no-store",
-          });
-          if (response.status === 404) return false;
-          const value = await response.json();
-          if (!response.ok) throw Error(value.error || `HTTP ${response.status}`);
-          return value.revision >= minimumRevision;
-        },
-        { account: identity.serverId, minimumRevision },
-        { timeout: 60000, polling: 500 },
-      );
+      const deadline = Date.now() + 60000;
+      // waitForFunction tests Promise truthiness before awaiting its value in
+      // the current Playwright runtime. Poll the resolved API result explicitly.
+      while (Date.now() < deadline) {
+        const complete = await page.evaluate(
+          async ({ account, minimumRevision }) => {
+            const response = await fetch("/api/saves/normal:1", {
+              headers: { "X-FFVI-Account": account },
+              cache: "no-store",
+            });
+            if (response.status === 404) return false;
+            const value = await response.json();
+            if (!response.ok) throw Error(value.error || `HTTP ${response.status}`);
+            return value.revision >= minimumRevision;
+          },
+          { account: identity.serverId, minimumRevision },
+        );
+        if (complete) return;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      throw Error(`Cloud slot did not reach revision ${minimumRevision}`);
     };
     const a = await open(aContext),
       b = await open(bContext);
@@ -128,6 +135,11 @@ for (const engine of process.env.PLAY_BROWSER
         mimeType: "application/json",
         buffer: Buffer.from(JSON.stringify(seed)),
       });
+    await a.waitForFunction(() =>
+      [...document.querySelectorAll("#cloud-panel [role='status']")].some(
+        (node) => node.textContent === "已完成",
+      ),
+    );
     await a.getByRole("button", { name: "立即同步", exact: true }).click();
     await uploaded(a);
     const firstSave = await request(a, "/api/saves/normal:1");
@@ -161,7 +173,13 @@ for (const engine of process.env.PLAY_BROWSER
     await b.waitForFunction(
       () => {
         const m = window.ffviRenderMetrics();
-        return m.visibleTiles > 0 && m.visibleActors > 0 && m.texturesLoading === 0;
+        return (
+          !window.ffviLoading().active &&
+          !window.ffvi.busy &&
+          m.visibleTiles > 0 &&
+          m.visibleActors > 0 &&
+          m.texturesLoading === 0
+        );
       },
       null,
       { timeout: 60000 },
@@ -174,12 +192,13 @@ for (const engine of process.env.PLAY_BROWSER
     result.checks.push(
       "second device restores downloaded identity and loads the actual saved game",
     );
-    await bContext.setOffline(true);
-    await b.keyboard.down("d");
-    await b.waitForTimeout(250);
-    await b.keyboard.up("d");
-    await b.keyboard.press("Escape");
+    // Warm the real save menu before going offline. This tests local save
+    // persistence, without requiring uncached menu art to load without a network.
+    await b.locator("[data-touch-toggle]").click();
+    await b.locator('[data-game-key="Escape"]').click();
     await b.getByRole("button", { name: "存档", exact: true }).click();
+    await b.getByRole("button", { name: "覆盖存档 1", exact: true }).waitFor();
+    await bContext.setOffline(true);
     await b.getByRole("button", { name: "覆盖存档 1", exact: true }).click();
     await b.waitForTimeout(500);
     const dbs = await b.evaluate(() => indexedDB.databases());
