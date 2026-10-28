@@ -1,5 +1,134 @@
 # My-FFVI
 
+[English](#english) · [简体中文](#简体中文)
+
+## English
+
+An unofficial 2D pixel RPG in ongoing development, based on the world of _Final Fantasy VI_.
+
+The long-term goal is a freely explorable, nonlinear world: substantially expanded cities and regions, interconnected characters and side stories, and a world that changes as you play, with more routes to explore and story choices to make. The project keeps the 2D pixel art and the original battle system's character while gradually expanding gameplay.
+
+The current foundation is a Web port of Pixel Remaster (PR), and the original campaign still makes up most of the playable content. The open world and large-scale additions are future development goals.
+
+**[Play online](https://ffvi.chihum.dev/)** · [Current status and known issues](STATUS.md)
+
+This repository contains source code only. Original assets, extracted data, saves, and issue screenshots stay out of Git.
+
+### Run
+
+Requires Node.js 22.18+.
+
+**Source code only:** build a local client using the online resources, without exporting game data.
+
+```sh
+npm ci
+npm run bundle:client -- --site https://ffvi.chihum.dev/
+npx serve dist/client
+```
+
+This mode saves locally on the current device. For cloud sync, use the Cloudflare deployment below.
+
+**With a PR Windows installation:** also requires Python 3, vgmstream-cli, and FFmpeg with libopus (macOS: `brew install vgmstream ffmpeg`).
+
+```sh
+npm ci
+python3 -m venv .venv
+.venv/bin/pip install -r tools/export/requirements.txt
+npm run export -- --game "/path/to/FINAL FANTASY VI"
+npm run dev
+```
+
+Exported data goes into `build/web-data/`, and exports can be rerun incrementally. The development URL is `http://127.0.0.1:4173/`.
+
+### Controls
+
+| Input                        | Action                                        |
+| ---------------------------- | --------------------------------------------- |
+| Arrow keys / WASD            | Move or select                                |
+| Enter / Space                | Confirm or interact                           |
+| Esc                          | Open the menu or go back                      |
+| Tab / Q                      | Switch characters in battle / switch parties  |
+| Shift                        | Toggle single-target and all-target selection |
+| Cmd/Ctrl + plus or minus / 0 | Zoom the game view / reset zoom               |
+| F9                           | Capture a screenshot and report an issue      |
+
+On trackpads and phones, pinch with two fingers to zoom the entire game display, including dialogue, HUD, and game menus. Extra content and save menus share the same display bounds as the camera view. Mobile virtual buttons and the page toolbar keep their original size, with landscape buttons floating on either side of the screen. “Touch” (「触控」) only shows or hides the virtual buttons. “Tools” (「工具」) is always available, with independent toggles for automatic progression, dialogue skipping, fast-forward, auto-battle, invincibility, and location information.
+
+Supported browsers show “Fullscreen” (「全屏」) at the top right. “Extra Content” (「额外内容」) on the title menu opens the bestiary, gallery, reference library, and music player. The page's “Tools” menu includes “Report an Issue (F9)” (「报告问题（F9）」) and “GitHub Project” (「GitHub 项目」); both remain available when touch controls are hidden.
+
+#### Saves and issue reports
+
+Your first visit to the online game automatically creates an isolated save identity. Back up the recovery key in “Cloud Saves” (「云存档」), then import it on another device to sync. **The key acts as your password and cannot be recovered if lost.** Backing up your identity and backing up your saves are separate tasks. Saves are stored locally while offline and synced when you reconnect; both sides of a conflict are preserved.
+
+F9 captures a screenshot and records the story position before you add a description and confirm sending. Online reports go to private storage; development builds write to `bug-reports/`, and plain static builds download a file.
+
+### Deploy
+
+After exporting the data, choose one of these options:
+
+| Option               | Command                     | Output and saves                                                 |
+| -------------------- | --------------------------- | ---------------------------------------------------------------- |
+| Plain static website | `npm run bundle`            | `dist/web/`, local saves only                                    |
+| Cloudflare           | `npm run cloudflare:deploy` | Worker pages, R2 resources, D1 cloud saves                       |
+| Private server       | `npm run package:host`      | `dist/ffvi-private-host.tar.gz`, password login and shared saves |
+
+Serve the static bundle with any HTTP(S) server. `file://` is not supported.
+
+**First-time Cloudflare setup:** run `npx wrangler login`, then create a D1 database and two R2 buckets in your own account:
+
+```sh
+npx wrangler d1 create ffvi-saves
+npx wrangler r2 bucket create ffvi-resources
+npx wrangler r2 bucket create ffvi-bug-reports
+```
+
+Set your account, domain, database ID, and bucket names in `wrangler.jsonc`. If you use a custom resource bucket name, also set `FFVI_RESOURCE_BUCKET`. The Worker provides read-only access to the resource bucket; the report bucket stays private.
+
+```sh
+npm run cloudflare:deploy:first  # First deployment
+npm run cloudflare:deploy       # Routine updates; preserve existing passwords and saves
+npm run cloudflare:backup       # Back up D1 to backups/
+```
+
+**Private server:** after extraction, copy `.env.example` to `.env` in `private-host/` and set `FFVI_DOMAIN`. Point the domain to your server, open ports 80/443, then run `docker compose up -d --build`. The password is in `/data/first-login.txt` inside the container. To try it locally, run `npm start` in `dist/private-host/` (requires Node.js 24.4+); the default URL is `http://127.0.0.1:4180/`.
+
+### Development
+
+#### Local story workbench
+
+After exporting PR data, run `npm run story:editor` and open `http://127.0.0.1:4186/story-editor.html`. The Akto sample also needs prepared city resources (run `npm run play:akto:city` the first time). The editor is served only by the local development service; ordinary game bundles do not include editing endpoints.
+
+The left panel searches all original scripts and the current Akto scripts. The center switches between a flowchart, scene steps, character tracks, and map previews. The right panel edits nodes, triggers, named world state, and versions. Original-content overrides preserve instruction counts, segmentation, and full parameters, with Chinese forms for common instructions. The interface still mostly uses low-level instructions and IDs; semantic resolution of characters, resources, and story conditions is incomplete. Authored scripts support branches, choices, character movement, parallel scenes, camera control, audio, battles, and map transitions, and compile to the existing VM. The opera-specific timeline is currently browsable.
+
+The “Akto Sample” (「阿克托样例」) lets you edit a delivery side quest: a messenger in the south of the city offers routes through the water court and the industrial district, and delivery changes residents' dialogue and NPC positions. Complete it through ordinary movement and interaction. World state is saved with the isolated preview save and persists after leaving and returning. Map points can bind to existing NPCs or set destinations for movement nodes. “Triggers and World” (「触发与世界」) supports NPC, single-tile region, and map-entry bindings, with prerequisites and scene changes configured through named state. Multiple entry bindings run in list order, and scene variants use the first matching entry.
+
+“Save to File” (「保存到文件」) writes to `private-data/story-editor/`, retaining history on every save and preserving both sides of conflicts. Browser drafts are kept in the workbench's isolated IndexedDB. “Export” (「导出」) downloads a source document that can be imported again. Original-content overrides contain extracted text and must stay out of Git. Preview progress uses separate local storage and does not connect to players' cloud saves; you can save after a scene ends and the character is standing still. After editing a draft, use “Apply Draft and Restart Preview” (「应用草稿并重新试玩」) to apply it; you can then reload progress when continuing an earlier preview. Breakpoints and single-step execution control only this preview instance. Original scenes depend on existing world state: import an ordinary save to run from its current position. A frozen rendering frame is not a playable save.
+
+Run `npm run story:check` to check the authoring loop, both exploration routes, and saving/loading in an isolated document directory and temporary browser profile. Reports go to `build/play/deployment/story-editor/`. Workbench content currently runs through isolated previews; game releases still use the existing deployment process.
+
+Original assets and parameters come from PR, while behavior follows the [SNES disassembly](https://github.com/everything8215/ff6); explicit PR data takes precedence. New content follows the project's designs. The original campaign remains the regression baseline, while new regions and quests are accepted through their own exploration routes, completion conditions, and world changes.
+
+| Directory            | Responsibility                             |
+| -------------------- | ------------------------------------------ |
+| `tools/export/`      | Export runtime data from original PR files |
+| `src/play/`          | Game logic, independent of rendering       |
+| `apps/play/`         | Pixi/WebGL, UI, audio, and input           |
+| `tools/play/`        | Bundling and regression checks             |
+| `cloudflare/`        | Online resource, save, and report services |
+| `server/`, `deploy/` | Optional private deployment                |
+| `legacy/`            | Archived and no longer used                |
+
+```sh
+npm test
+npm run format:check
+PLAY_TEST_BOOST=1 npm run play:through
+npm run play:visual-check
+```
+
+Before the first browser acceptance run, execute `npx playwright install chromium webkit`. Local reports and screenshots go to `build/play/` and stay out of Git. See [AGENTS.md](AGENTS.md) for development rules. Automatic play is for regression only; do not add shopping, grinding, or other strategy.
+
+## 简体中文
+
 一个以《最终幻想 VI》的世界为基础，持续创作的非官方 2D 像素 RPG。
 
 长期目标是构建可自由探索的非线性世界：大幅扩建城市与地区，加入相互关联的人物、支线和世界变化，让玩家拥有更多探索路径与剧情选择。保持 2D 像素美术与原有战斗特色，并逐步扩展玩法。
@@ -10,7 +139,7 @@
 
 仓库只含源码。原版素材、提取数据、存档和问题截图不进 Git。
 
-## 运行
+### 运行
 
 需要 Node.js 22.18+。
 
@@ -36,7 +165,7 @@ npm run dev
 
 导出数据在 `build/web-data/`，支持增量重跑；开发地址为 `http://127.0.0.1:4173/`。
 
-## 操作
+### 操作
 
 | 输入                 | 作用                   |
 | -------------------- | ---------------------- |
@@ -52,13 +181,13 @@ npm run dev
 
 支持的浏览器右上有「全屏」。标题主菜单的「额外内容」可进入图鉴、画廊、资料库与音乐播放器；页面「工具」菜单提供「报告问题（F9）」和「GitHub 项目」入口，关闭触控后仍可使用。
 
-### 存档与报错
+#### 存档与报错
 
 线上首次访问自动生成独立存档身份。在「云存档」备份恢复密钥，换设备后导入即可同步；**密钥等同密码，丢失后无法找回**。身份备份与存档备份是两回事。离线先存本机，联网后同步，冲突双方均保留。
 
 F9 先截图并记录剧情位置，再填写说明、确认发送。线上报告存入私有存储；开发版写入 `bug-reports/`，纯静态版下载文件。
 
-## 部署
+### 部署
 
 完成数据导出后，选择一种方式：
 
@@ -88,9 +217,9 @@ npm run cloudflare:backup       # D1 备份到 backups/
 
 **私人服务器**：解压后，在 `private-host/` 中将 `.env.example` 复制为 `.env`，填写 `FFVI_DOMAIN`；域名指向服务器并开放 80/443，然后运行 `docker compose up -d --build`。密码在容器 `/data/first-login.txt`。本机试用可在 `dist/private-host/` 运行 `npm start`（需要 Node.js 24.4+），默认地址 `http://127.0.0.1:4180/`。
 
-## 开发
+### 开发
 
-### 本机剧情工作台
+#### 本机剧情工作台
 
 已导出 PR 数据后，运行 `npm run story:editor`，打开 `http://127.0.0.1:4186/story-editor.html`。阿克托样例另需已准备的城市资源（首次运行 `npm run play:akto:city`）。编辑器仅在本机开发服务提供，普通游戏包不包含编辑接口。
 
