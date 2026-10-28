@@ -156,6 +156,17 @@ export async function prepareWeb({ dataRoot = "build/web-data", out = null } = {
     programFiles,
     assets: { images: {}, audio: {}, fonts: {} },
   };
+  const locales = await read(path.join(dataRoot, "locales.json")).catch((error) => {
+    if (error.code !== "ENOENT") throw error;
+    console.warn("[localization] No exported locales; run tools/export/localization.mjs once.");
+    return {};
+  });
+  index.locales = {};
+  for (const [language, file] of Object.entries(locales))
+    index.locales[language] = await payload(
+      await read(path.join(dataRoot, file)),
+      `locale-${language}`,
+    );
   const atlasRoot = path.resolve(project, "build/web-assets");
   const python = process.env.PYTHON || path.resolve(project, ".venv/bin/python");
   const atlas = spawnSync(

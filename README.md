@@ -14,6 +14,8 @@ The current foundation is a Web port of Pixel Remaster (PR), and the original ca
 
 This repository contains source code only. Original assets, extracted data, saves, and issue screenshots stay out of Git.
 
+Choose your language from the page toolbar: English, 简体中文, 繁體中文, 日本語, 한국어, Deutsch, Français, Italiano, Español, Português, Русский, or ไทย. The first visit follows your browser language, with English as the fallback; your explicit choice is remembered on this device. You can switch during play without restarting the story. Game dialogue and original names use the corresponding PR text, with i18next catalogs for the game interface.
+
 ### Run
 
 Requires Node.js 22.18+.
@@ -39,6 +41,8 @@ npm run dev
 ```
 
 Exported data goes into `build/web-data/`, and exports can be rerun incrementally. The development URL is `http://127.0.0.1:4173/`.
+
+For an existing export, run `npm run export:locales` followed by `npm run bundle` to add all 12 language packs and the available title-logo variants without re-exporting maps. Clients using remote resources need a resource index containing these locale packs. The local story workbench and its authored sample are separate from the game interface translations.
 
 ### Controls
 
@@ -123,6 +127,7 @@ npm test
 npm run format:check
 PLAY_TEST_BOOST=1 npm run play:through
 npm run play:visual-check
+npm run play:i18n-check
 ```
 
 Before the first browser acceptance run, execute `npx playwright install chromium webkit`. Local reports and screenshots go to `build/play/` and stay out of Git. See [AGENTS.md](AGENTS.md) for development rules. Automatic play is for regression only; do not add shopping, grinding, or other strategy.
@@ -138,6 +143,8 @@ Before the first browser acceptance run, execute `npx playwright install chromiu
 **[在线游玩](https://ffvi.chihum.dev/)** · [当前状态与已知问题](STATUS.md)
 
 仓库只含源码。原版素材、提取数据、存档和问题截图不进 Git。
+
+页面工具栏可选择语言：English、简体中文、繁體中文、日本語、한국어、Deutsch、Français、Italiano、Español、Português、Русский、ไทย。首次访问按浏览器语言选择，未匹配时使用英文；手动选择会保存在本机。游玩中可直接切换，无需重启剧情。原版对白和名称使用对应的 PR 原文，游戏界面通过 i18next 语言包翻译。
 
 ### 运行
 
@@ -164,6 +171,8 @@ npm run dev
 ```
 
 导出数据在 `build/web-data/`，支持增量重跑；开发地址为 `http://127.0.0.1:4173/`。
+
+已有导出数据时，运行 `npm run export:locales`，再运行 `npm run bundle`，即可补齐 12 种语言包与可用的标题图版本，无需重新导出地图。借用远程资源的客户端需要包含这些语言包的资源索引。本机剧情工作台及其原创样例不属于游戏界面翻译范围。
 
 ### 操作
 
@@ -248,6 +257,7 @@ npm test
 npm run format:check
 PLAY_TEST_BOOST=1 npm run play:through
 npm run play:visual-check
+npm run play:i18n-check
 ```
 
 浏览器验收首次需运行 `npx playwright install chromium webkit`。本地报告与截图在 `build/play/`，不进 Git；开发约定见 [AGENTS.md](AGENTS.md)。自动跑法只做回归，不增加购物、练级等策略。

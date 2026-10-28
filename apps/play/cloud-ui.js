@@ -1,9 +1,14 @@
+import { translateDOM } from "./language.js";
+import { tr, i18n, dateLocale } from "../../src/play/i18n.js";
 import "./cloud-ui.css";
 import { rememberIdentity } from "./identity.js";
 
 function element(tag, text, parent) {
   const value = document.createElement(tag);
-  if (text) value.textContent = text;
+  if (text?.i18n) {
+    value.dataset.i18n = text.i18n;
+    value.textContent = tr(text.i18n);
+  } else if (text) value.textContent = text;
   parent?.append(value);
   return value;
 }
@@ -29,19 +34,27 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
   }
   const root = element("div", null, document.body);
   root.className = "cloud-controls";
-  const toggle = element("button", "云存档", root);
+  const toggle = element("button", { i18n: "cloud_ui.cloud_saves" }, root);
   toggle.type = "button";
   toggle.id = "cloud-toggle";
+  const reserveToolbarSpace = () =>
+    document.body.style.setProperty(
+      "--cloud-controls-width",
+      `${Math.ceil(toggle.getBoundingClientRect().right + 16)}px`,
+    );
+  const toolbarObserver =
+    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(reserveToolbarSpace);
+  toolbarObserver?.observe(toggle);
   const dialog = element("dialog", null, root);
   dialog.id = "cloud-panel";
   dialog.setAttribute("aria-labelledby", "cloud-heading");
-  element("h2", "存档与同步", dialog).id = "cloud-heading";
+  element("h2", { i18n: "cloud_ui.saves_and_sync" }, dialog).id = "cloud-heading";
   const state = element("p", null, dialog);
   state.role = "status";
   state.setAttribute("aria-live", "polite");
   element(
     "p",
-    "先存本机，再同步云端。同步不会切换正在玩的进度；在另一台设备上请从标题读档继续。普通和强化存档分开。",
+    { i18n: "cloud_ui.save_locally_then_sync_sync_does_not_change_the_current" },
     dialog,
   );
   const tools = element("div", null, dialog);
@@ -49,10 +62,10 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
   const status = element("p", null, dialog);
   status.role = "status";
   const run = async (action) => {
-    status.textContent = "正在处理…";
+    status.textContent = tr("cloud_ui.working");
     try {
       await action();
-      status.textContent = "已完成";
+      status.textContent = tr("cloud_ui.done");
       await refresh();
     } catch (error) {
       status.textContent = error.message;
@@ -69,22 +82,25 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
       const identity = element("section", null, dialog);
       dialog.insertBefore(identity, tools);
       identity.className = "cloud-identity";
-      element("h3", "独立存档身份", identity);
+      element("h3", { i18n: "cloud_ui.isolated_save_identity" }, identity);
       const label = element("p", null, identity);
       const updateLabel = () => {
         const value = library.cloud.identity;
         label.textContent = value?.legacy
-          ? "当前：原私人存档。只有原站点密码可以进入这套存档。"
-          : `存档 ID：${value?.profileId || "连接中"}。请下载身份备份；换设备时导入同一恢复密钥。密钥等同密码，丢失后无法找回，请勿公开。`;
+          ? tr("cloud_ui.current_original_private_saves_access_requires_the_orig")
+          : tr("cloud_ui.save_id_value_back_up_your_identity_and_import_the_same", {
+              v0: value?.profileId || tr("cloud_ui.connecting"),
+            });
       };
       updateLabel();
       library.subscribe(updateLabel);
       button(
-        "备份恢复密钥",
+        { i18n: "cloud_ui.back_up_recovery_key" },
         () => {
           const current = library.cloud.identity;
           const key = localStorage.getItem(`ffvi-recovery:${current?.serverId}`);
-          if (!key) throw Error("此身份没有保存在本机的恢复密钥；原私人存档请继续使用站点密码");
+          if (!key)
+            throw Error(tr("cloud_ui.no_recovery_key_is_saved_locally_for_this_identity_use_"));
           download(
             {
               format: "ffvi-reweb-identity",
@@ -101,15 +117,15 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
       );
       const restore = element("input", null, identity);
       restore.type = "password";
-      restore.placeholder = "粘贴完整恢复密钥 ffvi_…";
+      restore.placeholder = tr("cloud_ui.paste_the_complete_recovery_key_ffvi");
       restore.autocomplete = "off";
-      restore.setAttribute("aria-label", "恢复密钥");
+      restore.setAttribute("aria-label", tr("cloud_ui.recovery_key"));
       const switchTo = (value, key) => {
         rememberIdentity(value, key, { activate: false });
         location.reload();
       };
       button(
-        "恢复已有身份",
+        { i18n: "cloud_ui.restore_existing_identity" },
         async () => {
           const key = restore.value.trim();
           const value = await library.cloud.recover(key);
@@ -121,27 +137,26 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
       recoveryFile.type = "file";
       recoveryFile.accept = "application/json,.json";
       recoveryFile.hidden = true;
-      button("导入身份备份", () => recoveryFile.click(), identity);
+      button({ i18n: "cloud_ui.import_identity_backup" }, () => recoveryFile.click(), identity);
       recoveryFile.onchange = () =>
         run(async () => {
           const file = recoveryFile.files[0];
-          if (!file || file.size > 4096) throw Error("请选择有效的身份备份文件");
+          if (!file || file.size > 4096)
+            throw Error(tr("cloud_ui.choose_a_valid_identity_backup_file"));
           const value = JSON.parse(await file.text());
           if (
             value.format !== "ffvi-reweb-identity" ||
             value.version !== 1 ||
             typeof value.recoveryKey !== "string"
           )
-            throw Error("这不是身份备份文件");
+            throw Error(tr("cloud_ui.this_is_not_an_identity_backup"));
           const result = await library.cloud.recover(value.recoveryKey);
           switchTo(result, value.recoveryKey);
         });
       button(
-        "新建独立身份",
+        { i18n: "cloud_ui.create_new_identity" },
         async () => {
-          if (
-            !confirm("将切换到一套空存档；原身份的本机存档会分别保留。请先备份恢复密钥。继续吗？")
-          )
+          if (!confirm(tr("cloud_ui.switch_to_empty_saves_local_saves_for_the_old_identity_")))
             return;
           const value = await library.cloud.createIdentity();
           switchTo(value, value.recoveryKey);
@@ -150,44 +165,46 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
       );
       element(
         "p",
-        "切换身份会重新载入游戏。尚未存档的游玩进度请先保存；旧标签页会停止云同步，避免写错身份。",
+        { i18n: "cloud_ui.changing_identity_reloads_the_game_save_your_progress_f" },
         identity,
       );
     }
-    button("立即同步", () => library.sync());
-    button("重新登录", () => {
+    button({ i18n: "cloud_ui.sync_now" }, () => library.sync());
+    button({ i18n: "cloud_ui.log_in_again" }, () => {
       location.assign("/login");
     });
-    button("退出登录", async () => {
+    button({ i18n: "cloud_ui.log_out" }, async () => {
       await library.cloud.logout();
       localStorage.removeItem("ffvi-recovery-active");
       location.assign("/login");
     });
   }
-  button("导出本机全部存档", async () =>
+  button({ i18n: "cloud_ui.export_all_local_saves" }, async () =>
     download(await library.export(), `ffvi-saves-${new Date().toISOString().slice(0, 10)}.json`),
   );
   if (navigator.storage?.persist)
-    button("保留本机存档", async () => {
+    button({ i18n: "cloud_ui.keep_local_saves" }, async () => {
       const granted = await navigator.storage.persist();
-      if (!granted) throw Error("浏览器未授予永久存储；本机存档仍可用，建议同时导出备份");
+      if (!granted)
+        throw Error(tr("cloud_ui.persistent_storage_was_not_granted_local_saves_still_wo"));
     });
   const input = element("input", null, dialog);
   input.type = "file";
   input.accept = "application/json,.json";
   input.hidden = true;
-  button("导入存档备份", () => {
+  button({ i18n: "cloud_ui.import_save_backup" }, () => {
     input.click();
   });
   input.onchange = () =>
     run(async () => {
       const file = input.files[0];
       if (!file) return;
-      if (file.size > 100 * 1024 * 1024) throw Error("备份过大（最多 100 MB）");
+      if (file.size > 100 * 1024 * 1024)
+        throw Error(tr("cloud_ui.backup_too_large_100_mb_maximum"));
       const backup = JSON.parse(await file.text());
-      if (confirm("导入会替换同名的本机存档槽；现有版本会先保留在本机备份中。继续吗？")) {
+      if (confirm(tr("cloud_ui.import_replaces_matching_local_slots_existing_versions_"))) {
         const count = await library.import(backup);
-        status.textContent = `已导入 ${count} 槽`;
+        status.textContent = tr("cloud_ui.imported_value_slots", { v0: count });
       }
       input.value = "";
     });
@@ -196,22 +213,29 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
     archives = element("div", null, dialog);
   let historySelect;
   if (library.cloud.enabled) {
-    element("h3", "云端历史 · 每槽最多 50 版，匿名身份总计最多 48 MiB", versions);
+    element(
+      "h3",
+      { i18n: "cloud_ui.cloud_history_up_to_50_versions_per_slot_48_mib_per_ano" },
+      versions,
+    );
     historySelect = element("select", null, versions);
-    historySelect.setAttribute("aria-label", "历史存档槽");
+    historySelect.setAttribute("aria-label", tr("cloud_ui.history_slot"));
     const list = element("div", null, versions);
     historySelect.onchange = () => list.replaceChildren();
     button(
-      "查看历史",
+      { i18n: "cloud_ui.view_history" },
       async () => {
         const id = historySelect.value;
         if (!id) return;
         list.replaceChildren();
         for (const row of await library.cloud.history(id)) {
           button(
-            `恢复版本 ${row.revision} · ${new Date(row.updatedAt).toLocaleString()}`,
+            tr("cloud_ui.restore_version_value_value", {
+              v0: row.revision,
+              v1: new Date(row.updatedAt).toLocaleString(dateLocale()),
+            }),
             async () => {
-              if (confirm("将此历史进度写回本机并同步？当前本机版本会保留在备份中。"))
+              if (confirm(tr("cloud_ui.restore_this_version_locally_and_sync_the_current_local")))
                 await library.restore(id, row.revision);
             },
             list,
@@ -221,9 +245,9 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
       versions,
     );
   }
-  const close = button("返回游戏", () => dialog.close(), dialog);
+  const close = button({ i18n: "cloud_ui.return_to_game" }, () => dialog.close(), dialog);
   close.className = "cloud-close";
-  const unsubscribe = library.subscribe((value) => {
+  const updateStatus = (value) => {
     state.textContent = value.message;
     const current = library.cloud.identity;
     const needsBackup =
@@ -231,10 +255,21 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
       !current.legacy &&
       !localStorage.getItem(`ffvi-recovery-backed:${current.serverId}`);
     toggle.textContent =
-      value.state === "conflict" ? "存档冲突" : needsBackup ? "云存档 · 请备份身份" : "云存档";
+      value.state === "conflict"
+        ? tr("cloud_ui.save_conflict")
+        : needsBackup
+          ? tr("cloud_ui.cloud_saves_back_up_identity")
+          : tr("cloud_ui.cloud_saves");
     toggle.dataset.state = value.state;
     if (dialog.open) refresh();
-  });
+  };
+  const unsubscribe = library.subscribe(updateStatus);
+  const translate = () => {
+    translateDOM(root);
+    updateStatus(library.status);
+    reserveToolbarSpace();
+  };
+  i18n.on("languageChanged", translate);
   async function refresh() {
     const records = await library.all();
     conflicts.replaceChildren();
@@ -245,20 +280,29 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
       const remote = record.sync.conflict;
       element(
         "h3",
-        `${record.mode === "normal" ? "普通" : "强化"} · ${record.slot === "auto" ? "自动存档" : `存档 ${record.slot}`}`,
+        `${record.mode === "normal" ? tr("cloud_ui.normal") : tr("cloud_ui.boosted")} · ${record.slot === "auto" ? tr("cloud_ui.autosave") : tr("cloud_ui.slot_value", { v0: record.slot })}`,
         card,
       );
       element(
         "p",
-        `本机：${record.map} · ${new Date(record.savedAt).toLocaleString()}\n云端：${remote.record?.map || "此槽已不存在"} · 版本 ${remote.revision}`,
+        tr("cloud_ui.local_value_value_ncloud_value_version_value", {
+          v0: record.map,
+          v1: new Date(record.savedAt).toLocaleString(dateLocale()),
+          v2: remote.record?.map || tr("cloud_ui.this_slot_no_longer_exists"),
+          v3: remote.revision,
+        }),
         card,
       );
       if (remote.record)
-        button("采用云端（本机版本保留在备份）", () => library.resolve(record.id, "cloud"), card);
+        button(
+          { i18n: "cloud_ui.use_cloud_local_version_backed_up" },
+          () => library.resolve(record.id, "cloud"),
+          card,
+        );
       button(
-        "采用本机（覆盖云端，旧版保留历史）",
+        { i18n: "cloud_ui.use_local_overwrite_cloud_old_version_kept_in_history" },
         async () => {
-          if (confirm("确定用本机进度覆盖此云端存档槽？旧云端版本仍保留在历史记录中。"))
+          if (confirm(tr("cloud_ui.overwrite_this_cloud_slot_with_local_progress_the_old_c")))
             await library.resolve(record.id, "local");
         },
         card,
@@ -284,10 +328,18 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
       .sort((a, b) => b.archivedAt - a.archivedAt);
     if (history.length) {
       const details = element("details", null, archives);
-      element("summary", `本机保留版本（${history.length}）`, details);
+      element(
+        "summary",
+        tr("cloud_ui.local_retained_versions_value", { v0: history.length }),
+        details,
+      );
       for (const row of history)
         button(
-          `下载 ${row.sourceId} · ${row.map} · ${new Date(row.savedAt).toLocaleString()}`,
+          tr("cloud_ui.download_value_value_value", {
+            v0: row.sourceId,
+            v1: row.map,
+            v2: new Date(row.savedAt).toLocaleString(dateLocale()),
+          }),
           () =>
             download(
               { format: "ffvi-reweb-saves", version: 1, records: [{ ...row, id: row.sourceId }] },
@@ -314,6 +366,8 @@ export function mountCloudUI(library, { onOpen, onClose } = {}) {
   library.initialize().catch((error) => library.notify("offline", error.message));
   return () => {
     unsubscribe();
+    toolbarObserver?.disconnect();
+    i18n.off("languageChanged", translate);
     clearInterval(interval);
     root.remove();
   };

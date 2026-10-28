@@ -390,7 +390,7 @@ export function operaDrawList(catalog, state, width = 384, height = 216, sourceC
   });
 }
 
-export function operaCaption(catalog, state) {
+export function operaCaption(catalog, state, messages = null) {
   const active = (state.scene.texts || []).filter(
       (text) =>
         state.visible[text.node] &&
@@ -404,7 +404,11 @@ export function operaCaption(catalog, state) {
     sourceText = [...new Set(active.map((text) => text.text.trim()).filter(Boolean))].join(" ");
   return {
     id,
-    text: id ? catalog.captions[id].zh || catalog.captions[id].ja : sourceText,
+    text: id
+      ? String(messages?.[id] || catalog.captions[id].zh || catalog.captions[id].ja)
+          .replace(/<[^>]*>/g, "")
+          .replace(/\\n/g, "\n")
+      : sourceText,
     sourceText,
   };
 }
@@ -604,7 +608,7 @@ export class OperaPlayer {
       this.container,
       "view:",
     );
-    const caption = operaCaption(this.catalog, state);
+    const caption = operaCaption(this.catalog, state, this.messages);
     this.caption.text = caption.text;
     this.caption.visible = !!caption.text;
     this.container.addChild(this.caption);

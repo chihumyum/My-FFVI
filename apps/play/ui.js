@@ -1,3 +1,4 @@
+import { tr } from "../../src/play/i18n.js";
 import { Container, Graphics, Rectangle, Text, Sprite, NineSliceSprite } from "pixi.js";
 import { SingleHover, directionalControl } from "./ui-interaction.js";
 import { sampleFieldClip } from "./field-animation.js";
@@ -129,8 +130,8 @@ export class GameUI {
     for (const root of this.windows) {
       const previous = createWidget("button"),
         next = createWidget("button");
-      previous.textContent = "↑ 上页";
-      next.textContent = "↓ 下页";
+      previous.textContent = tr("ui.previous_page");
+      next.textContent = tr("ui.next_page");
       previous.onclick = () => this.page(root, -1);
       next.onclick = () => this.page(root, 1);
       this.pages.set(root, [previous, next]);
@@ -151,6 +152,12 @@ export class GameUI {
   }
   read(element) {
     const node = createWidget(element.tagName);
+    node.i18nKey = element.dataset.i18n;
+    node.i18nAttributes = Object.fromEntries(
+      [...element.attributes]
+        .filter((attribute) => attribute.name.startsWith("data-i18n-"))
+        .map((attribute) => [attribute.name.slice(10), attribute.value]),
+    );
     node.id = element.id;
     if (node.id) this.ids.set(node.id, node);
     node.hidden = element.hidden;
@@ -162,6 +169,27 @@ export class GameUI {
     if (element.hasAttribute("aria-label"))
       node.setAttribute("aria-label", element.getAttribute("aria-label"));
     return node;
+  }
+  translate() {
+    const visit = (node) => {
+      if (node.i18nKey) node._text = tr(node.i18nKey);
+      for (const [attribute, key] of Object.entries(node.i18nAttributes || {}))
+        node.setAttribute(attribute, tr(key));
+      node.children.forEach(visit);
+    };
+    this.windows.forEach(visit);
+    for (const [previous, next] of this.pages.values()) {
+      previous.textContent = tr("ui.previous_page");
+      next.textContent = tr("ui.next_page");
+    }
+    for (const view of this.views.values())
+      if (view.laneLabels) {
+        view.laneLabels[0].text = tr("battle_menu.front_row");
+        view.laneLabels[1].text = tr("battle_menu.back_row");
+      }
+    this.closeSelect();
+    this.clearHover();
+    layoutChanged();
   }
   get(id) {
     return this.ids.get(id);
@@ -401,9 +429,9 @@ export class GameUI {
     if (node.tag === "input" && !node.value && node.attributes.placeholder)
       return node.attributes.placeholder;
     if (node.tag === "input")
-      return `${node.attributes["aria-label"] || "名称"}：${node.value || node.attributes.placeholder || ""}`;
+      return `${node.attributes["aria-label"] || tr("ui.name")}：${node.value || node.attributes.placeholder || ""}`;
     if (node.tag === "select")
-      return `${node.attributes["aria-label"] || ""}：${node.children.find((o) => String(o.value) === String(node.value))?.textContent || "未选择"} ▾`;
+      return `${node.attributes["aria-label"] || ""}：${node.children.find((o) => String(o.value) === String(node.value))?.textContent || tr("ui.not_selected")} ▾`;
     return node._text;
   }
   item(node, parent, x, y, width, clip) {
@@ -469,7 +497,7 @@ export class GameUI {
     );
     if (node.tag === "formation-heading") {
       if (!v.laneLabels)
-        v.laneLabels = ["前排", "后排"].map((label) => {
+        v.laneLabels = [tr("battle_menu.front_row"), tr("battle_menu.back_row")].map((label) => {
           const text = new Text({
             text: label,
             style: {
@@ -886,8 +914,8 @@ export class GameUI {
       row.name.eventMode = model.playbackLocked ? "none" : "static";
       row.name.cursor = "pointer";
       row.name.accessible = !!u.ready && !model.playbackLocked;
-      row.name.accessibleTitle = `操作 ${u.name}`;
-      row.name.accessibleText = `操作 ${u.name}`;
+      row.name.accessibleTitle = tr("battle_menu.control_value", { v0: u.name });
+      row.name.accessibleText = tr("battle_menu.control_value", { v0: u.name });
       if (!row.inputBound) {
         row.name.on("pointertap", () => model.selectActor?.(i));
         row.inputBound = true;
@@ -1180,11 +1208,11 @@ export class GameUI {
     const previous = createWidget("button"),
       next = createWidget("button"),
       close = createWidget("button");
-    previous.textContent = "上一页";
+    previous.textContent = tr("ui.previous_page_411");
     previous.disabled = page === 0;
-    next.textContent = "下一页";
+    next.textContent = tr("ui.next_page_412");
     next.disabled = (page + 1) * 12 >= node.children.length;
-    close.textContent = "返回";
+    close.textContent = tr("party_menu.back");
     previous.onclick = () => this.openSelect(node, page - 1);
     next.onclick = () => this.openSelect(node, page + 1);
     close.onclick = () => this.closeSelect();
@@ -1206,7 +1234,7 @@ export class GameUI {
     input.value = node.value;
     input.maxLength = Number(node.dataset.maxLength) || 12;
     input.type = node.attributes.type || "text";
-    input.setAttribute("aria-label", node.attributes["aria-label"] || "名称");
+    input.setAttribute("aria-label", node.attributes["aria-label"] || tr("ui.name"));
     input.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;";
     const commit = () => {
       // Input has already committed each keystroke. Repeating onchange on blur

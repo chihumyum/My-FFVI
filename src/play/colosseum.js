@@ -1,3 +1,4 @@
+import { tr } from "./i18n.js";
 // PR's native wager/reward/formation dictionaries are exported independently.
 // This is a compulsory game rule, never the automatic regression player's policy.
 import { partyInputMembers } from "./party-input.js";
@@ -21,11 +22,16 @@ export function colosseumWagers(game) {
         count,
         formationId,
         rewardId: row.rewardId,
-        name: data.contentNames?.[id] || `道具 ${id}`,
+        name: data.contentNames?.[id] || tr("app.item_value", { v0: id }),
         opponent: formation.members
-          .map((m) => data.monsters[m.monsterId]?.name || `敌人 ${m.monsterId}`)
+          .map(
+            (m) =>
+              data.monsters[m.monsterId]?.name || tr("colosseum.enemy_value", { v0: m.monsterId }),
+          )
           .join("、"),
-        reward: hidden ? "？？？" : data.contentNames?.[row.rewardId] || `道具 ${row.rewardId}`,
+        reward: hidden
+          ? "？？？"
+          : data.contentNames?.[row.rewardId] || tr("app.item_value", { v0: row.rewardId }),
         shadow,
       },
     ];
@@ -97,12 +103,16 @@ export function confirmColosseum(game) {
         menu.task.waitFor = "message";
         game.dialogue = {
           task: menu.task,
-          speaker: "斗技场",
+          speaker: tr("game.colosseum"),
           elapsed: 0,
           text:
             result.outcome === "victory"
-              ? `获胜！获得${game.battleData.contentNames?.[wager.rewardId] || `道具 ${wager.rewardId}`}。`
-              : `挑战结束，失去押注${wager.name}。`,
+              ? tr("colosseum.won_received_value", {
+                  v0:
+                    game.battleData.contentNames?.[wager.rewardId] ||
+                    tr("app.item_value", { v0: wager.rewardId }),
+                })
+              : tr("colosseum.challenge_ended_lost_wager_value", { v0: wager.name }),
         };
       }
     },

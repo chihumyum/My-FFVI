@@ -1,3 +1,5 @@
+import { language } from "../../src/play/i18n.js";
+import { localizeGame } from "../../src/play/localized-data.js";
 // Fetch at map boundaries, before the synchronous VM can see a program.
 // Missing packed programs throw instead of silently turning into empty scripts.
 export class WebData {
@@ -58,8 +60,25 @@ export class WebData {
       }),
     };
     this.battleData = structuredClone(battleData);
+    await this.setLanguage(language());
     if (saved) await this.prepareSave(saved);
     return { data: this.data, battleData: this.battleData };
+  }
+  async locale(id = language()) {
+    this.index ||= await this.json(this.indexURL.href);
+    const file = this.index.locales?.[id];
+    if (!file) {
+      if (id !== "zh-CN")
+        console.warn(`[localization] Exported PR locale ${id} unavailable; retaining source text.`);
+      return null;
+    }
+    return this.json(file);
+  }
+  async setLanguage(id, game) {
+    const catalog = await this.locale(id);
+    this.currentLocale = catalog;
+    if (this.data) localizeGame(this.data, this.battleData, catalog, game);
+    return catalog;
   }
   async ensurePrograms(ids, boundary = false) {
     const files = new Set(ids.map((id) => this.index.programFiles[id]).filter(Boolean));

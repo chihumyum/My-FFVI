@@ -1,10 +1,23 @@
+import { tr } from "../../src/play/i18n.js";
 export const playOptionLabels = {
-  story: "自动推进剧情",
-  skipDialogue: "自动跳过对话",
-  fastForward: "快速推进",
-  autoBattle: "自动战斗",
-  invincible: "无敌模式",
-  showLocation: "当前位置",
+  get story() {
+    return tr("play_options.automatic_story_progression");
+  },
+  get skipDialogue() {
+    return tr("play_options.skip_dialogue_automatically");
+  },
+  get fastForward() {
+    return tr("play_options.fast_forward");
+  },
+  get autoBattle() {
+    return tr("play_options.auto_battle");
+  },
+  get invincible() {
+    return tr("play_options.invincibility");
+  },
+  get showLocation() {
+    return tr("play_options.current_location");
+  },
 };
 const storageKey = "ffvi-play-options";
 export function readPlayOptions(storage = localStorage) {

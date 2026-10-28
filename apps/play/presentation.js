@@ -1,4 +1,5 @@
 import { webIndexURL } from "./data.js";
+import { language } from "../../src/play/i18n.js";
 const characterTokens = {
   TINA: 1,
   LOCK: 2,
@@ -42,6 +43,11 @@ export async function loadPresentation(repository, renderer, ui) {
   renderer.setAssets(index.assets.images, repository.baseURL);
   if (!index.presentation) return;
   const presentation = structuredClone(await repository.json(index.presentation));
+  const catalog = await repository.locale();
+  repository.currentLocale = catalog;
+  if (presentation.titleLogos?.[language()])
+    presentation.sprites.titleLogo = presentation.titleLogos[language()];
+  if (catalog?.language !== "zh-CN" && catalog?.mapNames) presentation.mapNames = catalog.mapNames;
   const font = presentation.fonts?.find((f) => f.primary) || presentation.fonts?.[0];
   if (font) {
     const url = new URL(index.assets.fonts?.[font.url] || font.url, repository.baseURL);

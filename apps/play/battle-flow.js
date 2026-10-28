@@ -1,4 +1,5 @@
 import { isFinalTowerEvent } from "./final-battle.js";
+import { tr } from "../../src/play/i18n.js";
 
 // Browser presentation barrier. Combat still settles exactly once in src/play;
 // subsequent host ticks wait while its emitted actions/results are displayed.
@@ -29,6 +30,19 @@ export class BattleFlow {
   record(kind, details = {}) {
     this.trace.push({ kind, ...details });
     if (this.trace.length > 40) this.trace.shift();
+  }
+  relabel() {
+    if (!this.battle) return;
+    for (const view of [this.view, this.current?.view, ...this.queue.map((entry) => entry.view)])
+      if (view)
+        for (const side of ["players", "enemies"])
+          for (const unit of view[side] || []) {
+            const current = this.battle[side].find((value) => value.index === unit.index);
+            if (current) unit.name = current.name;
+          }
+    const event = this.current?.events?.[0];
+    if (event && ![1, 2].includes(event.abilityId))
+      this.banner = this.battle.data.abilities[event.abilityId]?.name || this.banner;
   }
   audioCommand(command) {
     // Track pending as well as decoded field music: a fast encounter can start
@@ -154,7 +168,7 @@ export class BattleFlow {
       const event = next.events[0],
         ability = this.battle.data.abilities[event.abilityId],
         named = ![1, 2].includes(event.abilityId);
-      this.banner = named ? event.abilityName || ability?.name || "技能" : "";
+      this.banner = named ? event.abilityName || ability?.name || tr("common.skills") : "";
       // Timings approximate the PR choreography. Only wall-clock presentation
       // waits here; ATB/status timers and the random stream never tick ahead.
       this.current = { ...next, age: 0, emitted: false, duration: named ? 1.65 : 0.95 };

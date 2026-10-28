@@ -913,7 +913,7 @@ export class BattleEvents {
     if (name === "チェイサー消滅チェック") {
       if (
         !state.trappers &&
-        !b.enemies.some((unit) => /Chaser/i.test(unit.name ?? "") && this.alive(unit))
+        !b.enemies.some((unit) => /_Chaser$/.test(unit.aiName || "") && this.alive(unit))
       ) {
         state.trappers = true;
         this.locals[1] = 1;

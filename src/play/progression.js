@@ -1,3 +1,4 @@
+import { tr } from "./i18n.js";
 const clamp = (value, max, min = 0) => Math.max(min, Math.min(max, Math.trunc(Number(value) || 0)));
 const bonusKeys = { 4: "strength", 5: "vitality", 6: "speed", 14: "magic" };
 export function abilityMpCost(unit, ability) {
@@ -200,7 +201,7 @@ export function createCharacter(data, id, testBoost = false) {
   const src = structuredClone(data.characters?.[id] ?? {});
   const unit = {
     id,
-    name: `角色${id}`,
+    name: tr("progress.character", { v0: id }),
     maxHp: 120,
     maxMp: 30,
     level: 1,
@@ -228,7 +229,7 @@ export function learnNaturalAbilities(unit, log = () => {}) {
   for (const row of unit.naturalLearning ?? [])
     if (row.level <= unit.level && !unit.abilities.includes(row.abilityId)) {
       unit.abilities.push(row.abilityId);
-      log(`${unit.name}学会了技能 ${row.abilityId}。`);
+      log(tr("progress.ability", { v0: unit.name, v1: row.abilityId }));
     }
 }
 
@@ -251,7 +252,7 @@ export function raiseLevel(data, unit, target, { magicite = true, log = () => {}
     unit.naturalMaxHp = clamp(unit.naturalMaxHp + hp, data.limits?.MAX_HP ?? 9999);
     unit.naturalMaxMp = clamp(unit.naturalMaxMp + mp, data.limits?.MAX_MP ?? 999);
     unit.level = level;
-    log(`${unit.name}升到了 ${level} 级！`);
+    log(tr("progress.level", { v0: unit.name, v1: level }));
   }
   learnNaturalAbilities(unit, log);
   recalculateEquipment(data, unit);
@@ -331,7 +332,7 @@ export function applyBattleRewards(data, players, result, { log = () => {} } = {
       if (unit.magicLearning[ability] >= 100) {
         unit.abilities ??= [1, 2];
         unit.abilities.push(ability);
-        log(`${unit.name}学会了技能 ${ability}。`);
+        log(tr("progress.ability", { v0: unit.name, v1: ability }));
       }
     }
   }

@@ -1,3 +1,4 @@
+import { tr } from "./i18n.js";
 // Pure ordinary-Fight weapon rules. Resolve content IDs through PR contents;
 // the explicit IDs below are weapon.csv IDs, never inventory content IDs.
 //
@@ -30,7 +31,13 @@ export function ordinaryWeapon(data, actor, { weaponContentId, warn = () => {} }
     const content = data.contents?.[contentId],
       weapon = content?.type_id === 2 ? data.weapons?.[content.type_value] : null;
     return weapon?.type_id === 1
-      ? [{ contentId, weapon, name: data.contentNames?.[contentId] || `武器 ${weapon.id}` }]
+      ? [
+          {
+            contentId,
+            weapon,
+            name: data.contentNames?.[contentId] || tr("weapon.number", { v0: weapon.id }),
+          },
+        ]
       : [];
   });
   if (weaponContentId !== undefined) {

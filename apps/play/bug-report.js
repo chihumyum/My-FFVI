@@ -1,3 +1,4 @@
+import { tr } from "../../src/play/i18n.js";
 // Capture only diagnostics. This module never dispatches game input or edits a save.
 import { privateReportValue } from "../../server/report-schema.mjs";
 import { activeIdentity } from "./identity.js";
@@ -47,7 +48,7 @@ export function describeBugState(game, renderer, events, mapNames = {}) {
     createdAt: new Date().toISOString(),
     map: {
       id: game?.mapId ?? null,
-      name: mapNames[game?.mapId] || game?.map?.name || "标题画面",
+      name: mapNames[game?.mapId] || game?.map?.name || tr("bug_report.title_screen"),
       sourceName: game?.map?.name ?? null,
     },
     script: {
@@ -174,6 +175,9 @@ export async function saveBugReport(
     body: text,
   });
   const result = await response.json();
-  if (!response.ok) throw Error(result.error || `报告发送失败（${response.status}）`);
+  if (!response.ok)
+    throw Error(
+      result.error || tr("bug_report.report_could_not_be_sent_value", { v0: response.status }),
+    );
   return { method: "cloud", ...result };
 }

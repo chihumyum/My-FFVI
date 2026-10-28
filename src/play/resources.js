@@ -1,3 +1,4 @@
+import { tr } from "./i18n.js";
 import {
   equipmentDefinition,
   emptyEquipment,
@@ -84,7 +85,8 @@ export function openTreasure(game, entity, { after = false, message = true, task
     if (message)
       game.dialogue = {
         key: "treasure-empty",
-        text: "里面已经空了。",
+        text: tr("reward.empty"),
+        uiKey: "reward.empty",
         speaker: "",
         elapsed: 0,
         task: null,
@@ -125,10 +127,17 @@ export function openTreasure(game, entity, { after = false, message = true, task
       game.text(game.battleData.contents?.[reward.id]?.mes_id_name);
     game.dialogue = {
       key: "treasure",
+      uiKey: reward.kind === "grant-gil" ? "reward.gil" : "reward.item",
+      uiValues:
+        reward.kind === "grant-gil" ? { v0: reward.amount } : { v0: name, v1: reward.count },
+      contentId: reward.kind === "grant-gil" ? null : reward.id,
       text:
         reward.kind === "grant-gil"
-          ? `获得 ${reward.amount} Gil。`
-          : `获得 ${name || `物品 ${reward.id}`} ×${reward.count}。`,
+          ? tr("reward.gil", { v0: reward.amount })
+          : tr("reward.item", {
+              v0: name || tr("party_menu.item_value", { v0: reward.id }),
+              v1: reward.count,
+            }),
       speaker: "",
       elapsed: 0,
       task: null,

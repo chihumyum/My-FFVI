@@ -16,6 +16,10 @@
   background: #101a2ee8;
   color: #e8f1ff;
   cursor: pointer;
+  max-width: min(48vw, 280px);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .cloud-controls > button[data-state="conflict"] {
   background: #704421;

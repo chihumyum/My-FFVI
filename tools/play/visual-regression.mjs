@@ -93,6 +93,7 @@ export async function visualRegression({
       args: engine === "chromium" && process.platform === "darwin" ? ["--use-angle=metal"] : [],
     });
     const context = await browser.newContext({
+        locale: "zh-CN",
         viewport: { width: 1280, height: 800 },
         deviceScaleFactor: 1,
       }),

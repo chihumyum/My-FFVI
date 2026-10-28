@@ -1,3 +1,4 @@
+import { tr } from "./i18n.js";
 // PR command rows own menu structure. Executable actions are a separate view
 // used by both the manual UI and the frozen regression input policy.
 import { abilityMpCost } from "./progression.js";
@@ -104,7 +105,7 @@ export function commandMenu(battle, index, { involuntary = false } = {}) {
       }));
     actions.push({
       id: "control:cancel",
-      name: "解除操纵",
+      name: tr("command.release"),
       kind: "control",
       range: 5,
       target: "ally",
@@ -112,7 +113,13 @@ export function commandMenu(battle, index, { involuntary = false } = {}) {
       mp: 0,
     });
     return [
-      { id: "command:19", commandId: 19, name: `操纵 ${controlled.name}`, input: "list", actions },
+      {
+        id: "command:19",
+        commandId: 19,
+        name: tr("command.control", { v0: controlled.name }),
+        input: "list",
+        actions,
+      },
     ];
   }
   const partyMagic = unit.id === 13 ? unique(battle.players.flatMap(learned)) : known;
@@ -143,12 +150,18 @@ export function commandMenu(battle, index, { involuntary = false } = {}) {
     const row = data.commands?.[commandId] ?? {
       id: commandId,
       ability_id: commandId === 5 ? 4 : commandId,
-      name: { 1: "攻击", 2: "防御", 3: "道具", 5: "换列", 7: "魔法" }[commandId],
+      name: {
+        1: tr("party_menu.attack"),
+        2: tr("party_menu.defense"),
+        3: tr("common.items"),
+        5: tr("command.row"),
+        7: tr("common.magic"),
+      }[commandId],
     };
     const menu = {
       id: `command:${commandId}`,
       commandId,
-      name: row.name ?? `指令 ${commandId}`,
+      name: row.name ?? tr("command.number", { v0: commandId }),
       input: row.list_type ? "list" : "direct",
       actions: [],
     };
@@ -187,7 +200,7 @@ export function commandMenu(battle, index, { involuntary = false } = {}) {
     }
     if (commandId === 6) {
       menu.input = "equipment";
-      menu.name = "装备";
+      menu.name = tr("common.equipment");
     }
     if (commandId === 12) menu.input = "bushido";
     if (commandId === 15) menu.input = "blitz";

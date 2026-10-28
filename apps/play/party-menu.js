@@ -1,8 +1,21 @@
+import { tr, language } from "../../src/play/i18n.js";
 import { configureGogo, effectiveCommandIds, blitzInputs } from "../../src/play/battle-commands.js";
 import { canEquip } from "../../src/play/resources.js";
 import { abilityMpCost } from "../../src/play/progression.js";
 import { partyFieldAsset } from "../../src/play/appearance.js";
 
+const pageKeys = [
+  "common.party",
+  "common.items",
+  "common.magic",
+  "common.magicite",
+  "common.skills",
+  "common.equipment",
+  "common.relics",
+  "common.status",
+  "common.formation",
+  "common.settings",
+];
 const pages = ["队伍", "道具", "魔法", "魔石", "技能", "装备", "饰品", "状态", "队列", "设置"];
 export function renderPartyMenu(
   game,
@@ -45,7 +58,9 @@ export function renderPartyMenu(
     return box;
   };
   const name = (id) =>
-    data.contentNames?.[id] || game.text(data.contents?.[id]?.mes_id_name || "") || `物品 ${id}`;
+    data.contentNames?.[id] ||
+    game.text(data.contents?.[id]?.mes_id_name || "") ||
+    tr("party_menu.item_value", { v0: id });
   const description = (id) => {
     const key = data.contents?.[id]?.mes_id_description;
     return key && key !== "None" ? game.text(key) : "";
@@ -65,13 +80,17 @@ export function renderPartyMenu(
   const run = (action) => {
     const ok = action();
     refresh();
-    if (ok === false) text(elements.items, "当前不能使用：请检查目标、装备限制和所需资源。");
+    if (ok === false)
+      text(
+        elements.items,
+        tr("party_menu.cannot_use_this_now_check_the_target_equipment_restrict"),
+      );
   };
   const target = (label, action) => {
     elements.items.replaceChildren(node("h2", label));
     for (const u of game.party)
       elements.items.append(button(`${u.name}  HP ${u.hp}/${u.maxHp}`, () => run(() => action(u))));
-    elements.items.append(button("返回", refresh));
+    elements.items.append(button(tr("party_menu.back"), refresh));
   };
   elements.navigation?.replaceChildren();
   elements.party.replaceChildren();
@@ -79,7 +98,7 @@ export function renderPartyMenu(
   for (const page of pages)
     elements.navigation?.append(
       button(
-        page,
+        tr(pageKeys[pages.indexOf(page)]),
         () => {
           state.page = page;
           delete state.notice;
@@ -88,10 +107,10 @@ export function renderPartyMenu(
         state.page === page,
       ),
     );
-  elements.navigation?.append(button("存档", () => callbacks.save?.()));
+  elements.navigation?.append(button(tr("app.save"), () => callbacks.save?.()));
   text(
     elements.party,
-    `${callbacks.location || "当前地点"}     Gil ${game.gil}     ${Math.floor(game.time / 3600)}:${String(Math.floor(game.time / 60) % 60).padStart(2, "0")}`,
+    `${callbacks.location || tr("app.current_location")}     Gil ${game.gil}     ${Math.floor(game.time / 3600)}:${String(Math.floor(game.time / 60) % 60).padStart(2, "0")}`,
   );
   if (!["队伍", "道具", "设置", "队列"].includes(state.page))
     for (const u of game.party)
@@ -128,7 +147,10 @@ export function renderPartyMenu(
       active: selected,
       row: u.row === "back" ? "back" : "front",
     };
-    image.setAttribute("aria-label", `${u.name} · ${u.row === "back" ? "后排" : "前排"}`);
+    image.setAttribute(
+      "aria-label",
+      `${u.name} · ${u.row === "back" ? tr("battle_menu.back_row") : tr("battle_menu.front_row")}`,
+    );
     return image;
   };
   const spells = (u) =>
@@ -143,15 +165,21 @@ export function renderPartyMenu(
       const card = node("fieldset");
       portrait(u, card);
       card.append(
-        node("legend", `${u.name}  Lv ${u.level}  ${u.row === "back" ? "后排" : "前排"}`),
+        node(
+          "legend",
+          `${u.name}  Lv ${u.level}  ${u.row === "back" ? tr("battle_menu.back_row") : tr("battle_menu.front_row")}`,
+        ),
       );
       text(card, `HP ${u.hp} / ${u.maxHp}     MP ${u.mp} / ${u.maxMp}`);
       text(
         card,
-        `经验值 ${u.exp || 0}     魔石：${data.magicStones?.[u.magicite]?.name || "未装备"}`,
+        tr("party_menu.exp_value_magicite_value", {
+          v0: u.exp || 0,
+          v1: data.magicStones?.[u.magicite]?.name || tr("party_menu.unequipped"),
+        }),
       );
       card.append(
-        button("查看状态", () => {
+        button(tr("party_menu.view_status"), () => {
           state.page = "状态";
           state.member = u.id;
           refresh();
@@ -162,12 +190,12 @@ export function renderPartyMenu(
   } else if (state.page === "道具") {
     elements.items.append(
       select(
-        "整理道具",
+        tr("party_menu.sort_items"),
         [
-          ["source", "原始顺序"],
-          ["type", "按种类整理"],
-          ["name", "按名称整理"],
-          ["count", "按数量整理"],
+          ["source", tr("party_menu.original_order")],
+          ["type", tr("party_menu.sort_by_type")],
+          ["name", tr("party_menu.sort_by_name")],
+          ["count", tr("party_menu.sort_by_quantity")],
         ],
         state.sort || "source",
         (value) => {
@@ -181,7 +209,7 @@ export function renderPartyMenu(
       .map(([id, count]) => ({ id: Number(id), count }));
     entries.sort((a, b) =>
       state.sort === "name"
-        ? name(a.id).localeCompare(name(b.id), "zh-CN")
+        ? name(a.id).localeCompare(name(b.id), language())
         : state.sort === "count"
           ? b.count - a.count || a.id - b.id
           : state.sort === "type"
@@ -189,7 +217,7 @@ export function renderPartyMenu(
               a.id - b.id
             : a.id - b.id,
     );
-    if (!entries.length) text(elements.items, "没有持有道具。");
+    if (!entries.length) text(elements.items, tr("party_menu.no_items_held"));
     for (const { id, count } of entries) {
       const content = data.contents[id],
         item = content?.type_id === 1 && data.items[content.type_value];
@@ -199,22 +227,36 @@ export function renderPartyMenu(
       row.append(label);
       text(row, description(id));
       if (item?.menu_function_group_id > 0)
-        row.append(button("使用", () => target(name(id), (u) => game.useItem(id, u.id))));
+        row.append(
+          button(tr("party_menu.use"), () => target(name(id), (u) => game.useItem(id, u.id))),
+        );
       elements.items.append(row);
     }
   } else if (state.page === "设置") {
     for (const [key, label, choices] of [
       [
         "atbMode",
-        "ATB 模式",
+        tr("party_menu.atb_mode"),
         [
-          ["wait", "等待"],
-          ["active", "主动"],
+          ["wait", tr("party_menu.wait")],
+          ["active", tr("party_menu.active")],
         ],
       ],
-      ["battleSpeed", "战斗速度", Array.from({ length: 6 }, (_, i) => [i, String(i + 1)])],
-      ["textSpeed", "文字速度", Array.from({ length: 6 }, (_, i) => [i, String(i + 1)])],
-      ["volume", "音量", Array.from({ length: 11 }, (_, i) => [i / 10, `${i * 10}%`])],
+      [
+        "battleSpeed",
+        tr("party_menu.battle_speed"),
+        Array.from({ length: 6 }, (_, i) => [i, String(i + 1)]),
+      ],
+      [
+        "textSpeed",
+        tr("party_menu.text_speed"),
+        Array.from({ length: 6 }, (_, i) => [i, String(i + 1)]),
+      ],
+      [
+        "volume",
+        tr("party_menu.volume"),
+        Array.from({ length: 11 }, (_, i) => [i / 10, `${i * 10}%`]),
+      ],
     ])
       elements.items.append(
         select(label, choices, game.settings[key], (value) => {
@@ -223,10 +265,10 @@ export function renderPartyMenu(
           refresh();
         }),
       );
-  } else if (!unit) text(elements.items, "当前没有可操作的角色。");
+  } else if (!unit) text(elements.items, tr("party_menu.no_controllable_character_available"));
   else if (state.page === "魔法") {
     const list = spells(unit);
-    if (!list.length) text(elements.items, "尚未学会魔法。");
+    if (!list.length) text(elements.items, tr("party_menu.no_magic_learned_yet"));
     for (const a of list) {
       const cost = abilityMpCost(unit, a);
       const usable =
@@ -243,13 +285,16 @@ export function renderPartyMenu(
       ([, value]) => value > 0 && value < 100,
     );
     for (const [id, value] of learning)
-      text(elements.items, `${data.abilities[id]?.name || id}  学习进度 ${value}%`);
+      text(
+        elements.items,
+        tr("party_menu.value_learning_value", { v0: data.abilities[id]?.name || id, v1: value }),
+      );
   } else if (state.page === "魔石") {
     elements.items.append(
       select(
-        `${unit.name} 魔石`,
+        tr("party_menu.value_s_magicite", { v0: unit.name }),
         [
-          [0, "未装备"],
+          [0, tr("party_menu.unequipped")],
           ...Object.keys(data.magicStones || {})
             .map(Number)
             .filter((id) => game.inventory[id] > 0 || unit.magicite === id)
@@ -261,7 +306,10 @@ export function renderPartyMenu(
     );
     const stone = data.magicStones?.[unit.magicite];
     if (stone) {
-      text(elements.items, `召唤：${data.abilities[stone.summonAbilityId]?.name || ""}`);
+      text(
+        elements.items,
+        tr("party_menu.summon_value", { v0: data.abilities[stone.summonAbilityId]?.name || "" }),
+      );
       for (const learn of stone.learning || [])
         text(
           elements.items,
@@ -270,22 +318,41 @@ export function renderPartyMenu(
       if (stone.bonus)
         text(
           elements.items,
-          `升级奖励：${{ 2: "HP", 3: "MP", 4: "力量", 5: "体力", 6: "速度", 14: "魔力" }[stone.bonus.parameter] || "能力"} +${stone.bonus.value}${[2, 3].includes(stone.bonus.parameter) ? "%" : ""}`,
+          tr("party_menu.level_up_bonus_value_valuevalue", {
+            v0:
+              {
+                2: "HP",
+                3: "MP",
+                4: tr("party_menu.strength"),
+                5: tr("party_menu.stamina"),
+                6: tr("party_menu.speed"),
+                14: tr("party_menu.magic"),
+              }[stone.bonus.parameter] || tr("party_menu.stat"),
+            v1: stone.bonus.value,
+            v2: [2, 3].includes(stone.bonus.parameter) ? "%" : "",
+          }),
         );
     }
   } else if (state.page === "装备" || state.page === "饰品") {
     const slots = state.page === "饰品" ? [4, 5] : [0, 1, 2, 3],
-      labels = ["右手", "左手", "身体", "头部", "饰品 1", "饰品 2"];
+      labels = [
+        tr("battle_menu.right_hand"),
+        tr("battle_menu.left_hand"),
+        tr("party_menu.body"),
+        tr("party_menu.head"),
+        tr("party_menu.relic_1"),
+        tr("party_menu.relic_2"),
+      ];
     if (state.page === "装备")
       elements.items.append(
-        button("最强装备", () => {
+        button(tr("party_menu.optimize_equipment"), () => {
           const blocked = game.busy || unit.enabled === false;
           const changed = game.optimizeEquipment(unit.id);
           state.notice = blocked
-            ? "当前不能更换装备。"
+            ? tr("party_menu.cannot_change_equipment_now")
             : changed
-              ? "已换上当前持有的最强装备。"
-              : "已是当前最强装备。";
+              ? tr("party_menu.equipped_the_strongest_items_currently_held")
+              : tr("party_menu.already_using_the_strongest_equipment");
           refresh();
         }),
       );
@@ -301,7 +368,7 @@ export function renderPartyMenu(
       ].filter((id) => !id || canEquip(data, unit, id, slot));
       const control = select(
         labels[slot],
-        ids.map((id) => [id, id ? name(id) : "卸下"]),
+        ids.map((id) => [id, id ? name(id) : tr("party_menu.remove")]),
         unit.equipment?.[slot] || 0,
         (value) => run(() => game.equip(unit.id, slot, Number(value))),
       );
@@ -314,57 +381,73 @@ export function renderPartyMenu(
     }
     text(
       elements.items,
-      `攻击 ${unit.attack}     防御 ${unit.defense}     魔防 ${unit.magicDefense}     回避 ${unit.evasion}     魔回 ${unit.magicEvasion}`,
+      tr("party_menu.attack_value_defense_value_magic_defense_value_evasion_", {
+        v0: unit.attack,
+        v1: unit.defense,
+        v2: unit.magicDefense,
+        v3: unit.evasion,
+        v4: unit.magicEvasion,
+      }),
     );
   } else if (state.page === "状态") {
     const identity = group();
     portrait(unit, identity);
     identity.append(node("h2", unit.name));
-    text(identity, `等级 ${unit.level}　${unit.row === "back" ? "后排" : "前排"}`);
+    text(
+      identity,
+      tr("party_menu.level_value_value", {
+        v0: unit.level,
+        v1: unit.row === "back" ? tr("battle_menu.back_row") : tr("battle_menu.front_row"),
+      }),
+    );
     const left = group(
       ...[
         ["HP", `${unit.hp} / ${unit.maxHp}`],
         ["MP", `${unit.mp} / ${unit.maxMp}`],
-        ["经验值", unit.exp || 0],
-        ["力量", unit.strength],
-        ["速度", unit.speed],
-        ["体力", unit.vitality ?? unit.baseStats?.vitality],
-        ["魔力", unit.magic],
+        [tr("party_menu.exp"), unit.exp || 0],
+        [tr("party_menu.strength"), unit.strength],
+        [tr("party_menu.speed"), unit.speed],
+        [tr("party_menu.stamina"), unit.vitality ?? unit.baseStats?.vitality],
+        [tr("party_menu.magic"), unit.magic],
       ].map(([label, value]) => stat(label, value)),
     );
     const right = group(
       ...[
-        ["攻击", unit.attack],
-        ["防御", unit.defense],
-        ["魔防", unit.magicDefense],
-        ["回避", unit.evasion],
-        ["魔回", unit.magicEvasion],
-        ["命中", unit.accuracy],
-        ["暴击", unit.criticalRate],
+        [tr("party_menu.attack"), unit.attack],
+        [tr("party_menu.defense"), unit.defense],
+        [tr("party_menu.magic_defense"), unit.magicDefense],
+        [tr("party_menu.evasion"), unit.evasion],
+        [tr("party_menu.magic_evasion"), unit.magicEvasion],
+        [tr("party_menu.accuracy"), unit.accuracy],
+        [tr("party_menu.critical"), unit.criticalRate],
       ].map(([label, value]) => stat(label, value)),
     );
     elements.items.append(columns([0.26, 0.39, 0.35], [identity, left, right]));
     text(
       elements.items,
-      `状态：${
-        (unit.conditions || [])
-          .map((id) => {
-            const row = data.conditions?.[id],
-              key = row?.mes_id_name;
-            return row?.name || (key && key !== "None" ? game.text(key) : "异常状态");
-          })
-          .join("、") || "正常"
-      }`,
+      tr("party_menu.status_value", {
+        v0:
+          (unit.conditions || [])
+            .map((id) => {
+              const row = data.conditions?.[id],
+                key = row?.mes_id_name;
+              return (
+                row?.name ||
+                (key && key !== "None" ? game.text(key) : tr("party_menu.status_ailment"))
+              );
+            })
+            .join("、") || tr("party_menu.normal"),
+      }),
     );
   } else if (state.page === "队列") {
-    text(elements.items, "选择两名角色交换位置；前后排可分别切换。");
+    text(elements.items, tr("party_menu.select_two_characters_to_swap_positions_toggle_each_cha"));
     elements.items.append(
       columns(
         [0.34, 0.36, 0.3],
         [
-          group(node("legend", "队伍顺序")),
+          group(node("legend", tr("party_menu.party_order"))),
           group(node("formation-heading")),
-          group(node("legend", "队列调整")),
+          group(node("legend", tr("party_menu.formation"))),
         ],
       ),
     );
@@ -380,16 +463,25 @@ export function renderPartyMenu(
       });
       choice.dataset.selected = state.swap === pos ? "1" : "";
       choice.dataset.block = "1";
-      const row = button(u.row === "back" ? "改为前排" : "改为后排", () => {
-        u.row = u.row === "back" ? "front" : "back";
-        refresh();
-      });
+      const row = button(
+        u.row === "back" ? tr("party_menu.move_to_front_row") : tr("party_menu.move_to_back_row"),
+        () => {
+          u.row = u.row === "back" ? "front" : "back";
+          refresh();
+        },
+      );
       row.dataset.block = "1";
       elements.items.append(
         columns(
           [0.34, 0.36, 0.3],
           [
-            group(choice, node("p", `Lv ${u.level}　${u.row === "back" ? "后排" : "前排"}`)),
+            group(
+              choice,
+              node(
+                "p",
+                `Lv ${u.level}　${u.row === "back" ? tr("battle_menu.back_row") : tr("battle_menu.front_row")}`,
+              ),
+            ),
             group(figure(u, state.swap === pos)),
             group(row),
           ],
@@ -401,12 +493,17 @@ export function renderPartyMenu(
       .map((id) => data.commands[id])
       .filter(Boolean);
     text(elements.items, commands.map((c) => c.name).join(" / "));
-    if (unit.id === 14) text(elements.items, "乌玛罗自动行动，无法选择战斗指令。");
+    if (unit.id === 14)
+      text(
+        elements.items,
+        tr("party_menu.umaro_acts_automatically_battle_commands_cannot_be_sele"),
+      );
     if (commands.some((c) => c.id === 14))
       for (const [id, count] of Object.entries(game.inventory)) {
         const c = data.contents[id],
           item = c?.type_id === 1 && data.items[c.type_value];
-        if (count > 0 && item?.machine_flag) text(elements.items, `机械：${name(id)}`);
+        if (count > 0 && item?.machine_flag)
+          text(elements.items, tr("party_menu.tools_value", { v0: name(id) }));
       }
     const known = [
       ...new Set([
@@ -424,12 +521,12 @@ export function renderPartyMenu(
         `${a.name}${blitzInputs[a.id] ? "  " + blitzInputs[a.id].join(" ") : ""}`,
       );
     for (const id of unit.rages || [])
-      text(elements.items, `狂怒：${data.monsters[id]?.name || id}`);
+      text(elements.items, tr("party_menu.rage_value", { v0: data.monsters[id]?.name || id }));
     if (unit.id === 13)
       for (let slot = 0; slot < 3; slot++)
         elements.items.append(
           select(
-            `戈戈自选指令 ${slot + 1}`,
+            tr("party_menu.gogo_command_value", { v0: slot + 1 }),
             [1, 3, 7, 10, 12, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23].map((id) => [
               id,
               data.commands[id]?.name || id,
@@ -444,6 +541,9 @@ export function renderPartyMenu(
           ),
         );
     if (!known.length && !unit.rages?.length)
-      text(elements.items, "角色特技按剧情、等级和实战学习；本页只显示已掌握内容。");
+      text(
+        elements.items,
+        tr("party_menu.special_skills_are_learned_through_story_levels_and_bat"),
+      );
   }
 }

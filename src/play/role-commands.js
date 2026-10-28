@@ -1,3 +1,4 @@
+import { tr } from "./i18n.js";
 import { setCondition, hasConditionType } from "./ability-effects.js";
 const unique = (values) => [...new Set(values)];
 export function initRole(battle, unit) {
@@ -46,7 +47,7 @@ export function observeLore(battle, ability) {
       unit.loreAbilities ??= [];
       if (!unit.loreAbilities.includes(ability.id)) {
         unit.loreAbilities.push(ability.id);
-        battle.addLog(`${unit.name}看到了${ability.name}，学会了青魔法！`);
+        battle.addLog(tr("role.lore", { v0: unit.name, v1: ability.name }));
       }
     }
 }
@@ -74,17 +75,17 @@ export function beginRoleAction(battle, actor, ability) {
     );
     for (const id of monster.initialConditions ?? [])
       setCondition(battle, actor, id, true, { force: true });
-    battle.addLog(`${actor.name}开始模仿${monster.name}狂怒，不再接受指令。`);
+    battle.addLog(tr("role.rage", { v0: actor.name, v1: monster.name }));
     return true;
   }
   if (ability.typeId === 603) {
     const current = terrainDance(battle);
     if (current !== ability.id && battle.random() < 0.5) {
-      battle.addLog(`${actor.name}跳舞失败！`);
+      battle.addLog(tr("role.dance_failed", { v0: actor.name }));
       return true;
     }
     actor.danceAbility = ability.id;
-    battle.addLog(`${actor.name}开始${ability.name}，持续自动跳舞。`);
+    battle.addLog(tr("role.dance", { v0: actor.name, v1: ability.name }));
     const condition = ability.functions?.find((f) => f.id === 9)?.values?.[0];
     if (condition) setCondition(battle, actor, condition, true, { force: true });
     danceTurn(battle, actor, ability);
@@ -192,7 +193,7 @@ export function tickRole(battle, unit, seconds) {
   unit.tranceSeconds = 0;
   for (const id of [...(unit.conditions ?? [])])
     if (battle.data.conditions?.[id]?.condition_type === 621) setCondition(battle, unit, id, false);
-  battle.addLog(`${unit.name}幻化结束。`);
+  battle.addLog(tr("role.trance_end", { v0: unit.name }));
 }
 export function finishRoles(battle, outcome) {
   for (const unit of battle.players) {
@@ -202,7 +203,7 @@ export function finishRoles(battle, outcome) {
         unit.danceAbilities ??= [];
         if (id && !unit.danceAbilities.includes(id)) {
           unit.danceAbilities.push(id);
-          battle.addLog(`${unit.name}学会了${battle.data.abilities[id]?.name}。`);
+          battle.addLog(tr("role.learned", { v0: unit.name, v1: battle.data.abilities[id]?.name }));
         }
       }
       if (

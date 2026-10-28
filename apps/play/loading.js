@@ -1,3 +1,4 @@
+import { tr } from "../../src/play/i18n.js";
 // Host-only loading UI. No VM state, saves or game clocks live here.
 export class LoadingScreen {
   constructor(document) {
@@ -21,7 +22,7 @@ export class LoadingScreen {
       if (this.reloading) return;
       this.reloading = true;
       if (this.panel.dataset.state === "failed") {
-        this.message.textContent = "重新下载游戏模块…";
+        this.message.textContent = tr("loading.downloading_game_modules_again");
         // Revalidate preload responses before a fresh document. WebKit kept
         // the aborted module response across an ordinary reload in acceptance.
         const urls = [...document.querySelectorAll('link[rel="modulepreload"]')].map(
@@ -50,7 +51,7 @@ export class LoadingScreen {
     this.retry.hidden = true;
     this.message.textContent = title;
     this.progress.removeAttribute("value");
-    this.detail.textContent = "准备资源…";
+    this.detail.textContent = tr("loading.preparing_resources");
   }
   observe = ({ url, state, bytes = 0 }) => {
     if (!this.active) return; // Speculative fetches never open the loading UI.
@@ -63,23 +64,24 @@ export class LoadingScreen {
     const total = this.jobs.size;
     const complete = [...this.jobs.values()].filter((state) => state === "complete").length;
     const parts = [];
-    if (total) parts.push(`数据 ${complete}/${total}`);
+    if (total) parts.push(tr("loading.data_value_value", { v0: complete, v1: total }));
     if (this.bytes) parts.push(`${(this.bytes / 1048576).toFixed(1)} MB`);
-    if (textures) parts.push(`贴图 ${textures.ready}/${textures.total}`);
+    if (textures)
+      parts.push(tr("loading.textures_value_value", { v0: textures.ready, v1: textures.total }));
     const max = total + (textures?.total || 0);
     if (max) {
       this.progress.max = max;
       this.progress.value = complete + (textures?.ready || 0);
     }
-    const detail = parts.join(" · ") || "准备资源…";
+    const detail = parts.join(" · ") || tr("loading.preparing_resources");
     if (this.detail.textContent !== detail) this.detail.textContent = detail;
   }
   fail(error, retry = null) {
     this.indicator.dataset.active = "false";
     this.panel.hidden = false;
     this.panel.dataset.state = "failed";
-    this.message.textContent = `加载失败：${error.message || error}`;
-    this.detail.textContent = "本机存档仍保留。请检查网络后重试。";
+    this.message.textContent = tr("loading.loading_failed_value", { v0: error.message || error });
+    this.detail.textContent = tr("loading.local_saves_are_retained_check_your_connection_and_retr");
     this.progress.removeAttribute("value");
     this.onRetry = retry;
     this.retry.hidden = !retry;
@@ -101,7 +103,7 @@ export class LoadingScreen {
     this.panel.hidden = true;
     this.onRetry = null;
     this.indicator.dataset.active = "false";
-    this.indicator.setAttribute("aria-label", "资源已就绪");
+    this.indicator.setAttribute("aria-label", tr("loading.resources_ready"));
   }
   setInGame(enabled) {
     this.inGame = enabled;

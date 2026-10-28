@@ -1,3 +1,4 @@
+import { tr } from "./i18n.js";
 import { executeInstruction } from "./instructions.js";
 import {
   fieldBlockerAt,
@@ -855,9 +856,12 @@ export class PlayGame {
         const keys = s.filter(Boolean);
         this.dialogue = {
           key: keys[0],
-          text: "请选择：",
+          text: tr("game.choose"),
+          uiKey: "game.choose",
           speaker: "",
-          choices: keys.length ? keys.map((k) => this.text(k)) : ["是", "否"],
+          choices: keys.length ? keys.map((k) => this.text(k)) : [tr("game.yes"), tr("game.no")],
+          choiceKeys: keys.length ? keys : null,
+          choiceUiKeys: keys.length ? null : ["game.yes", "game.no"],
           task: t,
           elapsed: 0,
         };
@@ -1101,6 +1105,7 @@ export class PlayGame {
     const name = Array.from(String(value).normalize("NFC").trim()).slice(0, maxLength).join("");
     if (!name) return false;
     this.unit(input.id).name = name;
+    this.unit(input.id).customName = name !== this.battleData.characters[input.id]?.name;
     if (input.task?.waitFor === "name") input.task.waitFor = null;
     this.nameInput = null;
     return true;
@@ -1192,7 +1197,7 @@ export class PlayGame {
           (context.randomEncounter || !this.handlesBattleDefeat(continuation))
         ) {
           t.done = true;
-          this.over = { reason: "队伍在战斗中倒下了。请读取存档重试。" };
+          this.over = { reason: tr("game.the_party_fell_in_battle_load_a_save_and_try_again") };
           this.event("game-over", this.over);
           this.event("battle-end", { encounterId: id, ...result });
           return;
@@ -1261,7 +1266,7 @@ export class PlayGame {
         );
       })
     ) {
-      this.over = { reason: "守卫抓住了蒂娜。请读取存档重试。" };
+      this.over = { reason: tr("game.the_guards_caught_terra_load_a_save_and_try_again") };
       this.event("game-over", this.over);
     }
   }

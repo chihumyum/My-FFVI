@@ -1,3 +1,4 @@
+import { tr } from "../../src/play/i18n.js";
 // Host identity is selected before the game imports its local save library.
 // The recovery key is a bearer secret, never a URL parameter or public user ID.
 let active = null;
@@ -30,7 +31,8 @@ export async function prepareIdentity() {
         : {}),
     });
     const value = await response.json();
-    if (!response.ok) throw Error(value.error || "无法连接存档服务");
+    if (!response.ok)
+      throw Error(value.error || tr("identity.could_not_connect_to_the_save_service"));
     return value;
   };
   let value = await request("/api/session");

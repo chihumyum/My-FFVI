@@ -9,6 +9,7 @@
   },
   "scripts": {
     "export": "node tools/export/index.mjs",
+    "export:locales": "node tools/export/localization.mjs",
     "dev": "vite --config vite.config.mjs",
     "test": "node --test src/play/*.test.mjs apps/play/*.test.mjs tools/export/*.test.mjs tools/play/*.test.mjs server/*.test.mjs cloudflare/*.test.mjs",
     "play:through": "node tools/play/playthrough.mjs",
@@ -31,6 +32,7 @@
     "play:asset-decode": "node tools/play/check-asset-decode.mjs",
     "play:extras-check": "node tools/play/check-extras-browser.mjs",
     "play:visual-check": "node tools/play/visual-regression.mjs",
+    "play:i18n-check": "node tools/play/check-i18n-browser.mjs",
     "play:static-check": "node tools/play/check-static-browser.mjs",
     "play:numeric-check": "node tools/play/numeric-audit.mjs",
     "play:boss-check": "node tools/play/boss-health-check.mjs",
@@ -63,6 +65,7 @@
     "wrangler": "4.151.1"
   },
   "dependencies": {
+    "i18next": "26.5.11",
     "pixi.js": "8.22.0"
   }
 }

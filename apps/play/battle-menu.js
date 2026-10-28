@@ -1,3 +1,4 @@
+import { tr } from "../../src/play/i18n.js";
 import { validBlitz } from "../../src/play/battle-commands.js";
 // Manual controls submit ordinary Battle inputs; no regression policy lives here.
 export function createBattleMenu({
@@ -90,7 +91,7 @@ export function createBattleMenu({
       return;
     }
     const hint = createElement("strong");
-    hint.textContent = `${action.name} · ${targetAll ? "全体" : "单体"}`;
+    hint.textContent = `${action.name} · ${targetAll ? tr("battle_menu.all") : tr("battle_menu.single")}`;
     targets.append(hint);
     const sides = action.targetSides ?? [action.target === "ally" ? "player" : "enemy"];
     // Keep both group choices before individual names: the shallow battle
@@ -100,7 +101,11 @@ export function createBattleMenu({
       if (action.all || action.selectableAll) {
         targets.append(
           button(
-            action.range === 9 ? "战场全体" : side === "player" ? "我方全体" : "敌方全体",
+            action.range === 9
+              ? tr("battle_menu.everyone")
+              : side === "player"
+                ? tr("battle_menu.all_allies")
+                : tr("battle_menu.all_enemies"),
             () =>
               send(action, {
                 side,
@@ -125,11 +130,16 @@ export function createBattleMenu({
         );
     }
     if (action.selectableAll) {
-      const scope = button(`目标：${targetAll ? "全体" : "单体"}（Shift 切换）`, toggleTargetAll);
+      const scope = button(
+        tr("battle_menu.target_value_shift_to_toggle", {
+          v0: targetAll ? tr("battle_menu.all") : tr("battle_menu.single"),
+        }),
+        toggleTargetAll,
+      );
       scope.dataset.targetScope = "1";
       targets.append(scope);
     }
-    const cancel = button("取消", cancelTarget);
+    const cancel = button(tr("battle_menu.cancel"), cancelTarget);
     cancel.dataset.targetCancel = "1";
     targets.append(cancel);
   };
@@ -187,7 +197,7 @@ export function createBattleMenu({
       battle.players
         .map(
           (u, i) =>
-            `${i === index ? "▶" : " "} ${u.name} ${u.row === "back" ? "后排" : "前排"}  HP ${u.hp}/${u.maxHp}  MP ${u.mp}/${u.maxMp}  ATB ${Math.floor(u.atb ?? 0)}${u.trance ? " 幻化" : ""}${u.rageMonster ? " 狂怒" : ""}${u.danceAbility ? " 舞蹈" : ""}`,
+            `${i === index ? "▶" : " "} ${u.name} ${u.row === "back" ? tr("battle_menu.back_row") : tr("battle_menu.front_row")}  HP ${u.hp}/${u.maxHp}  MP ${u.mp}/${u.maxMp}  ATB ${Math.floor(u.atb ?? 0)}${u.trance ? tr("battle_menu.trance") : ""}${u.rageMonster ? tr("battle_menu.rage") : ""}${u.danceAbility ? tr("battle_menu.dance") : ""}`,
         )
         .join("\n") +
       "\n" +
@@ -203,7 +213,17 @@ export function createBattleMenu({
     const reel = commands.querySelector("[data-reels]");
     if (reel)
       reel.textContent = reels
-        .map((n) => ["7", "龙", "BAR", "飞空艇", "陆行鸟", "钻石"][n])
+        .map(
+          (n) =>
+            [
+              "7",
+              tr("battle_menu.dragon"),
+              "BAR",
+              tr("battle_menu.airship"),
+              tr("battle_menu.chocobo"),
+              tr("battle_menu.diamond"),
+            ][n],
+        )
         .join(" | ");
     for (const item of commands.querySelectorAll("[data-charge-level]"))
       item.disabled = Number(item.dataset.chargeLevel) >= level;
@@ -225,7 +245,7 @@ export function createBattleMenu({
     commands.replaceChildren();
     for (const i of ready) {
       const choice = button(
-        `操作 ${battle.players[i].name}`,
+        tr("battle_menu.control_value", { v0: battle.players[i].name }),
         () => {
           index = i;
           close();
@@ -237,13 +257,18 @@ export function createBattleMenu({
     }
     if (!actor) return;
     if (menu) {
-      commands.append(button("← 指令", close));
+      commands.append(button(tr("battle_menu.commands"), close));
       if (menu.input === "equipment") {
         for (const slot of [0, 1]) {
           const label = createElement("label"),
             select = createElement("select");
-          label.textContent = slot ? "左手" : "右手";
-          select.setAttribute("aria-label", slot ? "战斗左手装备" : "战斗右手装备");
+          label.textContent = slot ? tr("battle_menu.left_hand") : tr("battle_menu.right_hand");
+          select.setAttribute(
+            "aria-label",
+            slot
+              ? tr("battle_menu.battle_left_hand_equipment")
+              : tr("battle_menu.battle_right_hand_equipment"),
+          );
           for (const item of battle.equipmentChoices(index, slot)) {
             const option = createElement("option");
             option.value = item.id;
@@ -262,7 +287,7 @@ export function createBattleMenu({
       }
       if (menu.input === "blitz") {
         const info = createElement("p");
-        info.textContent = "输入必杀技：" + blitz.join(" ");
+        info.textContent = tr("battle_menu.enter_blitz") + blitz.join(" ");
         commands.append(info);
         for (const key of ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖", "X", "Y", "L", "R"])
           commands.append(
@@ -272,7 +297,7 @@ export function createBattleMenu({
             }),
           );
         commands.append(
-          button("清除", () => {
+          button(tr("battle_menu.clear"), () => {
             blitz = [];
             invalidate();
           }),
@@ -282,28 +307,41 @@ export function createBattleMenu({
         const bar = createElement("progress");
         bar.max = 8;
         bar.value = level;
-        bar.setAttribute("aria-label", "必杀剑蓄力");
+        bar.setAttribute("aria-label", tr("battle_menu.bushido_charge"));
         commands.append(bar);
       }
       if (menu.input === "slots") {
         const text = createElement("strong");
         text.dataset.reels = "";
         text.textContent = reels
-          .map((n) => ["7", "龙", "BAR", "飞空艇", "陆行鸟", "钻石"][n])
+          .map(
+            (n) =>
+              [
+                "7",
+                tr("battle_menu.dragon"),
+                "BAR",
+                tr("battle_menu.airship"),
+                tr("battle_menu.chocobo"),
+                tr("battle_menu.diamond"),
+              ][n],
+          )
           .join(" | ");
         commands.append(text);
         commands.append(
-          button(`停止转轮 ${(battle.slots?.stopped.length ?? 0) + 1}`, () => {
-            battle.stopSlot(index);
-            if (!battle.slots) close();
-            else invalidate();
-          }),
+          button(
+            tr("battle_menu.stop_reel_value", { v0: (battle.slots?.stopped.length ?? 0) + 1 }),
+            () => {
+              battle.stopSlot(index);
+              if (!battle.slots) close();
+              else invalidate();
+            },
+          ),
         );
         return;
       }
       if (menu.input === "dualcast") {
         const info = createElement("strong");
-        info.textContent = `连续魔：第 ${dual.length + 1} 次`;
+        info.textContent = tr("battle_menu.dualcast_spell_value", { v0: dual.length + 1 });
         commands.append(info);
       }
       for (const [n, action] of menu.actions.entries()) {

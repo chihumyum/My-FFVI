@@ -1,3 +1,4 @@
+import { tr } from "../../src/play/i18n.js";
 // Optional same-origin host adapter. Plain static websites never probe an absent API.
 import { activeIdentity } from "./identity.js";
 export class CloudSaves {
@@ -33,16 +34,23 @@ export class CloudSaves {
     if (!this.enabled) return false;
     const { value } = await this.request("/api/session");
     if (!value.authenticated)
-      throw Object.assign(Error("登录已过期，请重新登录；本机存档仍保留"), { status: 401 });
+      throw Object.assign(
+        Error(tr("cloud_saves.session_expired_log_in_again_local_saves_are_retained")),
+        { status: 401 },
+      );
     if (this.serverId && this.serverId !== value.serverId)
-      throw Object.assign(Error("存档身份已切换，请刷新此页；本机进度仍保留"), { status: 403 });
+      throw Object.assign(
+        Error(tr("cloud_saves.save_identity_changed_reload_this_page_local_progress_i")),
+        { status: 403 },
+      );
     this.serverId = value.serverId;
     this.identity = value;
     return true;
   }
   async list() {
     const { value } = await this.request("/api/saves");
-    if (value.serverId !== this.serverId) throw Error("服务器身份已变化，同步暂停以保护本机进度");
+    if (value.serverId !== this.serverId)
+      throw Error(tr("cloud_saves.server_identity_changed_sync_paused_to_protect_local_pr"));
     return value.saves;
   }
   async get(id, revision) {

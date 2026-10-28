@@ -1,3 +1,4 @@
+import { tr } from "./i18n.js";
 // PR function_group composition. Table values win; approximations are explicit
 // here and warn at the ability/source that actually uses them.
 import { attackHits } from "./battle-accuracy.js";
@@ -171,7 +172,7 @@ export function abilityFromItem(data, item, contentId) {
     id: `item:${contentId}`,
     contentId,
     itemId: item.id,
-    name: item.name || `道具 ${item.id}`,
+    name: item.name || tr("app.item_value", { v0: item.id }),
     kind: healing ? "heal" : physical ? "physical" : "magic",
     target: healing || [1, 2, 5].includes(item.battle_renge_id) ? "ally" : "enemy",
     functions,
@@ -442,7 +443,7 @@ export function throwableCommands(data, inventory, unit) {
           data.itemNames?.[item?.id] ||
           weapon?.name ||
           item?.name ||
-          `投掷 ${contentId}`,
+          tr("effect.throw_item", { v0: contentId }),
         count,
         disabled: false,
         functions: [{ id: 51, values: [0, 0, 0] }],
@@ -661,7 +662,9 @@ export function tickConditions(host, unit, seconds) {
       if (type === 627)
         for (const [owner, victim] of host.captures || [])
           if (victim === unit) owner.hp = clamp(owner.hp + previous - unit.hp, 0, owner.maxHp);
-      host.addLog(`${unit.name} ${applied < 0 ? "持续回复" : "持续伤害"} ${Math.abs(applied)}`);
+      host.addLog(
+        `${unit.name} ${applied < 0 ? tr("effect.regen") : tr("effect.damage")} ${Math.abs(applied)}`,
+      );
       interval = periodicStatusInterval(host.data, unit, type);
     }
   }

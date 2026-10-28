@@ -1,3 +1,5 @@
+import { translateDOM } from "./language.js";
+import { tr, i18n } from "../../src/play/i18n.js";
 import { mountGameZoom } from "./game-zoom.js";
 
 const preferenceKey = "ffvi-touch-controls";
@@ -45,31 +47,32 @@ export function mountTouchControls({
 }) {
   const root = document.createElement("div");
   root.id = "touch-controls";
-  root.setAttribute("aria-label", "虚拟游戏手柄");
+  root.setAttribute("aria-label", tr("touch_controls.virtual_gamepad"));
   root.innerHTML = `
     <div class="touch-toolbar">
-      <button type="button" data-game-fullscreen hidden aria-pressed="false">全屏</button>
-      <button type="button" data-touch-toggle>触控</button>
-      <button type="button" data-touch-tools aria-expanded="false">工具</button>
-      <button type="button" data-touch-zoom hidden aria-label="重置游戏画面缩放">100%</button>
+      <button type="button" data-game-fullscreen hidden aria-pressed="false" data-i18n="touch_controls.fullscreen">全屏</button>
+      <button type="button" data-touch-toggle data-i18n="touch.label">触控</button>
+      <button type="button" data-touch-tools aria-expanded="false" data-i18n="tools.label">工具</button>
+      <button type="button" data-touch-zoom hidden aria-label="重置游戏画面缩放" data-i18n-aria-label="touch.reset_zoom">100%</button>
       <output data-fullscreen-status role="status" hidden></output>
     </div>
     <div class="touch-pad" hidden>
-      <div class="touch-dpad" aria-label="方向键">
-        <button type="button" data-game-key="ArrowUp" aria-label="向上">▲</button>
-        <button type="button" data-game-key="ArrowLeft" aria-label="向左">◀</button>
+      <div class="touch-dpad" aria-label="方向键" data-i18n-aria-label="touch.directions">
+        <button type="button" data-game-key="ArrowUp" aria-label="向上" data-i18n-aria-label="touch.up">▲</button>
+        <button type="button" data-game-key="ArrowLeft" aria-label="向左" data-i18n-aria-label="touch.left">◀</button>
         <span aria-hidden="true"></span>
-        <button type="button" data-game-key="ArrowRight" aria-label="向右">▶</button>
-        <button type="button" data-game-key="ArrowDown" aria-label="向下">▼</button>
+        <button type="button" data-game-key="ArrowRight" aria-label="向右" data-i18n-aria-label="touch.right">▶</button>
+        <button type="button" data-game-key="ArrowDown" aria-label="向下" data-i18n-aria-label="touch.down">▼</button>
       </div>
       <div class="touch-actions">
-        <button type="button" data-game-key="Tab" class="touch-small" aria-label="切换战斗角色">换人</button>
-        <button type="button" data-game-key="q" class="touch-small" aria-label="切换队伍">换队</button>
-        <button type="button" data-game-key="Escape" class="touch-cancel" aria-label="返回或打开菜单" title="返回、取消；地图上打开菜单">返回 B</button>
-        <button type="button" data-game-key="Enter" class="touch-confirm" aria-label="确认或交互">确认</button>
+        <button type="button" data-game-key="Tab" class="touch-small" aria-label="切换战斗角色" data-i18n="touch.actor" data-i18n-aria-label="touch.switch_actor">换人</button>
+        <button type="button" data-game-key="q" class="touch-small" aria-label="切换队伍" data-i18n="touch.party" data-i18n-aria-label="touch.switch_party">换队</button>
+        <button type="button" data-game-key="Escape" class="touch-cancel" aria-label="返回或打开菜单" title="返回、取消；地图上打开菜单" data-i18n="touch.back" data-i18n-aria-label="touch.menu" data-i18n-title="touch.hint">返回 B</button>
+        <button type="button" data-game-key="Enter" class="touch-confirm" aria-label="确认或交互" data-i18n-aria-label="touch.confirm">确认</button>
       </div>
     </div>`;
   document.body.append(root);
+  translateDOM(root);
   const pad = root.querySelector(".touch-pad");
   const toggle = root.querySelector("[data-touch-toggle]");
   const toolsToggle = root.querySelector("[data-touch-tools]");
@@ -151,7 +154,9 @@ export function mountTouchControls({
       (preference === "auto" && (coarse.matches || navigator.maxTouchPoints > 0));
     document.body.classList.toggle("touch-enabled", enabled);
     pad.hidden = !enabled;
-    toggle.textContent = `触控：${enabled ? "开" : "关"}`;
+    toggle.textContent = tr("touch_controls.touch_value", {
+      v0: enabled ? tr("app.on") : tr("app.off"),
+    });
     toggle.setAttribute("aria-pressed", String(enabled));
     layout();
   }
@@ -172,7 +177,9 @@ export function mountTouchControls({
   function fullscreenChanged() {
     const active = !!document.fullscreenElement;
     fullscreenToggle.hidden = !document.fullscreenEnabled;
-    fullscreenToggle.textContent = active ? "退出全屏" : "全屏";
+    fullscreenToggle.textContent = active
+      ? tr("touch_controls.exit_fullscreen")
+      : tr("touch_controls.fullscreen");
     fullscreenToggle.setAttribute("aria-pressed", String(active));
     layout();
   }
@@ -186,7 +193,9 @@ export function mountTouchControls({
       if (document.fullscreenElement) await document.exitFullscreen();
       else await document.documentElement.requestFullscreen();
     } catch {
-      fullscreenStatus.textContent = "无法进入或退出全屏，请重试或检查浏览器权限。";
+      fullscreenStatus.textContent = tr(
+        "touch_controls.could_not_change_fullscreen_retry_or_check_browser_perm",
+      );
       fullscreenStatus.hidden = false;
     } finally {
       fullscreenToggle.disabled = false;
@@ -253,12 +262,19 @@ export function mountTouchControls({
   document.addEventListener("visibilitychange", visibility);
   document.addEventListener("fullscreenchange", fullscreenChanged);
   coarse.addEventListener("change", update);
+  const translate = () => {
+    translateDOM(root);
+    update();
+    fullscreenChanged();
+  };
+  i18n.on("languageChanged", translate);
   update();
   fullscreenChanged();
   return {
     release,
     resetZoom: () => zoom?.reset(),
     destroy() {
+      i18n.off("languageChanged", translate);
       release();
       window.removeEventListener("blur", release);
       window.removeEventListener("orientationchange", layout);

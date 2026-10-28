@@ -1,3 +1,4 @@
+import { tr } from "./i18n.js";
 import { canEquip, equip as equipResource } from "./resources.js";
 import {
   commandMenu,
@@ -284,8 +285,13 @@ export class Battle {
       this.warning(`Missing formation ${encounterId}; empty battle returns victory.`);
     this.ymirHead = this.enemies.find((unit) => unit.role === "ymir-head");
     this.ymirShell = this.enemies.find((unit) => unit.role === "ymir-shell");
-    if (this.ymirHead && this.ymirShell) this.addLog("尤弥尔的壳会吸收雷电。趁头部出现时攻击！");
-    this.addLog(`遭遇：${this.enemies.map((unit) => unit.name).join("、") || "无敌人"}`);
+    if (this.ymirHead && this.ymirShell)
+      this.addLog(tr("battle.ymir_s_shell_absorbs_lightning_attack_while_its_head_is"));
+    this.addLog(
+      tr("battle.encounter_value", {
+        v0: this.enemies.map((unit) => unit.name).join("、") || tr("battle.no_enemies"),
+      }),
+    );
     const veldtEvent = this.isVeldt
       ? (context.worldOfRuin ?? Number(banks.ScenarioFlag2?.[44] ?? 0) === 1)
         ? "sc_b_0738"
@@ -301,7 +307,10 @@ export class Battle {
   completeUnit(unit, base, side, index) {
     for (const [key, entry] of Object.entries(base)) if (unit[key] === undefined) unit[key] = entry;
     unit.id ??= index + 1;
-    unit.name ??= side === "player" ? `角色 ${unit.id}` : `怪物 ${unit.id}`;
+    unit.name ??=
+      side === "player"
+        ? tr("battle.character_value", { v0: unit.id })
+        : tr("battle.monster_value", { v0: unit.id });
     unit.maxHp = Math.max(1, value(unit.maxHp, value(unit.hp, 100)));
     unit.hp = clamp(value(unit.hp, unit.maxHp), 0, unit.maxHp);
     unit.maxMp = Math.max(0, value(unit.maxMp, value(unit.mp, 20)));
@@ -385,9 +394,14 @@ export class Battle {
         "PR battle_pattern1–6 are eligibility flags. Web selection uses SNES-inspired normal/ambush weights; exact PR probability modifiers are approximated.",
       );
     }
-    const label = ["普通阵型", "先制攻击", "背袭", "敌方先制", "敌方夹击", "我方夹击"][
-      this.pattern
-    ];
+    const label = [
+      tr("battle.normal_formation"),
+      tr("battle.preemptive_strike"),
+      tr("battle.back_attack"),
+      tr("battle.enemy_initiative"),
+      tr("battle.pincer_attack"),
+      tr("battle.side_attack"),
+    ][this.pattern];
     if (this.pattern) this.addLog(label);
     for (const u of this.players) {
       u.ignoreRow = [4, 5].includes(this.pattern);
@@ -658,7 +672,12 @@ export class Battle {
         (id) =>
           this.data.abilities?.[id] ?? {
             id,
-            name: id === 1 ? "战斗" : id === 2 ? "防御" : `技能 ${id}`,
+            name:
+              id === 1
+                ? tr("battle.attack")
+                : id === 2
+                  ? tr("party_menu.defense")
+                  : tr("app.ability_value", { v0: id }),
             mp: 0,
             kind: id === 2 ? "defend" : "physical",
             target: "enemy",
@@ -684,7 +703,7 @@ export class Battle {
           ? throwableCommands(this.data, this.inventory, unit).map((choice) => ({
               ...command,
               ...choice,
-              name: `投掷 · ${choice.name}`,
+              name: tr("battle.throw_value", { v0: choice.name }),
               disabled: command.disabled,
             }))
           : [command],
@@ -721,7 +740,10 @@ export class Battle {
       ]),
     ]
       .filter((id) => canEquip(this.data, unit, id, slot))
-      .map((id) => ({ id, name: this.data.contentNames?.[id] ?? `装备 ${id}` }));
+      .map((id) => ({
+        id,
+        name: this.data.contentNames?.[id] ?? tr("battle.equipment_value", { v0: id }),
+      }));
   }
   equipInBattle(index, slot, id) {
     if (this.equipmentInput?.index !== index || slot > 1) return false;
@@ -759,9 +781,8 @@ export class Battle {
     const reels = this.slots.stopped;
     this.slots = null;
     const equal = reels[0] === reels[1] && reels[1] === reels[2];
-    const bahamut = Object.values(this.data.magicStones ?? {}).find((s) =>
-      /巴哈姆特|Bahamut/i.test(s.name),
-    )?.summonAbilityId;
+    // PR content 85 is Bahamut. Display names must never select a battle rule.
+    const bahamut = this.data.magicStones?.[85]?.summonAbilityId;
     const id = equal
       ? [215, bahamut ?? 214, 214, 212, 211, 213][reels[0]]
       : reels[0] === 0 && reels[1] === 0 && reels[2] === 2
@@ -783,7 +804,22 @@ export class Battle {
     for (const target of targets)
       this.perform(actor, target, ability, targets.length, { sequence });
     this.addLog(
-      `转轮 ${reels.map((n) => ["7", "龙", "BAR", "飞空艇", "陆行鸟", "钻石"][n]).join(" / ")}：${ability.name}`,
+      tr("battle.reel_value_value", {
+        v0: reels
+          .map(
+            (n) =>
+              [
+                "7",
+                tr("battle_menu.dragon"),
+                "BAR",
+                tr("battle_menu.airship"),
+                tr("battle_menu.chocobo"),
+                tr("battle_menu.diamond"),
+              ][n],
+          )
+          .join(" / "),
+        v1: ability.name,
+      }),
     );
     this.consumeTurn(actor);
     this.checkEnd();
@@ -797,7 +833,7 @@ export class Battle {
     )
       return false;
     if (!validBlitz(id, inputs)) {
-      this.addLog(`${actor.name}必杀技输入失败！`);
+      this.addLog(tr("battle.value_failed_the_blitz_input", { v0: actor.name }));
       this.consumeTurn(actor);
       return true;
     }
@@ -981,7 +1017,7 @@ export class Battle {
         if (unit.stopConditionId) {
           unit.conditions = (unit.conditions ?? []).filter((id) => id !== unit.stopConditionId);
           unit.stopConditionId = null;
-          this.addLog(`${unit.name}恢复了行动。`);
+          this.addLog(tr("battle.value_can_act_again", { v0: unit.name }));
         }
         unit.atb = Math.min(
           100,
@@ -1132,7 +1168,12 @@ export class Battle {
     if ([12, 15, 20].includes(command.commandId) && !input.validated) return false;
     if (id === 4) {
       actor.row = actor.row === "back" ? "front" : "back";
-      this.addLog(`${actor.name}移到${actor.row === "back" ? "后" : "前"}排。`);
+      this.addLog(
+        tr("battle.value_moved_to_the_value_row", {
+          v0: actor.name,
+          v1: actor.row === "back" ? tr("battle.back") : tr("battle.front"),
+        }),
+      );
       this.consumeTurn(actor);
       return true;
     }
@@ -1161,7 +1202,7 @@ export class Battle {
     )
       return false;
     if (ability.mp > actor.mp) {
-      this.addLog(`${actor.name}的魔力不足。`);
+      this.addLog(tr("battle.value_does_not_have_enough_mp", { v0: actor.name }));
       return false;
     }
     this.clearRunic(actor);
@@ -1169,7 +1210,7 @@ export class Battle {
     actor.defending = false;
     if (ability.kind === "defend") {
       actor.defending = true;
-      this.addLog(`${actor.name}防御。`);
+      this.addLog(tr("battle.value_defends", { v0: actor.name }));
     } else {
       const pool = ability.range === 5 ? [actor] : side === "player" ? this.players : this.enemies;
       const target = ability.range === 5 ? actor : pool[requested?.index ?? targetIndex];
@@ -1178,7 +1219,7 @@ export class Battle {
         : pool.find((unit) => this.eligibleTarget(unit, ability));
       if (!selected) {
         actor.mp += ability.mp ?? 0;
-        this.addLog("目标暂时离开了战场。");
+        this.addLog(tr("battle.the_target_has_temporarily_left_the_battlefield"));
         return false;
       }
       const targets =
@@ -1302,7 +1343,9 @@ export class Battle {
         runic.runic = false;
         runic.mp = Math.min(runic.maxMp, runic.mp + ability.mp);
         if (options.sequence) options.sequence.absorbed = true;
-        this.addLog(`${runic.name}魔封剑吸收了${ability.name}。`);
+        this.addLog(
+          tr("battle.value_s_runic_absorbed_value", { v0: runic.name, v1: ability.name }),
+        );
         return;
       }
     }
@@ -1329,7 +1372,7 @@ export class Battle {
       ability.id === 13 &&
       (this.data.notManipulateMonsters ?? []).some((row) => row.monster_id === target.monsterId)
     ) {
-      this.addLog(`${target.name}无法被操纵。`);
+      this.addLog(tr("battle.value_cannot_be_controlled", { v0: target.name }));
       return;
     }
     const result = executeAbilityEffects(
@@ -1378,7 +1421,7 @@ export class Battle {
     if (actor.side === "player" && !options.mimic && ability.id !== 17)
       this.lastMimicAction = { ...action, throwCommand: options.sequence?.throwCommand };
     this.addLog(
-      `${actor.name} → ${target.name}：${ability.name || "战斗"}${result.hit ? (result.amount ? " " + (result.amount < 0 ? "回复 " : "") + Math.abs(result.amount) : result.mp ? " MP " + result.mp : "") : " 未命中"}`,
+      `${actor.name} → ${target.name}：${ability.name || tr("battle.attack")}${result.hit ? (result.amount ? " " + (result.amount < 0 ? tr("battle.healing") : "") + Math.abs(result.amount) : result.mp ? " MP " + result.mp : "") : tr("battle.miss")}`,
     );
     this.event("battle-action", {
       actorSide: actor.side,
@@ -1501,12 +1544,12 @@ export class Battle {
     }
     this.addLog(
       outcome === "victory"
-        ? `胜利！经验 ${this.result.exp}，金币 ${this.result.gil}。`
+        ? tr("battle.victory_exp_value_gil_value", { v0: this.result.exp, v1: this.result.gil })
         : outcome === "escape"
           ? this.result.fieldReturn === "engulf"
-            ? "队伍被全部吸入了。"
-            : "队伍成功逃离。"
-          : "队伍倒下了。",
+            ? tr("battle.the_entire_party_was_engulfed")
+            : tr("battle.the_party_escaped")
+          : tr("battle.the_party_fell"),
     );
     if (!this.yielded) {
       this.yielded = true;

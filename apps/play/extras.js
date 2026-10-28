@@ -1,3 +1,5 @@
+import { tr } from "../../src/play/i18n.js";
+import { localizeBattle, localizeExtras } from "../../src/play/localized-data.js";
 import { createWidget } from "./ui.js";
 import { WebData, webIndexURL } from "./data.js";
 import { bestiaryRecords } from "../../src/play/bestiary.js";
@@ -38,7 +40,9 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
   const paragraph = (text) => body.append(node("p", text));
   const entryName = (entry) => {
     const name = entry.name || battleData.monsters[entry.monsterId]?.name;
-    return name && !/^mt_ff6_/i.test(name) ? name : `资料 ${catalog.thumbnails.indexOf(entry) + 1}`;
+    return name && !/^mt_ff6_/i.test(name)
+      ? name
+      : tr("extras.reference_value", { v0: catalog.thumbnails.indexOf(entry) + 1 });
   };
   const entryNumber = (entry) =>
     state.page === "资料库" ? catalog.thumbnails.indexOf(entry) + 1 : entry.id;
@@ -51,11 +55,17 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
       loading = (async () => {
         const repository = new WebData(webIndexURL());
         const index = (repository.index = await repository.json(webIndexURL().href));
-        if (!index.extras) throw Error("额外内容数据尚未导出，请重新导出数据。");
+        if (!index.extras)
+          throw Error(tr("extras.extra_content_has_not_been_exported_export_the_data_aga"));
         [catalog, battleData] = await Promise.all([
           repository.json(index.extras),
           repository.json(index.battle),
         ]);
+        catalog = structuredClone(catalog);
+        battleData = structuredClone(battleData);
+        const locale = await repository.locale();
+        localizeExtras(catalog, locale);
+        localizeBattle(battleData, locale);
         if (index.extrasPreviews) setPreviews(await repository.json(index.extrasPreviews));
         audio.setAssets(index.assets.audio, repository.baseURL);
         for (const message of catalog.warnings || []) console.warn("[Extras guess]", message);
@@ -79,8 +89,8 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
     if (root.hidden) return;
     status.textContent =
       audio.current?.id === Number(track.bgmId)
-        ? `正在播放：${track.name}`
-        : "曲目未能播放，请重试。";
+        ? tr("extras.playing_value", { v0: track.name })
+        : tr("extras.could_not_play_the_track_please_retry");
     render();
   }
   function picture(source, height, key, zoomable = false) {
@@ -105,7 +115,7 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
   function details(entry, records) {
     body.append(
       button(
-        "← 返回网格",
+        tr("extras.back_to_grid"),
         () => {
           state.selected = null;
           ui.scroll(root, -Infinity);
@@ -121,11 +131,15 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
         render();
       };
       body.append(
-        button("缩小 −", () => zoom(state.zoom - 0.5), 180),
-        button(`适合窗口 · ${Math.round(state.zoom * 100)}%`, () => zoom(1), 360),
-        button("放大 +", () => zoom(state.zoom + 0.5), 180),
+        button(tr("extras.zoom_out"), () => zoom(state.zoom - 0.5), 180),
+        button(
+          tr("extras.fit_window_value", { v0: Math.round(state.zoom * 100) }),
+          () => zoom(1),
+          360,
+        ),
+        button(tr("extras.zoom_in"), () => zoom(state.zoom + 0.5), 180),
       );
-      paragraph(`${entry.name}　·　放大后拖动查看`);
+      paragraph(tr("extras.value_drag_to_pan_when_zoomed_in", { v0: entry.name }));
       body.append(picture(entry.image, 684, entry.id, true));
       return;
     }
@@ -133,41 +147,82 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
       record = records[entry.monsterId],
       known = state.page === "资料库" || !!record;
     paragraph(known ? entryName(entry) : `No. ${entry.id}　？？？`);
-    if (!known) return paragraph("尚未记录。遇见敌人后会保留在当前存档的图鉴中。");
+    if (!known)
+      return paragraph(tr("extras.not_recorded_yet_encounter_enemies_to_add_them_to_this_"));
     if (entry.image || entry.thumbnail || monster?.sprite)
       body.append(picture(entry.image || entry.thumbnail || monster.sprite, 240, entry.id));
     if (record)
       paragraph(
         record.historical
-          ? "旧存档：已胜利阵型记录"
-          : `遇见 ${record.seen} 场 · 击倒 ${record.defeated} 场`,
+          ? tr("extras.legacy_save_victorious_formation_records")
+          : tr("extras.encounters_value_defeats_value", { v0: record.seen, v1: record.defeated }),
       );
     if (monster && entry.statusDisplay !== false && entry.statusDisplay !== 0) {
       paragraph(`Lv ${monster.level}　HP ${monster.maxHp}　MP ${monster.maxMp}`);
       paragraph(
-        `攻击 ${monster.attack}　防御 ${monster.defense}　魔防 ${monster.magicDefense}　速度 ${monster.speed}`,
+        tr("extras.attack_value_defense_value_magic_defense_value_speed_va", {
+          v0: monster.attack,
+          v1: monster.defense,
+          v2: monster.magicDefense,
+          v3: monster.speed,
+        }),
       );
-      paragraph(`经验 ${monster.exp}　金币 ${monster.gil}`);
+      paragraph(tr("extras.exp_value_gil_value", { v0: monster.exp, v1: monster.gil }));
       const names = (rows) =>
-        (rows || []).map((r) => battleData.contentNames[r.id] || `#${r.id}`).join(" / ") || "无";
-      paragraph(`掉落：${names(monster.drops)}　偷盗：${names(monster.steal)}`);
-      const elements = ["", "火", "冰", "雷", "毒", "风", "圣", "地", "水"],
-        labels = { 1: "弱点", 2: "耐性", 3: "无效", 4: "吸收" };
+        (rows || []).map((r) => battleData.contentNames[r.id] || `#${r.id}`).join(" / ") ||
+        tr("extras.none");
+      paragraph(
+        tr("extras.drops_value_steal_value", {
+          v0: names(monster.drops),
+          v1: names(monster.steal),
+        }),
+      );
+      const elements = [
+          "",
+          tr("extras.fire"),
+          tr("extras.ice"),
+          tr("extras.lightning"),
+          tr("extras.poison"),
+          tr("extras.wind"),
+          tr("extras.holy"),
+          tr("extras.earth"),
+          tr("extras.water"),
+        ],
+        labels = {
+          1: tr("extras.weak"),
+          2: tr("extras.resist"),
+          3: tr("extras.immune"),
+          4: tr("extras.absorb"),
+        };
       const affinity = Object.entries(monster.elementResistances || {})
         .map(([id, rate]) => `${elements[id] || id}：${labels[rate] || rate}`)
         .join("　");
-      if (affinity) paragraph(`属性：${affinity}`);
+      if (affinity) paragraph(tr("extras.elements_value", { v0: affinity }));
     }
     if (entry.habitats?.length)
       paragraph(
-        `栖息地：${[...new Set(entry.habitats.map((h) => h.areaName || h.name || `区域 ${h.areaId}`))].join("、")}`,
+        tr("extras.habitat_value", {
+          v0: [
+            ...new Set(
+              entry.habitats.map(
+                (h) => h.areaName || h.name || tr("extras.area_value", { v0: h.areaId }),
+              ),
+            ),
+          ].join("、"),
+        }),
       );
   }
   function render() {
     ui.clearHover();
     navigation.replaceChildren(
       ...["图鉴", "画廊", "资料库", "音乐"].map((page) => {
-        const n = button(page, () => selectPage(page), 216);
+        const keys = {
+          图鉴: "extras.bestiary",
+          画廊: "extras.gallery",
+          资料库: "extras.reference",
+          音乐: "extras.music",
+        };
+        const n = button(tr(keys[page]), () => selectPage(page), 216);
         n.dataset.selected = page === state.page ? "1" : "";
         return n;
       }),
@@ -197,8 +252,8 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
     const search = node("input");
     search.value = state.query;
     search.setAttribute("type", "search");
-    search.setAttribute("aria-label", "搜索名称或编号");
-    search.setAttribute("placeholder", "搜索名称或编号…");
+    search.setAttribute("aria-label", tr("extras.search_name_or_number"));
+    search.setAttribute("placeholder", tr("extras.search_name_or_number_208"));
     Object.assign(search.dataset, { width: "660", maxLength: "120" });
     search.onchange = () => {
       state.query = search.value;
@@ -209,7 +264,7 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
     body.append(
       search,
       button(
-        "清除",
+        tr("battle_menu.clear"),
         () => {
           state.query = "";
           state.offset = 0;
@@ -221,7 +276,7 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
     if (state.page === "图鉴") {
       body.append(
         button(
-          state.knownOnly ? "已遇见 ✓" : "只看已遇见",
+          state.knownOnly ? tr("extras.encountered") : tr("extras.encountered_only"),
           () => {
             state.knownOnly = !state.knownOnly;
             state.offset = 0;
@@ -234,7 +289,7 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
     }
     body.append(
       button(
-        state.columns === 6 ? "24 项 / 页" : "32 项 / 页",
+        state.columns === 6 ? tr("extras.24_per_page") : tr("extras.32_per_page"),
         () => {
           state.columns = state.columns === 6 ? 8 : 6;
           state.offset = 0;
@@ -256,7 +311,7 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
     state.offset = Math.min(state.offset, total - 1);
     const pager = node("div"),
       prev = button(
-        "← 上一页",
+        tr("extras.previous_page"),
         () => {
           state.offset--;
           render();
@@ -264,7 +319,7 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
         228,
       ),
       next = button(
-        "下一页 →",
+        tr("extras.next_page"),
         () => {
           state.offset++;
           render();
@@ -274,7 +329,19 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
     prev.disabled = state.offset === 0;
     next.disabled = state.offset >= total - 1;
     const count = button(
-      `${state.page} · ${entries.length} 项 · ${state.offset + 1} / ${total} 页`,
+      tr("extras.value_value_entries_page_value_value", {
+        v0: tr(
+          {
+            图鉴: "extras.bestiary",
+            画廊: "extras.gallery",
+            资料库: "extras.reference",
+            音乐: "extras.music",
+          }[state.page],
+        ),
+        v1: entries.length,
+        v2: state.offset + 1,
+        v3: total,
+      }),
       () => {},
       750,
     );
@@ -283,24 +350,24 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
     body.append(pager);
     if (state.page === "音乐") {
       body.append(
-        button("上一首", () => play(state.music - 1), 180),
-        button("播放", () => play(state.music, pausedMusic?.offset || 0), 180),
+        button(tr("extras.previous_track"), () => play(state.music - 1), 180),
+        button(tr("extras.play"), () => play(state.music, pausedMusic?.offset || 0), 180),
         button(
-          "暂停",
+          tr("extras.pause"),
           () => {
             pausedMusic = audio.current ? { offset: audio.position() } : pausedMusic;
             audio.playMusic(0);
-            status.textContent = "已暂停";
+            status.textContent = tr("extras.paused");
           },
           180,
         ),
-        button("下一首", () => play(state.music + 1), 180),
+        button(tr("extras.next_track"), () => play(state.music + 1), 180),
         button(
-          "停止",
+          tr("extras.stop"),
           () => {
             pausedMusic = null;
             audio.playMusic(0);
-            status.textContent = "已停止";
+            status.textContent = tr("extras.stopped");
           },
           180,
         ),
@@ -344,7 +411,7 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
       grid.append(card);
     }
     body.append(grid);
-    if (!entries.length) paragraph("没有匹配的项目，请更换搜索词。");
+    if (!entries.length) paragraph(tr("extras.no_matching_entries_try_a_different_search"));
     if (state.page === "画廊" && !Object.keys(previews).length && !state.warnedPreviews) {
       state.warnedPreviews = true;
       console.warn(
@@ -353,6 +420,16 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
     }
   }
   return {
+    async translate(locale = null) {
+      if (!catalog) return;
+      if (!locale) {
+        const repository = new WebData(webIndexURL());
+        locale = await repository.locale();
+      }
+      localizeExtras(catalog, locale);
+      localizeBattle(battleData, locale);
+      if (!root.hidden) render();
+    },
     get active() {
       return !root.hidden;
     },
@@ -364,7 +441,7 @@ export function createExtras({ ui, renderer, audio, game: currentGame, onOpen, o
       audio.playMusic(0);
       root.hidden = false;
       onOpen();
-      status.textContent = "正在读取额外内容…";
+      status.textContent = tr("extras.loading_extra_content");
       try {
         await load();
         if (root.hidden || ticket !== opening) return;

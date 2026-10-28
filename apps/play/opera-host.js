@@ -1,3 +1,6 @@
+import { tr } from "../../src/play/i18n.js";
+import { language } from "../../src/play/i18n.js";
+import { operaAudioLanguage } from "../../src/play/languages.js";
 import { Container, Sprite, Text, Texture } from "pixi.js";
 
 // Movie clocks, audio cues and input capture belong to the host, never the VM.
@@ -21,8 +24,8 @@ export class OperaHost {
     this.overlay.addChild(this.status);
     this.controls = new Container();
     this.overlay.addChild(this.controls);
-    this.pauseButton = this.button("暂停（空格）", 10, () => this.togglePause());
-    this.button("跳过（Esc）", 288, () => this.finish());
+    this.pauseButton = this.button(tr("opera_host.pause_space"), 10, () => this.togglePause());
+    this.button(tr("opera_host.skip_esc"), 288, () => this.finish());
     this.overlay.visible = false;
     this.generation = 0;
     this.queue = [];
@@ -76,7 +79,7 @@ export class OperaHost {
     this.previousMusic = this.audio.current
       ? { id: this.audio.current.id, offset: this.audio.position() }
       : null;
-    this.status.text = "正在载入歌剧演出…";
+    this.status.text = tr("opera_host.loading_opera");
     try {
       const [{ OperaPlayer }, catalog] = await Promise.all([
         import("./opera.js"),
@@ -95,6 +98,8 @@ export class OperaHost {
         });
         await this.player.load(catalog);
       }
+      this.player.messages = repository.currentLocale?.messages;
+      this.player.audioLanguage = operaAudioLanguage(language());
       if (ticket !== this.generation) return;
       this.overlay.addChild(this.status, this.controls);
       this.loading = false;
@@ -134,7 +139,9 @@ export class OperaHost {
     this.paused = !this.paused;
     if (this.paused) this.audio.pauseMusic();
     else this.audio.resumeMusic();
-    this.pauseButton.text = this.paused ? "继续（空格）" : "暂停（空格）";
+    this.pauseButton.text = this.paused
+      ? tr("opera_host.resume_space")
+      : tr("opera_host.pause_space");
     this.pauseButton.accessibleTitle = this.pauseButton.text;
     this.pauseButton.accessibleHint = this.pauseButton.text;
   }
@@ -164,11 +171,11 @@ export class OperaHost {
     }
     if (!this.busy) return;
     this.status.text = this.loading
-      ? "正在载入歌剧演出…"
+      ? tr("opera_host.loading_opera")
       : this.audioPending
-        ? "正在载入原曲…"
+        ? tr("opera_host.loading_original_music")
         : this.paused
-          ? "歌剧演出已暂停"
+          ? tr("opera_host.opera_paused")
           : "";
   }
   finish() {
@@ -179,7 +186,7 @@ export class OperaHost {
     this.player?.stop(false);
     this.overlay.visible = false;
     this.renderer.layers.ui.visible = true;
-    this.pauseButton.text = "暂停（空格）";
+    this.pauseButton.text = tr("opera_host.pause_space");
     this.pauseButton.accessibleTitle = this.pauseButton.text;
     this.pauseButton.accessibleHint = this.pauseButton.text;
     const commands = this.queue.splice(0);
@@ -201,7 +208,7 @@ export class OperaHost {
     this.player?.stop(false);
     this.overlay.visible = false;
     this.renderer.layers.ui.visible = true;
-    this.pauseButton.text = "暂停（空格）";
+    this.pauseButton.text = tr("opera_host.pause_space");
     this.pauseButton.accessibleTitle = this.pauseButton.text;
     this.pauseButton.accessibleHint = this.pauseButton.text;
     this.queue.length = 0;

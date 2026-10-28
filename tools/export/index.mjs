@@ -10,6 +10,7 @@ import { compileFieldPresentation } from "./field-presentation.mjs";
 import { compileShaders } from "./shaders.mjs";
 import { compileOpera } from "./opera.mjs";
 import { compileExtras } from "./extras.mjs";
+import { compileLocalization } from "./localization.mjs";
 import { compileFieldAnimations } from "./field-animations.mjs";
 import { compileWaterControls } from "./water-controls.mjs";
 const root = path.resolve(import.meta.dirname, "../..");
@@ -64,6 +65,7 @@ const fieldCounts = await compileFieldPresentation(out);
 const { summary: shaderCounts } = await compileShaders(out, { game: source });
 const { summary: operaCounts } = await compileOpera(out, { game: source, python });
 const { summary: extrasCounts } = await compileExtras(out);
+await compileLocalization(out);
 await prepareWeb({ dataRoot: out });
 const categories = {};
 async function scan(directory, prefix = "") {

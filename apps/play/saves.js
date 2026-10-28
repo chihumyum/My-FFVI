@@ -1,3 +1,4 @@
+import { tr, dateLocale } from "../../src/play/i18n.js";
 // Browser-owned save slots; the original quick/autosave keys remain compatible.
 import { quickSaveKey, saveDatabaseName } from "./identity.js";
 const mode = (boost) => (boost ? "story-test" : "normal");
@@ -17,7 +18,11 @@ export class SaveLibrary {
     this.account = cloud?.serverId || localStorage.getItem("ffvi-cloud-account");
     this.status = {
       state: cloud?.enabled ? "connecting" : "local",
-      message: cloud?.enabled ? "正在连接云存档…" : "仅本机存档，可导出备份",
+      get message() {
+        return cloud?.enabled
+          ? tr("saves.connecting_to_cloud_saves")
+          : tr("saves.local_saves_only_export_a_backup");
+      },
     };
     this.listeners = new Set();
     this.syncing = null;
@@ -30,7 +35,12 @@ export class SaveLibrary {
     return () => this.listeners.delete(listener);
   }
   notify(state, message) {
-    this.status = { state, message };
+    this.status = {
+      state,
+      get message() {
+        return typeof message === "object" ? tr(message.key, message.values) : message;
+      },
+    };
     for (const fn of this.listeners) fn(this.status);
   }
   async open() {
@@ -55,7 +65,8 @@ export class SaveLibrary {
       };
       transaction.oncomplete = () => resolve(value);
       transaction.onerror = () => reject(transaction.error);
-      transaction.onabort = () => reject(transaction.error || Error("存档写入已取消"));
+      transaction.onabort = () =>
+        reject(transaction.error || Error(tr("saves.save_write_cancelled")));
     });
   }
   async list(boost) {
@@ -80,7 +91,7 @@ export class SaveLibrary {
       };
       tx.oncomplete = () => resolve(value);
       tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || Error("存档写入已取消"));
+      tx.onabort = () => reject(tx.error || Error(tr("saves.save_write_cancelled")));
     });
   }
   archive(record, store) {
@@ -127,8 +138,9 @@ export class SaveLibrary {
     this.schedule();
     return value;
   }
-  async save(game, slot, location = "当前地点") {
-    if (game.busy || game.over) throw Error("剧情或战斗进行中，请稍后保存。");
+  async save(game, slot, location = tr("app.current_location")) {
+    if (game.busy || game.over)
+      throw Error(tr("saves.story_or_battle_in_progress_please_save_later"));
     const snapshot = structuredClone(game.snapshot());
     const record = {
       id: `${mode(game.testBoost)}:${slot}`,
@@ -181,7 +193,7 @@ export class SaveLibrary {
           mode: mode(boost),
           slot: "auto",
           savedAt: Date.now(),
-          map: `地图 ${snapshot.mapId}`,
+          map: tr("saves.map_value", { v0: snapshot.mapId }),
           party: [],
           time: snapshot.time || 0,
           snapshot,
@@ -194,10 +206,10 @@ export class SaveLibrary {
     if (this.syncing) return this.syncing;
     this.syncing = this.synchronize()
       .catch((error) => {
-        this.notify(
-          error.status === 401 ? "login" : "offline",
-          `${error.message}；本机进度已保留，联网后重试`,
-        );
+        this.notify(error.status === 401 ? "login" : "offline", {
+          key: "saves.value_local_progress_retained_retry_when_online",
+          values: { v0: error.message },
+        });
       })
       .finally(() => {
         this.syncing = null;
@@ -205,7 +217,7 @@ export class SaveLibrary {
     return this.syncing;
   }
   async synchronize() {
-    this.notify("syncing", "正在同步存档…");
+    this.notify("syncing", { key: "saves.syncing_saves" });
     await this.cloud.connect();
     this.account = this.cloud.serverId;
     localStorage.setItem("ffvi-cloud-account", this.account);
@@ -293,10 +305,16 @@ export class SaveLibrary {
     this.notify(
       conflicts ? "conflict" : pending ? "pending" : "synced",
       conflicts
-        ? `${conflicts} 个存档冲突；两份均保留，请打开云存档处理`
+        ? {
+            key: "saves.value_save_conflicts_both_versions_retained_open_cloud_",
+            values: { v0: conflicts },
+          }
         : pending
-          ? `${pending} 个本机存档等待上传`
-          : `已同步 · ${new Date().toLocaleTimeString("zh-CN")}`,
+          ? { key: "saves.value_local_saves_waiting_to_upload", values: { v0: pending } }
+          : {
+              key: "saves.synced_value",
+              values: { v0: new Date().toLocaleTimeString(dateLocale()) },
+            },
     );
     if (pending) this.schedule();
   }
@@ -329,7 +347,10 @@ export class SaveLibrary {
       await this.mutate(id, (current, store) => {
         if (result.conflict)
           return { ...current, sync: { ...current.sync, conflict: result.value } };
-        this.archive({ ...local.sync.conflict.record, label: "冲突前云端版本" }, store);
+        this.archive(
+          { ...local.sync.conflict.record, label: tr("saves.cloud_version_before_conflict") },
+          store,
+        );
         return {
           ...current,
           sync: {
@@ -358,7 +379,7 @@ export class SaveLibrary {
       !Array.isArray(backup.records) ||
       backup.records.length > 10000
     )
-      throw Error("不是有效的 FFVI 存档备份");
+      throw Error(tr("saves.not_a_valid_ffvi_save_backup"));
     const records = backup.records.filter((row) => slotId.test(row.id));
     for (const row of records) {
       if (
@@ -369,7 +390,7 @@ export class SaveLibrary {
         row.id !== `${row.mode}:${row.slot}` ||
         !!row.snapshot.testBoost !== (row.mode === "story-test")
       )
-        throw Error("备份包含无效存档，未导入");
+        throw Error(tr("saves.backup_contains_invalid_saves_nothing_imported"));
     }
     for (const row of records) {
       await this.mutate(row.id, (before, store) => {
@@ -401,7 +422,12 @@ export class SaveLibrary {
     await this.sync();
   }
 }
-export function renderSaveSlots(records, { write, boost, quick }, createElement, choose) {
+export function renderSaveSlots(
+  records,
+  { write, boost, quick, display = (record) => record },
+  createElement,
+  choose,
+) {
   const rows = [];
   const text = (tag, value) => {
     const n = createElement(tag);
@@ -413,24 +439,32 @@ export function renderSaveSlots(records, { write, boost, quick }, createElement,
     n.onclick = run;
     return n;
   };
-  if (quick && !write) rows.push(button("自动存档 / 最近继续", () => choose("quick")));
+  if (quick && !write)
+    rows.push(button(tr("saves.autosave_most_recent_progress"), () => choose("quick")));
   for (let slot = 1; slot <= 12; slot++) {
-    const record = records.find((row) => row.slot === slot),
+    const record = display(records.find((row) => row.slot === slot)),
       card = createElement("fieldset");
     card.append(
-      text("legend", `${String(slot).padStart(2, "0")}  ${record ? record.map : "空存档"}`),
+      text(
+        "legend",
+        `${String(slot).padStart(2, "0")}  ${record ? record.map : tr("saves.empty_slot")}`,
+      ),
     );
     if (record)
       card.append(
         text(
           "p",
-          `${record.party.map((u) => `${u.name} Lv${u.level}`).join(" / ")}\n${new Date(record.savedAt).toLocaleString("zh-CN")}   ${Math.floor(record.time / 3600)}:${String(Math.floor(record.time / 60) % 60).padStart(2, "0")}`,
+          `${record.party.map((u) => `${u.name} Lv${u.level}`).join(" / ")}\n${new Date(record.savedAt).toLocaleString(dateLocale())}   ${Math.floor(record.time / 3600)}:${String(Math.floor(record.time / 60) % 60).padStart(2, "0")}`,
         ),
       );
     if (write || record)
       card.append(
         button(
-          write ? (record ? `覆盖存档 ${slot}` : `写入存档 ${slot}`) : `读取存档 ${slot}`,
+          write
+            ? record
+              ? tr("saves.overwrite_slot_value", { v0: slot })
+              : tr("saves.write_slot_value", { v0: slot })
+            : tr("saves.load_slot_value", { v0: slot }),
           () => choose(slot),
         ),
       );

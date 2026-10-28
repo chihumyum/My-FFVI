@@ -1,3 +1,4 @@
+import { tr } from "./i18n.js";
 // SNES timer.asm CheckRunAway accumulates RandA(run probability)+1 against
 // gfx_buf.asm's sum of 2 per active enemy (6 for HARDER_TO_RUN). The browser
 // aligns character timer phases: every 16/30 battle seconds, each status gauge
@@ -137,7 +138,7 @@ export function tickEscape(battle, seconds) {
       unit.hidden = true;
       unit.ready = false;
       unit.atb = 0;
-      battle.addLog?.(`${unit.name || "队员"}逃离了战斗。`);
+      battle.addLog?.(tr("escape.escaped", { v0: unit.name || tr("escape.member") }));
     }
     if (!participants(battle).length) {
       state.complete = true;

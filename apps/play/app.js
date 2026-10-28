@@ -1,3 +1,8 @@
+import { tr } from "../../src/play/i18n.js";
+import { language, setLanguage } from "../../src/play/i18n.js";
+import { operaAudioLanguage } from "../../src/play/languages.js";
+import { mountLanguageControl } from "./language.js";
+import { localizeGame, localizeSave } from "../../src/play/localized-data.js";
 import { quickSaveKey } from "./identity.js";
 import {
   playOptionLabels,
@@ -77,7 +82,7 @@ window.ffviPlayOptions = () => ({ ...playOptions });
 function updatePlayOptions() {
   for (const [key, label] of Object.entries(playOptionLabels)) {
     const button = document.querySelector(`[data-play-option="${key}"]`);
-    button.textContent = `${label}：${playOptions[key] ? "开" : "关"}`;
+    button.textContent = `${label}：${playOptions[key] ? tr("app.on") : tr("app.off")}`;
     button.setAttribute("aria-pressed", String(playOptions[key]));
   }
   document.body.classList.toggle("show-location", playOptions.showLocation);
@@ -158,6 +163,7 @@ function event(e) {
   if (e.kind === "opera" && !playOptions.fastForward) opera.play(e.stage);
   if (e.kind === "battle-message")
     battleDialogue = {
+      key: e.key,
       text: presentText(game, e.text)
         .replace(/<[^>]*>/g, "")
         .replace(/\\n/g, "\n"),
@@ -199,7 +205,7 @@ function event(e) {
 }
 async function start(saved = null, testBoost = false) {
   starting = true;
-  loading.begin(saved ? "读取存档与场景…" : "准备新游戏…");
+  loading.begin(saved ? tr("app.loading_save_and_scene") : tr("app.preparing_new_game"));
   keys.clear();
   playOptions.story = false;
   updatePlayOptions();
@@ -236,8 +242,11 @@ async function start(saved = null, testBoost = false) {
       Battle,
       testBoost: testBoost || !!saved?.testBoost,
       loadMap: (id) =>
-        loading.task(`加载${ui.presentation.mapNames?.[id] || "下一场景"}…`, () =>
-          repository.loadMap(id),
+        loading.task(
+          tr("app.loading_value", {
+            v0: ui.presentation.mapNames?.[id] || tr("app.the_next_scene"),
+          }),
+          () => repository.loadMap(id),
         ),
       onEvent: event,
       interactiveNames: true,
@@ -250,6 +259,7 @@ async function start(saved = null, testBoost = false) {
     audio.savedMusic = null;
     if (saved) {
       await game.restore(saved, { testBoost });
+      localizeGame(data, battleData, repository.currentLocale, game);
       if (saved.audio?.version === 1) await audio.restore(saved.audio);
       else {
         const commands = await legacySceneAudio(saved, { data, battleData, map: game.map });
@@ -287,45 +297,61 @@ function save() {
 }
 async function openSaveMenu(write, boost = false) {
   if (write && (!game || game.busy)) {
-    $("location").textContent = "剧情或战斗进行中，请稍后保存";
+    $("location").textContent = tr("app.story_or_battle_in_progress_please_save_later");
     return;
   }
   paused = !!started;
   $("menu").hidden = true;
   $("title").hidden = true;
   $("save").hidden = false;
-  $("save-heading").textContent = `${boost ? "剧情测试 · " : ""}${write ? "存档" : "读档"}`;
-  $("save-status").textContent = "正在读取存档列表…";
+  $("save-heading").textContent =
+    `${boost ? tr("app.story_test") : ""}${write ? tr("app.save") : tr("app.load")}`;
+  $("save-status").textContent = tr("app.loading_save_slots");
   $("save-slots").replaceChildren();
   if (saveLibrary.cloud.enabled && navigator.onLine) await saveLibrary.sync();
   const quick = await saveLibrary.quick(boost);
   const refresh = async () => {
     const records = await saveLibrary.list(boost);
     $("save-slots").replaceChildren(
-      ...renderSaveSlots(records, { write, boost, quick }, createWidget, async (slot) => {
-        try {
-          if (write) {
-            await saveLibrary.save(game, slot, ui.presentation.mapNames?.[game.mapId]);
-            $("save-status").textContent =
-              `已保存 · 存档 ${slot} · ${ui.presentation.mapNames?.[game.mapId] || "当前地点"}`;
-            await refresh();
-          } else {
-            const saved =
-              slot === "quick"
-                ? await saveLibrary.quick(boost)
-                : await saveLibrary.load(boost, slot);
-            if (saved) await start(saved, boost);
+      ...renderSaveSlots(
+        records,
+        {
+          write,
+          boost,
+          quick,
+          display: (record) =>
+            localizeSave(record, repository?.currentLocale || titleRepository.currentLocale),
+        },
+        createWidget,
+        async (slot) => {
+          try {
+            if (write) {
+              await saveLibrary.save(game, slot, ui.presentation.mapNames?.[game.mapId]);
+              $("save-status").textContent = tr("app.saved_slot_value_value", {
+                v0: slot,
+                v1: ui.presentation.mapNames?.[game.mapId] || tr("app.current_location"),
+              });
+              await refresh();
+            } else {
+              const saved =
+                slot === "quick"
+                  ? await saveLibrary.quick(boost)
+                  : await saveLibrary.load(boost, slot);
+              if (saved) await start(saved, boost);
+            }
+          } catch (error) {
+            $("save-status").textContent = error.message;
+            console.error(error);
           }
-        } catch (error) {
-          $("save-status").textContent = error.message;
-          console.error(error);
-        }
-      }),
+        },
+      ),
     );
   };
   try {
     await refresh();
-    $("save-status").textContent = "普通与剧情测试存档分别保存，共 12 槽。";
+    $("save-status").textContent = tr(
+      "app.normal_and_story_test_saves_are_separate_with_12_slots_",
+    );
   } catch (error) {
     $("save-status").textContent = error.message;
   }
@@ -346,7 +372,10 @@ for (const key of Object.keys(playOptionLabels)) {
       try {
         await repository?.preloadRegression();
       } catch (error) {
-        $("bug-status").textContent = `剧情路线准备失败：${error.message}。请重试。`;
+        $("bug-status").textContent = tr(
+          "app.could_not_prepare_the_story_route_value_please_retry",
+          { v0: error.message },
+        );
         return;
       } finally {
         button.disabled = false;
@@ -393,7 +422,7 @@ async function reportBug() {
     previousClock = renderer._previewClock;
   paused = true;
   renderer._previewClock = performance.now() / 1000;
-  $("bug-status").textContent = "F9：正在保存现场…";
+  $("bug-status").textContent = tr("app.f9_capturing_game_state");
   try {
     renderer.render(started ? game : null, data, battleData);
     const report = describeBugState(game, renderer, eventHistory.read(), ui.presentation.mapNames);
@@ -407,14 +436,14 @@ async function reportBug() {
     const result = await openFeedbackDialog(report, { development: import.meta.env.DEV });
     $("bug-status").textContent =
       result.method === "cloud"
-        ? `F9：已发送 ${result.id}`
+        ? tr("app.f9_sent_value", { v0: result.id })
         : result.method === "directory"
-          ? `F9：已保存 ${result.directory}`
+          ? tr("app.f9_saved_value", { v0: result.directory })
           : result.method === "download"
-            ? `F9：已下载 ${result.file}`
-            : "F9：已取消";
+            ? tr("app.f9_downloaded_value", { v0: result.file })
+            : tr("app.f9_cancelled");
   } catch (error) {
-    $("bug-status").textContent = `F9：保存失败：${error.message}`;
+    $("bug-status").textContent = tr("app.f9_could_not_save_value", { v0: error.message });
     console.error("[bug-report]", error);
   } finally {
     if (game === capturedGame) paused = previousPause;
@@ -568,7 +597,7 @@ function renderNaming() {
   $("name-keys").replaceChildren();
   for (const key of ["清空", "退格", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"]) {
     const b = createWidget("button");
-    b.textContent = key;
+    b.textContent = key === "清空" ? tr("app.clear") : key === "退格" ? tr("app.backspace") : key;
     b.onclick = () => {
       $("name-value").value =
         key === "清空"
@@ -607,7 +636,7 @@ function renderShop() {
     $("shop-stock").replaceChildren();
     for (const item of shop.stock) {
       const button = createWidget("button");
-      button.textContent = `购买 ${item.name} · ${item.price} Gil`;
+      button.textContent = tr("app.buy_value_value_gil", { v0: item.name, v1: item.price });
       button.disabled = game.gil < item.price;
       button.onclick = () => {
         buyFromShop(game, item.id);
@@ -627,7 +656,11 @@ function renderShop() {
                 : null;
       if (!(count > 0) || !item?.sell || item.sales_not_possible) continue;
       const button = createWidget("button");
-      button.textContent = `卖出 ${game.text(content.mes_id_name)} ×${count} · ${item.sell} Gil`;
+      button.textContent = tr("app.sell_value_value_value_gil", {
+        v0: game.text(content.mes_id_name),
+        v1: count,
+        v2: item.sell,
+      });
       button.onclick = () => {
         game.sell(Number(id));
         renderShop();
@@ -660,20 +693,34 @@ function renderColosseum() {
   };
   const wager = colosseumWagers(game).find((w) => w.contentId === menu.selected);
   if (menu.phase === "wager") {
-    $("colosseum-prompt").textContent = "请选择押注道具。胜利获得奖励，失败失去押注。";
+    $("colosseum-prompt").textContent = tr(
+      "app.choose_an_item_to_wager_win_a_reward_or_lose_your_wager",
+    );
     for (const w of colosseumWagers(game))
-      button(`${w.name} ×${w.count} → ${w.reward} · 对手 ${w.opponent}`, () =>
-        selectColosseumWager(game, w.contentId),
+      button(
+        tr("app.value_value_value_opponent_value", {
+          v0: w.name,
+          v1: w.count,
+          v2: w.reward,
+          v3: w.opponent,
+        }),
+        () => selectColosseumWager(game, w.contentId),
       );
   } else if (menu.phase === "challenger") {
-    $("colosseum-prompt").textContent =
-      `押注 ${wager.name}，请选择一名出战者。战斗中角色自行行动。`;
+    $("colosseum-prompt").textContent = tr(
+      "app.wager_value_choose_a_challenger_who_will_fight_automati",
+      { v0: wager.name },
+    );
     for (const unit of partyInputMembers(game))
       button(`${unit.name} · Lv ${unit.level}`, () => selectColosseumChallenger(game, unit.id));
   } else {
-    $("colosseum-prompt").textContent =
-      `${game.unit(menu.challenger).name} 对战 ${wager.opponent}，押注 ${wager.name}，奖励 ${wager.reward}。`;
-    button("确认参战", () => confirmColosseum(game));
+    $("colosseum-prompt").textContent = tr("app.value_vs_value_wager_value_reward_value", {
+      v0: game.unit(menu.challenger).name,
+      v1: wager.opponent,
+      v2: wager.name,
+      v3: wager.reward,
+    });
+    button(tr("app.enter_battle"), () => confirmColosseum(game));
   }
 }
 $("colosseum-cancel").onclick = () => {
@@ -714,12 +761,12 @@ function renderVehicle() {
   vehicleView = menu;
   $("vehicle-actions").replaceChildren();
   const labels = {
-    takeoff: "起飞",
-    land: "着陆",
-    deck: "返回甲板",
-    board: "乘坐",
-    dismount: "下船 / 下陆行鸟",
-    resume: "继续移动",
+    takeoff: tr("app.take_off"),
+    land: tr("app.land"),
+    deck: tr("app.return_to_deck"),
+    board: tr("app.board"),
+    dismount: tr("app.disembark_dismount"),
+    resume: tr("app.resume_movement"),
   };
   for (const action of model.actions) {
     const button = createWidget("button");
@@ -754,12 +801,15 @@ function renderFormation() {
     for (let slot = 0; slot < menu.slotCount; slot++) {
       const group = createWidget("fieldset"),
         title = createWidget("legend");
-      title.textContent = `队伍 ${slot + 1}`;
+      title.textContent = tr("app.party_value", { v0: slot + 1 });
       group.append(title);
       for (let pos = 0; pos < 4; pos++) {
         const select = createWidget("select");
-        select.setAttribute("aria-label", `队伍 ${slot + 1} 位置 ${pos + 1}`);
-        for (const member of [{ id: 0, name: "空位" }, ...menu.members]) {
+        select.setAttribute(
+          "aria-label",
+          tr("app.party_value_position_value", { v0: slot + 1, v1: pos + 1 }),
+        );
+        for (const member of [{ id: 0, name: tr("app.empty") }, ...menu.members]) {
           const option = createWidget("option");
           option.value = member.id;
           option.textContent = member.name;
@@ -810,16 +860,21 @@ function renderBattleFlow() {
   if (lastBattleResult === result) return;
   lastBattleResult = result;
   if (!result) return;
-  $("battle-reward-summary").textContent =
-    `获得 ${result.gil} Gil　·　${result.ap} AP　·　总经验 ${result.exp}`;
+  $("battle-reward-summary").textContent = tr("app.received_value_gil_value_ap_total_exp_value", {
+    v0: result.gil,
+    v1: result.ap,
+    v2: result.exp,
+  });
   $("battle-reward-members").replaceChildren(
     ...result.players.map((unit) => {
       const row = createWidget("p");
-      const learned = unit.learned.map((id) => battleData.abilities[id]?.name || `技能 ${id}`);
+      const learned = unit.learned.map(
+        (id) => battleData.abilities[id]?.name || tr("app.ability_value", { v0: id }),
+      );
       row.textContent =
         `${unit.name}　Lv.${unit.level}　EXP +${unit.exp}` +
-        (unit.levels > 0 ? `　升级 ↑${unit.levels}` : "") +
-        (learned.length ? `　学会 ${learned.join("、")}` : "");
+        (unit.levels > 0 ? tr("app.level_up_value", { v0: unit.levels }) : "") +
+        (learned.length ? tr("app.learned_value", { v0: learned.join("、") }) : "");
       return row;
     }),
   );
@@ -827,11 +882,14 @@ function renderBattleFlow() {
   for (const item of result.drops || [])
     drops.set(item.id, (drops.get(item.id) || 0) + (item.count || 1));
   $("battle-reward-items").textContent = drops.size
-    ? "获得道具：" +
+    ? tr("app.items_received") +
       [...drops]
-        .map(([id, count]) => `${battleData.contentNames[id] || `道具 ${id}`} ×${count}`)
+        .map(
+          ([id, count]) =>
+            `${battleData.contentNames[id] || tr("app.item_value", { v0: id })} ×${count}`,
+        )
         .join("、")
-    : "没有获得道具";
+    : tr("app.no_items_received");
 }
 
 function loop(now) {
@@ -897,8 +955,8 @@ function loop(now) {
               playOptions.story = false;
               updatePlayOptions();
               $("location").textContent = input.chapter
-                ? input.chapter + " 已完成"
-                : "已离开纳尔谢 · 世界地图";
+                ? input.chapter + tr("app.completed")
+                : tr("app.left_narshe_world_map");
             } else if (
               ["no-route", "no-input", "game-over", "needs-input", "plan-end"].includes(
                 input.status,
@@ -906,7 +964,9 @@ function loop(now) {
             ) {
               playOptions.story = false;
               updatePlayOptions();
-              $("location").textContent = "自动推进剧情暂停，请手动操作";
+              $("location").textContent = tr(
+                "app.automatic_story_progression_paused_continue_manually",
+              );
             }
           }
         }
@@ -914,7 +974,10 @@ function loop(now) {
       if (autosavePending && !game.busy && !game.over) {
         autosavePending = false;
         saveLibrary.autosave(game, ui.presentation.mapNames?.[game.mapId]).catch((error) => {
-          saveLibrary.notify("error", `本机自动存档失败：${error.message}，请手动导出备份`);
+          saveLibrary.notify("error", {
+            key: "app.local_autosave_failed_value_please_export_a_backup",
+            values: { v0: error.message },
+          });
         });
       }
       if (titlePending && !game.busy) {
@@ -924,8 +987,8 @@ function loop(now) {
         updatePlayOptions();
         $("title").hidden = false;
         $("location").textContent = game.history.some((row) => row.script === "sc_e_1032_18")
-          ? "主线通关 · 已返回标题"
-          : "已返回标题";
+          ? tr("app.campaign_complete_returned_to_title")
+          : tr("app.returned_to_title");
       }
       if (++frame % 7 === 0)
         for (const [k, d] of [
@@ -942,7 +1005,9 @@ function loop(now) {
     }
     if (game.battle && !battleFlow.busy) {
       $("escape").disabled = !game.battle.canEscape;
-      $("escape").textContent = game.battle.escapeState?.active ? "正在逃跑…" : "逃跑";
+      $("escape").textContent = game.battle.escapeState?.active
+        ? tr("app.escaping")
+        : tr("app.escape");
       battleMenu.update(game.battle);
     }
     renderBattleFlow();
@@ -1001,15 +1066,18 @@ function loop(now) {
     });
     if (resources?.pending || resources?.failed) {
       if (!loading.active) {
-        loading.begin("准备场景贴图…");
+        loading.begin(tr("app.preparing_scene_resources"));
         keys.clear();
       }
       loading.update(resources);
       if (resources.failed)
-        loading.fail(new Error(`${resources.failed} 张贴图未能加载`), () => {
-          renderer.retryTextures();
-          loading.begin("重新加载场景贴图…");
-        });
+        loading.fail(
+          new Error(tr("app.value_textures_could_not_be_loaded", { v0: resources.failed })),
+          () => {
+            renderer.retryTextures();
+            loading.begin(tr("app.reloading_scene_resources"));
+          },
+        );
     } else if (loading.panel.dataset.state !== "failed") {
       if (started) loading.setInGame(true);
       if (loading.active) loading.finish();
@@ -1018,8 +1086,55 @@ function loop(now) {
   if (!loading.active && !paused) preloader?.update(game);
   requestAnimationFrame(loop);
 }
-loading.begin("加载标题与界面…", { boot: true });
-await loadPresentation(createRepository(), renderer, ui);
+loading.begin(tr("app.loading_title_and_interface"), { boot: true });
+const titleRepository = createRepository();
+await loadPresentation(titleRepository, renderer, ui);
+const originalMapNames = (await titleRepository.json(titleRepository.index.presentation)).mapNames;
+mountLanguageControl(async (id) => {
+  const previousPause = paused;
+  paused = true;
+  keys.clear();
+  try {
+    const source = repository || titleRepository;
+    const catalog = await source.locale(id);
+    if (!catalog) throw Error(`PR locale ${id} is unavailable in this resource export`);
+    await setLanguage(id);
+    source.currentLocale = catalog;
+    const typedName =
+      game?.nameInput && $("name-value").value !== game.nameInput.original
+        ? $("name-value").value
+        : null;
+    if (game) localizeGame(data, battleData, catalog, game);
+    if (battleDialogue?.key && catalog.messages[battleDialogue.key]) {
+      battleDialogue.text = presentText(game, catalog.messages[battleDialogue.key])
+        .replace(/<[^>]*>/g, "")
+        .replace(/\\n/g, "\n");
+      battleDialogue.speaker = catalog.speakers[battleDialogue.key] || "";
+    }
+    ui.presentation.mapNames = id === "zh-CN" ? originalMapNames : catalog.mapNames;
+    if (ui.presentation.titleLogos?.[id])
+      ui.presentation.sprites.titleLogo = ui.presentation.titleLogos[id];
+    ui.translate();
+    updatePlayOptions();
+    if (game) {
+      ui.setCharacters(game.roster);
+      shopView = namingView = formationView = null;
+      renderNaming();
+      if (typedName !== null) $("name-value").value = typedName;
+      if (!$("menu").hidden) renderMenu();
+      if (!$("save").hidden) $("save-close").click();
+      battleMenu.reset();
+      battleFlow.relabel();
+    }
+    if (opera.player) {
+      opera.player.messages = catalog.messages;
+      opera.player.audioLanguage = operaAudioLanguage(id);
+    }
+    await extras.translate(catalog);
+  } finally {
+    paused = previousPause;
+  }
+});
 renderer.diagnostics.mapNames = ui.presentation.mapNames || {};
 opera.fontFamily = ui.presentation.fontFamily || opera.fontFamily;
 if (new URLSearchParams(location.search).get("acceptance") === "1") {
@@ -1195,7 +1310,10 @@ if (import.meta.env.DEV) {
       }
     } else if (panel === "battle")
       game.encounter(Number(params.get("formation")) || 1, null, { waitFor: null }, {});
-    $("location").textContent = `界面用例 · ${checkpoint} · ${panel || "地图"}（不计剧情覆盖）`;
+    $("location").textContent = tr("app.ui_fixture_value_value_not_story_coverage", {
+      v0: checkpoint,
+      v1: panel || tr("app.map"),
+    });
   }
 }
 let cloudPause = false;
@@ -1219,7 +1337,8 @@ if (!started) {
     ui.render();
     const resources = renderer.render(null, data, battleData, { deferIncomplete: true });
     loading.update(resources);
-    if (resources?.failed) throw new Error("标题贴图加载失败，请检查网络后重新加载");
+    if (resources?.failed)
+      throw new Error(tr("app.title_textures_failed_to_load_check_the_connection_and_"));
     if (!resources?.pending) break;
     await renderer.waitForFrame();
   }

@@ -8,45 +8,51 @@
   <body class="game">
     <div id="boot-status" role="status" aria-live="polite">
       <div class="load-card">
-        <p id="boot-message">正在加载游戏资源…</p>
-        <progress id="load-progress" aria-label="当前场景加载进度"></progress>
-        <p id="load-detail">准备资源…</p>
-        <button id="load-retry" hidden>重试</button>
-        <a id="load-reload" href="">重新加载</a>
+        <p id="boot-message" data-i18n="loading.game">正在加载游戏资源…</p>
+        <progress
+          id="load-progress"
+          aria-label="当前场景加载进度"
+          data-i18n-aria-label="loading.progress"
+        ></progress>
+        <p id="load-detail" data-i18n="loading.preparing_resources">准备资源…</p>
+        <button id="load-retry" hidden data-i18n="loading.retry">重试</button>
+        <a id="load-reload" href="" data-i18n="loading.reload">重新加载</a>
       </div>
     </div>
     <main>
       <canvas id="screen" width="320" height="180"></canvas>
       <section id="title">
         <h1>FINAL FANTASY VI</h1>
-        <p>Web 移植</p>
-        <button id="new">新游戏</button><button id="load">继续游戏</button>
-        <button id="extras-open">额外内容</button>
-        <button id="regression-start" hidden>强化回归（开发）</button>
+        <p data-i18n="title.web_port">Web 移植</p>
+        <button id="new" data-i18n="title.new_game">新游戏</button
+        ><button id="load" data-i18n="title.continue">继续游戏</button>
+        <button id="extras-open" data-i18n="title.extras">额外内容</button>
+        <button id="regression-start" hidden data-i18n="title.boosted">强化回归（开发）</button>
       </section>
       <section id="dialogue" hidden>
         <strong id="speaker"></strong>
         <div id="message"></div>
         <div id="choices"></div>
-        <button id="confirm">继续 ▸</button>
+        <button id="confirm" data-i18n="common.continue">继续 ▸</button>
       </section>
       <section id="battle" hidden>
         <div id="battle-status"></div>
         <div id="commands"></div>
         <div id="targets"></div>
-        <button id="escape">逃跑</button>
+        <button id="escape" data-i18n="app.escape">逃跑</button>
       </section>
       <section id="battle-action" hidden><strong id="battle-action-name"></strong></section>
       <aside id="battle-result" hidden>
-        <h2>战斗胜利</h2>
+        <h2 data-i18n="battle.victory">战斗胜利</h2>
         <p id="battle-reward-summary"></p>
         <div id="battle-reward-members"></div>
         <p id="battle-reward-items"></p>
-        <button id="battle-result-confirm">继续（空格 / Enter）</button>
+        <button id="battle-result-confirm" data-i18n="battle.continue">继续（空格 / Enter）</button>
       </aside>
       <footer id="play-tools" aria-label="页面工具">
         <div class="play-tools-heading">
-          <strong>工具</strong><button id="tools-close">收起</button>
+          <strong data-i18n="tools.label">工具</strong
+          ><button id="tools-close" data-i18n="tools.close">收起</button>
         </div>
         <button id="story-auto" data-play-option="story">自动推进剧情：关</button>
         <button id="skip-dialogue" data-play-option="skipDialogue">自动跳过对话：关</button>
@@ -55,69 +61,75 @@
         <button id="invincible" data-play-option="invincible">无敌模式：关</button>
         <button id="show-location" data-play-option="showLocation">当前位置：关</button>
         <button id="switch" hidden>切换队伍（Q）</button
-        ><button id="vehicle-open" hidden>载具操作</button>
-        <button id="bug-report">报告问题（F9）</button>
-        <button id="repository-open">GitHub 项目</button>
+        ><button id="vehicle-open" hidden data-i18n="tools.vehicle">载具操作</button>
+        <button id="bug-report" data-i18n="tools.bug">报告问题（F9）</button>
+        <button id="repository-open" data-i18n="tools.github">GitHub 项目</button>
         <span id="bug-status" role="status" aria-live="polite"></span>
-        <span id="mode" hidden>开发回归 · 强化队伍</span>
+        <span id="mode" hidden data-i18n="tools.boosted">开发回归 · 强化队伍</span>
       </footer>
-      <output id="location" aria-label="当前位置"
+      <output
+        id="location"
+        aria-label="当前位置"
+        data-i18n-aria-label="play_options.current_location"
         >方向键 / WASD 移动 · Enter / 空格确认 · Esc 菜单 · Q 换队</output
       >
       <aside id="over" hidden>
-        <h2>任务失败</h2>
+        <h2 data-i18n="game.failed">任务失败</h2>
         <p id="over-message"></p>
         <button id="retry">读取存档</button>
       </aside>
       <aside id="shop" hidden>
-        <h2>商店</h2>
+        <h2 data-i18n="game.shop">商店</h2>
         <p id="shop-gil"></p>
         <div id="shop-stock"></div>
-        <button id="shop-close">离开</button>
+        <button id="shop-close" data-i18n="game.leave">离开</button>
       </aside>
       <aside id="colosseum" hidden>
-        <h2>斗技场</h2>
+        <h2 data-i18n="game.colosseum">斗技场</h2>
         <p id="colosseum-prompt"></p>
         <div id="colosseum-choices"></div>
-        <button id="colosseum-cancel">取消</button>
+        <button id="colosseum-cancel" data-i18n="battle_menu.cancel">取消</button>
       </aside>
       <aside id="formation" hidden>
-        <h2>编组队伍</h2>
+        <h2 data-i18n="game.form_party">编组队伍</h2>
         <div id="formation-slots"></div>
         <p id="formation-problems" role="status"></p>
-        <button id="formation-confirm">确认队伍</button><button id="formation-cancel">取消</button>
+        <button id="formation-confirm" data-i18n="game.confirm_party">确认队伍</button
+        ><button id="formation-cancel" data-i18n="battle_menu.cancel">取消</button>
       </aside>
       <aside id="vehicle" hidden>
-        <h2>载具操作</h2>
+        <h2 data-i18n="tools.vehicle">载具操作</h2>
         <div id="vehicle-actions"></div>
-        <button id="vehicle-close">返回游戏</button>
+        <button id="vehicle-close" data-i18n="cloud_ui.return_to_game">返回游戏</button>
       </aside>
       <aside id="menu" hidden>
-        <h2>队伍</h2>
+        <h2 data-i18n="common.party">队伍</h2>
         <div id="menu-nav"></div>
         <div id="party"></div>
         <div id="items"></div>
-        <button id="menu-save" hidden>存档</button><button id="close">返回游戏</button>
+        <button id="menu-save" hidden data-i18n="app.save">存档</button
+        ><button id="close" data-i18n="cloud_ui.return_to_game">返回游戏</button>
       </aside>
       <aside id="save" hidden>
-        <h2 id="save-heading">存档</h2>
+        <h2 id="save-heading" data-i18n="app.save">存档</h2>
         <p id="save-status"></p>
         <div id="save-slots"></div>
-        <button id="save-close">返回</button>
+        <button id="save-close" data-i18n="party_menu.back">返回</button>
       </aside>
       <aside id="naming" hidden>
-        <h2>请输入名字</h2>
+        <h2 data-i18n="naming.enter">请输入名字</h2>
         <div id="name-portrait"></div>
-        <input id="name-value" aria-label="角色名字" />
+        <input id="name-value" aria-label="角色名字" data-i18n-aria-label="naming.character" />
         <div id="name-keys"></div>
-        <button id="name-confirm">确定</button><button id="name-default">默认名字</button>
+        <button id="name-confirm" data-i18n="naming.confirm">确定</button
+        ><button id="name-default" data-i18n="naming.default">默认名字</button>
       </aside>
       <aside id="extras" hidden>
-        <h2>额外内容</h2>
+        <h2 data-i18n="title.extras">额外内容</h2>
         <div id="extras-nav"></div>
         <p id="extras-status" role="status"></p>
         <div id="extras-body"></div>
-        <button id="extras-close">返回</button>
+        <button id="extras-close" data-i18n="party_menu.back">返回</button>
       </aside>
     </main>
     <script type="module" src="./bootstrap.js"></script>
